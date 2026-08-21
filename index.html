@@ -35,8 +35,12 @@
         <div>有給休暇申請<span class="desc">開始日・終了日を選ぶだけ(日数は自動計算)</span></div>
         <div class="arrow">›</div>
       </button>
-      <button type="button" class="menu-item" data-nav="expense">
-        <div>経費立替申請<span class="desc">領収書を撮影して申請(複数まとめて可)</span></div>
+      <button type="button" class="menu-item" data-nav="expense-advance">
+        <div>経費立替申請<span class="desc">自分で支払った会社経費を申請(後日会社から返金)</span></div>
+        <div class="arrow">›</div>
+      </button>
+      <button type="button" class="menu-item" data-nav="expense-company">
+        <div>会社経費登録<span class="desc">会社が支払った経費・領収書を登録(返金不要)</span></div>
         <div class="arrow">›</div>
       </button>
       <button type="button" class="menu-item" data-nav="meeting">
@@ -113,8 +117,8 @@
   <!-- 経費立替申請フォーム(複数明細) -->
   <section id="screen-expense" class="screen">
     <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
-    <div class="form-title">経費立替申請</div>
-    <div class="hint" style="margin: 0 0 14px;">領収書の写真が必要です。複数の領収書をまとめて1回の申請にできます。</div>
+    <div class="form-title" id="expense-screen-title">経費立替申請</div>
+    <div class="hint" style="margin: 0 0 14px;" id="expense-screen-hint">領収書の写真が必要です。複数の領収書をまとめて1回の申請にできます。</div>
 
     <div id="expense-item-list"></div>
 
@@ -136,28 +140,41 @@
           <button type="button" class="remove-item-btn">削除</button>
         </div>
         <label>領収書の写真</label>
-        <div class="hint-inline">カメラで撮影、または写真を選択(必須)</div>
+        <div class="hint-inline">カメラで撮影、または写真を選択(必須)。写真を追加すると自動で内容を読み取ります。</div>
         <input type="file" accept="image/*" capture="environment" class="item-photo-input">
         <img class="item-photo-preview" style="display:none;">
         <div class="photo-status"></div>
+        <div class="ocr-status"></div>
 
         <label>利用日</label>
         <input type="date" class="item-date">
 
-        <label>支払先</label>
+        <label>支払先(店舗名)</label>
         <div class="hint-inline">例: ○○ガソリンスタンド</div>
         <input type="text" class="item-store">
 
         <label>金額(円)</label>
         <input type="number" class="item-amount" min="1">
 
-        <label>現場名</label>
-        <div class="hint-inline">例: ○○現場</div>
-        <input type="text" class="item-site">
+        <label>消費税(円)</label>
+        <div class="hint-inline">分かる場合のみ(任意)</div>
+        <input type="number" class="item-tax" min="0">
 
-        <label>使用目的</label>
-        <div class="hint-inline">例: 給油代</div>
+        <label>現場<span class="required-mark">(必須)</span></label>
+        <div class="hint-inline">どの現場に関係する経費か選択してください。該当が無ければ「会社共通」「現場外」を選べます</div>
+        <input type="text" class="item-site-search" placeholder="現場名で検索...">
+        <select class="item-site-select"></select>
+
+        <label>取引先</label>
+        <div class="hint-inline">現場の元請け・関係先など(任意、支払先とは別項目)</div>
+        <input type="text" class="item-vendor">
+
+        <label>使用目的<span class="required-mark">(必須)</span></label>
+        <div class="hint-inline">例: 現場用消耗品購入・駐車料金・社員用飲料・取引先との打合せ・出張宿泊・資材購入</div>
         <input type="text" class="item-purpose">
+
+        <label>支払方法</label>
+        <select class="item-payment"></select>
 
         <label>備考</label>
         <div class="hint-inline">任意</div>

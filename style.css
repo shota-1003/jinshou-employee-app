@@ -239,3 +239,8 @@ button.link {
   width: auto; background: none; border: 1px solid var(--primary); color: var(--primary);
   font-size: 12px; font-weight: 400; padding: 4px 10px; margin: 6px 0 0; border-radius: 8px;
 }
+
+.required-mark { color: var(--danger); font-weight: 400; font-size: 12px; }
+.ocr-status { font-size: 12px; color: var(--primary); margin-top: 2px; min-height: 16px; }
+.item-site-search { margin-bottom: 6px; }
+.item-site-select { margin-bottom: 4px; }

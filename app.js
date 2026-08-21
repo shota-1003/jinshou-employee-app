@@ -203,10 +203,82 @@ async function doSubmitLeave() {
   }
 }
 
-// ---------- 経費立替申請(複数明細) ----------
+// ---------- 経費立替申請 / 会社経費登録(複数明細、共通画面) ----------
 
+const EXPENSE_PAYMENT_OPTIONS = {
+  employee_advance: ['現金', 'クレジットカード', '電子マネー', '振込', 'その他'],
+  company_expense: ['会社現金', '法人カード', '会社口座', 'その他'],
+};
+const EXPENSE_SCREEN_TEXT = {
+  employee_advance: {
+    title: '経費立替申請',
+    hint: '自分で支払った会社経費を申請します(後日会社から返金)。領収書の写真が必須です。複数の領収書をまとめて1回の申請にできます。',
+  },
+  company_expense: {
+    title: '会社経費登録',
+    hint: '会社(現金・法人カード・会社口座等)が既に支払った経費を登録します。社員への返金は発生しません。領収書の写真が必須です。',
+  },
+};
+
+let currentExpenseCategory = 'employee_advance';
 let expenseItemSeq = 0;
-const expenseItemState = new Map(); // itemId -> { driveFileId, driveFileUrl, uploading }
+const expenseItemState = new Map(); // itemId -> { driveFileId, driveFileUrl, uploading, siteId }
+
+function enterExpenseScreen(category) {
+  currentExpenseCategory = category;
+  const text = EXPENSE_SCREEN_TEXT[category];
+  document.getElementById('expense-screen-title').textContent = text.title;
+  document.getElementById('expense-screen-hint').textContent = text.hint;
+  resetExpenseForm();
+  hideError('expense-error');
+  showScreen('expense');
+}
+
+async function populateSiteSelect(selectEl, query) {
+  try {
+    const rows = await rpc('search_sites', { p_query: query || null });
+    const current = selectEl.value;
+    selectEl.innerHTML = '<option value="">選択してください</option>' + rows.map((s) => `<option value="${s.id}" data-name="${s.site_name}">${s.site_name}</option>`).join('');
+    if (current && rows.some((s) => String(s.id) === current)) selectEl.value = current;
+  } catch (e) { /* 現場マスターが引けない場合は空のまま(自由入力は不可、要確認扱い) */ }
+}
+
+async function runOcrForItem(card, file) {
+  const ocrStatus = card.querySelector('.ocr-status');
+  ocrStatus.textContent = 'AIが内容を読み取っています...';
+  try {
+    const base64 = await fileToBase64(file);
+    const session = getSession();
+    const res = await fetch(`${N8N_BASE_URL}/webhook/receipt-ocr-proxy`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeCode: session.employeeCode, mimeType: file.type || 'image/jpeg', base64 }),
+    });
+    const json = await res.json().catch(() => null);
+    const receipt = json && json.receipts && json.receipts[0];
+    if (!receipt) { ocrStatus.textContent = ''; return; }
+
+    // 読み取れた事実だけをフォームへ候補入力する(現場・使用目的・取引先はプロンプト側で
+    // 出力させていないため、ここで埋まることはない=AIが推測で確定しない設計)。
+    if (receipt.document_date) card.querySelector('.item-date').value = receipt.document_date;
+    if (receipt.counterparty_raw) card.querySelector('.item-store').value = receipt.counterparty_raw;
+    if (receipt.total_amount != null) { card.querySelector('.item-amount').value = receipt.total_amount; updateExpenseTotal(); }
+    if (receipt.tax_amount != null) card.querySelector('.item-tax').value = receipt.tax_amount;
+
+    const confidence = receipt.confidence || 'low';
+    if (confidence === 'high') {
+      ocrStatus.textContent = 'AIが内容を読み取りました。内容を確認してください(間違っていれば修正できます)。';
+    } else if (confidence === 'medium') {
+      ocrStatus.textContent = '読み取り精度が高くありません。内容を必ず確認・修正してください。';
+    } else {
+      ocrStatus.textContent = '読み取りに自信が持てませんでした。手入力で確認してください。';
+      // 低信頼は候補として埋めない方が安全なため、金額以外はクリアする
+      card.querySelector('.item-date').value = '';
+      card.querySelector('.item-store').value = '';
+    }
+  } catch (e) {
+    ocrStatus.textContent = '';
+  }
+}
 
 function addExpenseItem() {
   const template = document.getElementById('expense-item-template');
@@ -216,6 +288,14 @@ function addExpenseItem() {
   card.dataset.itemId = itemId;
   clone.querySelector('.item-label').textContent = `明細${expenseItemSeq}`;
   expenseItemState.set(itemId, { driveFileId: null, driveFileUrl: null, uploading: false });
+
+  const paymentSelect = clone.querySelector('.item-payment');
+  paymentSelect.innerHTML = EXPENSE_PAYMENT_OPTIONS[currentExpenseCategory].map((p) => `<option value="${p}">${p}</option>`).join('');
+
+  const siteSelect = clone.querySelector('.item-site-select');
+  const siteSearch = clone.querySelector('.item-site-search');
+  populateSiteSelect(siteSelect, '');
+  siteSearch.addEventListener('input', () => populateSiteSelect(siteSelect, siteSearch.value.trim()));
 
   clone.querySelector('.remove-item-btn').addEventListener('click', () => {
     document.querySelector(`[data-item-id="${itemId}"]`).remove();
@@ -235,6 +315,8 @@ function addExpenseItem() {
     status.className = 'photo-status uploading';
     const state = expenseItemState.get(itemId);
     state.uploading = true;
+    const cardEl = document.querySelector(`[data-item-id="${itemId}"]`);
+    runOcrForItem(cardEl, file); // 並行実行(アップロード完了を待たずにOCRも進める)
     try {
       const session = getSession();
       const result = await uploadReceiptPhoto(session.employeeCode, file);
@@ -291,27 +373,37 @@ async function doSubmitExpense() {
     const date = card.querySelector('.item-date').value;
     const store = card.querySelector('.item-store').value.trim();
     const amount = Number(card.querySelector('.item-amount').value || 0);
-    const site = card.querySelector('.item-site').value.trim();
+    const tax = card.querySelector('.item-tax').value;
+    const siteSelect = card.querySelector('.item-site-select');
+    const siteId = siteSelect.value || null;
+    const siteName = siteId ? siteSelect.options[siteSelect.selectedIndex].dataset.name : null;
+    const vendor = card.querySelector('.item-vendor').value.trim();
     const purpose = card.querySelector('.item-purpose').value.trim();
+    const payment = card.querySelector('.item-payment').value;
     const note = card.querySelector('.item-note').value.trim();
     const label = card.querySelector('.item-label').textContent;
 
     if (state.uploading) { showError('expense-error', `${label}: 写真のアップロード中です。少しお待ちください。`); return; }
-    if (!state.driveFileId) { showError('expense-error', `${label}: 領収書の写真を添付してください。`); return; }
+    if (!state.driveFileId) { showError('expense-error', `${label}: 領収書またはレシートの写真を添付してください。`); return; }
     if (!date || !store || !amount) { showError('expense-error', `${label}: 利用日・支払先・金額は必須です。`); return; }
+    if (!purpose) { showError('expense-error', `${label}: 使用目的を入力してください。`); return; }
+    if (!siteId) { showError('expense-error', `${label}: 現場を選択してください。`); return; }
 
     items.push({
-      document_date: date, store, amount, site_name: site || null, purpose: purpose || null,
-      drive_file_id: state.driveFileId, drive_file_url: state.driveFileUrl, note: note || null,
+      document_date: date, store, amount, tax_amount: tax ? Number(tax) : null,
+      site_id: siteId, site_name: siteName, vendor_name: vendor || null, purpose,
+      payment_method: payment, content_description: note || null,
+      drive_file_id: state.driveFileId, drive_file_url: state.driveFileUrl,
     });
   }
 
   const btn = document.getElementById('expense-submit');
   btn.disabled = true;
   try {
-    const result = await rpc('submit_expense_claim', { p_employee_code: session.employeeCode, p_items: items });
+    const result = await rpc('submit_expense_claim', { p_employee_code: session.employeeCode, p_expense_category: currentExpenseCategory, p_items: items });
     const r = result && result[0];
-    document.getElementById('done-message').textContent = `経費申請を受け付けました(${r ? r.item_count : items.length}件、合計${r ? Number(r.total_amount).toLocaleString() : ''}円)。承認をお待ちください。`;
+    const label = currentExpenseCategory === 'company_expense' ? '会社経費登録' : '経費立替申請';
+    document.getElementById('done-message').textContent = `${label}を受け付けました(${r ? r.item_count : items.length}件、合計${r ? Number(r.total_amount).toLocaleString() : ''}円)。承認をお待ちください。`;
     showScreen('done');
     resetExpenseForm();
   } catch (e) {
@@ -607,13 +699,14 @@ function init() {
       const target = el.getAttribute('data-nav');
       if (el.disabled) return;
       if (target === 'menu') { enterMenu(); return; }
+      if (target === 'expense-advance') { enterExpenseScreen('employee_advance'); return; }
+      if (target === 'expense-company') { enterExpenseScreen('company_expense'); return; }
       showScreen(target);
     });
   });
 
   SCREEN_ENTER_HOOKS.leave = () => { updateLeaveDaysDisplay(); loadLeaveBalance(); };
   SCREEN_ENTER_HOOKS['leave-history'] = loadLeaveHistory;
-  SCREEN_ENTER_HOOKS.expense = () => { resetExpenseForm(); hideError('expense-error'); };
   SCREEN_ENTER_HOOKS.history = loadHistory;
   SCREEN_ENTER_HOOKS['supply-request'] = () => { hideError('supply-req-error'); };
   SCREEN_ENTER_HOOKS['my-supply'] = loadMySupply;

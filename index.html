@@ -43,8 +43,8 @@
         <div>会議申請<span class="desc">会議費の申請</span></div>
         <div class="arrow">›</div>
       </button>
-      <button type="button" class="menu-item disabled" disabled>
-        <div>支給品申請<span class="desc">準備中です</span></div>
+      <button type="button" class="menu-item" data-nav="supply-request">
+        <div>支給品申請<span class="desc">制服・安全用品などを申請</span></div>
         <div class="arrow">›</div>
       </button>
       <button type="button" class="menu-item disabled" disabled>
@@ -59,6 +59,18 @@
         <div>申請履歴<span class="desc">これまでの申請と状態を確認</span></div>
         <div class="arrow">›</div>
       </button>
+      <button type="button" class="menu-item" data-nav="my-supply">
+        <div>支給品履歴<span class="desc">これまで支給された物を確認</span></div>
+        <div class="arrow">›</div>
+      </button>
+    </div>
+
+    <div class="section-title" id="admin-section-title" style="display:none;">管理者メニュー</div>
+    <div class="menu-list" id="admin-menu-list" style="display:none;">
+      <button type="button" class="menu-item" data-nav="admin">
+        <div>社員検索・支給品管理<span class="desc">社員別の有給・支給品状況を確認</span></div>
+        <div class="arrow">›</div>
+      </button>
     </div>
 
     <button class="link" id="logout-btn">別の社員番号でログインし直す</button>
@@ -67,6 +79,15 @@
   <!-- 有給申請フォーム -->
   <section id="screen-leave" class="screen">
     <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+
+    <div class="card summary-card">
+      <div class="summary-row"><span>有給残日数</span><span class="summary-value" id="leave-summary-balance">-</span></div>
+      <div class="summary-row"><span>今年使用</span><span class="summary-value" id="leave-summary-used">-</span></div>
+      <div class="summary-row"><span>今年取得回数</span><span class="summary-value" id="leave-summary-count">-</span></div>
+      <div class="hint-inline" id="leave-summary-note"></div>
+    </div>
+    <button type="button" class="secondary" data-nav="leave-history">取得履歴を見る</button>
+
     <div class="card">
       <div class="form-title">有給休暇申請</div>
       <label for="leave-start">開始日</label>
@@ -179,6 +200,93 @@
     <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
     <div class="form-title">申請履歴</div>
     <div id="history-list"></div>
+  </section>
+
+  <!-- 有給取得履歴 -->
+  <section id="screen-leave-history" class="screen">
+    <button type="button" class="back-link" data-nav="leave">‹ 戻る</button>
+    <div class="form-title">有給取得履歴</div>
+    <div id="leave-history-list"></div>
+  </section>
+
+  <!-- 支給品申請フォーム -->
+  <section id="screen-supply-request" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="card">
+      <div class="form-title">支給品申請</div>
+      <label for="supply-req-item">支給品名</label>
+      <div class="hint-inline">例: 制服ジャケット、ヘルメット、安全靴</div>
+      <input type="text" id="supply-req-item">
+      <label for="supply-req-qty">数量</label>
+      <input type="number" id="supply-req-qty" min="1" value="1">
+      <label for="supply-req-size">サイズ</label>
+      <div class="hint-inline">必要な物のみ(任意)</div>
+      <input type="text" id="supply-req-size">
+      <label for="supply-req-reason">申請理由</label>
+      <input type="text" id="supply-req-reason" placeholder="例: 破損のため交換希望">
+      <div class="error" id="supply-req-error"></div>
+      <button id="supply-req-submit">申請する</button>
+    </div>
+  </section>
+
+  <!-- 自分の支給品履歴 -->
+  <section id="screen-my-supply" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="form-title">支給品履歴</div>
+    <div id="my-supply-list"></div>
+  </section>
+
+  <!-- 管理者画面 -->
+  <section id="screen-admin" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="form-title">社員検索・支給品管理</div>
+
+    <div class="card">
+      <label for="admin-employee-select">社員を選択</label>
+      <select id="admin-employee-select"></select>
+      <div id="admin-employee-detail"></div>
+    </div>
+
+    <div class="section-title">支給品を記録する(実際に渡した時)</div>
+    <div class="card">
+      <label for="admin-issue-employee">対象社員</label>
+      <select id="admin-issue-employee"></select>
+      <label for="admin-issue-date">支給日</label>
+      <input type="date" id="admin-issue-date">
+      <label for="admin-issue-item">支給品名</label>
+      <input type="text" id="admin-issue-item">
+      <label for="admin-issue-qty">数量</label>
+      <input type="number" id="admin-issue-qty" min="1" value="1">
+      <label for="admin-issue-size">サイズ</label>
+      <input type="text" id="admin-issue-size">
+      <label for="admin-issue-condition">新品／中古</label>
+      <select id="admin-issue-condition">
+        <option value="new">新品</option>
+        <option value="used">中古</option>
+      </select>
+      <label for="admin-issue-reason">支給理由</label>
+      <input type="text" id="admin-issue-reason">
+      <div class="checkbox-row">
+        <input type="checkbox" id="admin-issue-return">
+        <label for="admin-issue-return">返却必要</label>
+      </div>
+      <label for="admin-issue-note">備考</label>
+      <input type="text" id="admin-issue-note">
+      <div class="error" id="admin-issue-error"></div>
+      <button id="admin-issue-submit">記録する</button>
+    </div>
+
+    <div class="section-title">支給品を検索</div>
+    <div class="card">
+      <label for="admin-search-item">品目名で絞り込み</label>
+      <input type="text" id="admin-search-item" placeholder="例: 制服">
+      <div class="checkbox-row">
+        <input type="checkbox" id="admin-search-unreturned">
+        <label for="admin-search-unreturned">未返却のみ</label>
+      </div>
+      <button type="button" class="secondary" id="admin-search-btn">検索</button>
+    </div>
+    <div id="admin-search-results"></div>
   </section>
 
   <!-- 完了画面 -->

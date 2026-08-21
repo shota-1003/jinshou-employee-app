@@ -94,6 +94,9 @@ async function doLogin() {
 function enterMenu() {
   const session = getSession();
   document.getElementById('menu-greeting').textContent = `こんにちは、${session.employeeName}さん`;
+  const showAdmin = session.requestRole === 'executive';
+  document.getElementById('admin-section-title').style.display = showAdmin ? '' : 'none';
+  document.getElementById('admin-menu-list').style.display = showAdmin ? '' : 'none';
   showScreen('menu');
 }
 
@@ -115,15 +118,47 @@ async function loadLeaveBalance() {
   const box = document.getElementById('leave-balance-box');
   box.textContent = '残日数を確認中...';
   try {
-    const rows = await rpc('get_leave_balance', { p_employee_code: session.employeeCode });
+    const rows = await rpc('get_leave_summary', { p_employee_code: session.employeeCode });
     const b = rows && rows[0];
+    document.getElementById('leave-summary-used').textContent = b ? `${b.used_this_year}日` : '-';
+    document.getElementById('leave-summary-count').textContent = b ? `${b.taken_count_this_year}回` : '-';
     if (!b || !b.has_initial_grant) {
-      box.textContent = '現在の有給残日数: 未登録(会社側で登録され次第表示されます)';
+      document.getElementById('leave-summary-balance').textContent = '未登録';
+      document.getElementById('leave-summary-note').textContent = '正式な有給残日数はまだ会社側で登録されていません。';
+      box.textContent = '';
     } else {
-      box.textContent = `現在の有給残日数: ${b.current_balance}日`;
+      document.getElementById('leave-summary-balance').textContent = `${b.current_balance}日`;
+      document.getElementById('leave-summary-note').textContent = '';
+      box.textContent = `申請後の残日数見込み: 計算中`;
     }
   } catch (e) {
     box.textContent = '';
+  }
+}
+
+async function loadLeaveHistory() {
+  const session = getSession();
+  const listEl = document.getElementById('leave-history-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_leave_taken_history', { p_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) {
+      listEl.innerHTML = '<div class="hint">承認済みの有給取得履歴はまだありません。</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    rows.forEach((r) => {
+      const div = document.createElement('div');
+      div.className = 'history-item';
+      div.innerHTML = `
+        <div class="row1"><span>${r.start_date} 〜 ${r.end_date}</span><span>${r.requested_days}日</span></div>
+        <div class="row2">${r.reason || ''}${r.is_half_day ? '(半休)' : ''}</div>
+        <span class="status-badge done">承認済み</span>
+      `;
+      listEl.appendChild(div);
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }
 }
 
@@ -330,7 +365,7 @@ async function doSubmitMeeting() {
 
 // ---------- 申請履歴 ----------
 
-const REQUEST_TYPE_LABEL = { paid_leave: '有給休暇申請', expense_reimbursement: '経費立替申請', meeting: '会議申請', other: 'その他' };
+const REQUEST_TYPE_LABEL = { paid_leave: '有給休暇申請', expense_reimbursement: '経費立替申請', meeting: '会議申請', supply_item: '支給品申請', other: 'その他' };
 const STATUS_LABEL = {
   ready_for_review: '確認中', waiting_employee_info: '確認中', needs_review: '確認中', stopped: '処理停止',
   waiting_approval: '承認待ち', approved: '承認済み', rejected: '却下', on_hold: '保留',
@@ -366,6 +401,184 @@ async function loadHistory() {
   }
 }
 
+// ---------- 支給品申請(社員) ----------
+
+async function doSubmitSupplyRequest() {
+  const session = getSession();
+  const item = document.getElementById('supply-req-item').value.trim();
+  const qty = document.getElementById('supply-req-qty').value;
+  const size = document.getElementById('supply-req-size').value.trim();
+  const reason = document.getElementById('supply-req-reason').value.trim();
+  hideError('supply-req-error');
+
+  if (!item || !reason) {
+    showError('supply-req-error', '支給品名・申請理由は必須です。');
+    return;
+  }
+
+  const btn = document.getElementById('supply-req-submit');
+  btn.disabled = true;
+  try {
+    await rpc('submit_supply_request', {
+      p_employee_code: session.employeeCode, p_item_name: item, p_quantity: qty ? Number(qty) : 1,
+      p_size: size || null, p_reason: reason,
+    });
+    document.getElementById('done-message').textContent = '支給品申請を受け付けました。承認をお待ちください。';
+    showScreen('done');
+    ['supply-req-item', 'supply-req-size', 'supply-req-reason'].forEach((id) => { document.getElementById(id).value = ''; });
+    document.getElementById('supply-req-qty').value = '1';
+  } catch (e) {
+    showError('supply-req-error', '送信に失敗しました。もう一度お試しください。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function formatElapsed(days) {
+  if (days == null) return '';
+  if (days < 30) return `${days}日`;
+  if (days < 365) return `${Math.floor(days / 30)}ヶ月`;
+  const years = Math.floor(days / 365);
+  const months = Math.floor((days % 365) / 30);
+  return months > 0 ? `${years}年${months}ヶ月` : `${years}年`;
+}
+
+async function loadMySupply() {
+  const session = getSession();
+  const listEl = document.getElementById('my-supply-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_supply_history', { p_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) {
+      listEl.innerHTML = '<div class="hint">まだ支給履歴がありません。</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    rows.forEach((r) => {
+      const div = document.createElement('div');
+      div.className = 'supply-item';
+      div.innerHTML = `
+        <div class="row1"><span>${r.item_name}</span><span>${r.quantity}個${r.size ? '(' + r.size + ')' : ''}</span></div>
+        <div class="row2">支給日: ${r.issued_date}${r.condition === 'new' ? '・新品' : r.condition === 'used' ? '・中古' : ''}</div>
+        <div class="elapsed">経過: ${formatElapsed(r.elapsed_days)}${r.needs_return ? (r.returned_date ? `・返却済(${r.returned_date})` : '・返却必要') : ''}</div>
+      `;
+      listEl.appendChild(div);
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+// ---------- 管理者画面 ----------
+
+function isAdmin() {
+  const session = getSession();
+  return session && session.requestRole === 'executive';
+}
+
+async function loadAdminEmployeeSelects() {
+  const session = getSession();
+  const rows = await rpc('list_active_employees', { p_admin_employee_code: session.employeeCode });
+  const options = rows.map((e) => `<option value="${e.employee_code}">${e.employee_code} ${e.employee_name}</option>`).join('');
+  document.getElementById('admin-employee-select').innerHTML = options;
+  document.getElementById('admin-issue-employee').innerHTML = options;
+}
+
+async function loadAdminEmployeeDetail() {
+  const session = getSession();
+  const targetCode = document.getElementById('admin-employee-select').value;
+  const detailEl = document.getElementById('admin-employee-detail');
+  if (!targetCode) return;
+  detailEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_employee_admin_summary', { p_admin_employee_code: session.employeeCode, p_target_employee_code: targetCode });
+    const s = rows && rows[0];
+    if (!s) { detailEl.innerHTML = ''; return; }
+    const supplyLines = (s.supply_history || []).slice(0, 10).map((h) => `<div class="row2">${h.issued_date} ${h.item_name} ${h.quantity}個</div>`).join('');
+    detailEl.innerHTML = `
+      <div class="summary-row"><span>有給残日数</span><span class="summary-value">${s.leave_balance != null ? s.leave_balance + '日' : '未登録'}</span></div>
+      <div class="summary-row"><span>今年使用</span><span class="summary-value">${s.leave_used_this_year}日(${s.leave_taken_count_this_year}回)</span></div>
+      <div class="section-title" style="margin:14px 0 6px;">支給品履歴</div>
+      ${supplyLines || '<div class="hint">支給履歴なし</div>'}
+    `;
+  } catch (e) {
+    detailEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doAdminRecordIssuance() {
+  const session = getSession();
+  const targetCode = document.getElementById('admin-issue-employee').value;
+  const date = document.getElementById('admin-issue-date').value;
+  const item = document.getElementById('admin-issue-item').value.trim();
+  const qty = document.getElementById('admin-issue-qty').value;
+  const size = document.getElementById('admin-issue-size').value.trim();
+  const condition = document.getElementById('admin-issue-condition').value;
+  const reason = document.getElementById('admin-issue-reason').value.trim();
+  const needsReturn = document.getElementById('admin-issue-return').checked;
+  const note = document.getElementById('admin-issue-note').value.trim();
+  hideError('admin-issue-error');
+
+  if (!targetCode || !date || !item) {
+    showError('admin-issue-error', '対象社員・支給日・支給品名は必須です。');
+    return;
+  }
+
+  const btn = document.getElementById('admin-issue-submit');
+  btn.disabled = true;
+  try {
+    await rpc('record_supply_issuance', {
+      p_admin_employee_code: session.employeeCode, p_target_employee_code: targetCode, p_issued_date: date,
+      p_item_name: item, p_quantity: qty ? Number(qty) : 1, p_size: size || null, p_condition: condition,
+      p_reason: reason || null, p_needs_return: needsReturn, p_note: note || null,
+    });
+    ['admin-issue-date', 'admin-issue-item', 'admin-issue-size', 'admin-issue-reason', 'admin-issue-note'].forEach((id) => { document.getElementById(id).value = ''; });
+    document.getElementById('admin-issue-qty').value = '1';
+    document.getElementById('admin-issue-return').checked = false;
+    if (document.getElementById('admin-employee-select').value === targetCode) loadAdminEmployeeDetail();
+    showError('admin-issue-error', '記録しました。');
+    document.getElementById('admin-issue-error').style.color = 'var(--success)';
+  } catch (e) {
+    document.getElementById('admin-issue-error').style.color = '';
+    showError('admin-issue-error', '記録に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function doAdminSearch() {
+  const session = getSession();
+  const itemName = document.getElementById('admin-search-item').value.trim();
+  const unreturnedOnly = document.getElementById('admin-search-unreturned').checked;
+  const resultsEl = document.getElementById('admin-search-results');
+  resultsEl.innerHTML = '<div class="hint">検索中...</div>';
+  try {
+    const rows = await rpc('get_supply_admin_list', {
+      p_admin_employee_code: session.employeeCode, p_item_name: itemName || null, p_unreturned_only: unreturnedOnly,
+    });
+    if (!rows || rows.length === 0) { resultsEl.innerHTML = '<div class="hint">該当なし</div>'; return; }
+    resultsEl.innerHTML = '';
+    rows.forEach((r) => {
+      const div = document.createElement('div');
+      div.className = 'admin-result-item';
+      div.innerHTML = `
+        <div class="row1"><span>${r.employee_name}(${r.employee_code})</span><span>${r.item_name} ${r.quantity}個</span></div>
+        <div class="row2">支給日: ${r.issued_date}・経過${formatElapsed(r.elapsed_days)}${r.needs_return ? (r.returned_date ? `・返却済(${r.returned_date})` : '・未返却') : ''}</div>
+        ${r.needs_return && !r.returned_date ? `<button type="button" class="return-btn" data-issuance-id="${r.id}">返却済みにする</button>` : ''}
+      `;
+      resultsEl.appendChild(div);
+    });
+    resultsEl.querySelectorAll('.return-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await rpc('mark_supply_returned', { p_admin_employee_code: session.employeeCode, p_issuance_id: Number(btn.dataset.issuanceId), p_returned_date: new Date().toISOString().slice(0, 10) });
+        doAdminSearch();
+      });
+    });
+  } catch (e) {
+    resultsEl.innerHTML = '<div class="hint">検索に失敗しました。</div>';
+  }
+}
+
 // ---------- 初期化 ----------
 
 function init() {
@@ -383,6 +596,12 @@ function init() {
 
   document.getElementById('meeting-submit').addEventListener('click', doSubmitMeeting);
 
+  document.getElementById('supply-req-submit').addEventListener('click', doSubmitSupplyRequest);
+
+  document.getElementById('admin-employee-select').addEventListener('change', loadAdminEmployeeDetail);
+  document.getElementById('admin-issue-submit').addEventListener('click', doAdminRecordIssuance);
+  document.getElementById('admin-search-btn').addEventListener('click', doAdminSearch);
+
   document.querySelectorAll('[data-nav]').forEach((el) => {
     el.addEventListener('click', () => {
       const target = el.getAttribute('data-nav');
@@ -393,8 +612,16 @@ function init() {
   });
 
   SCREEN_ENTER_HOOKS.leave = () => { updateLeaveDaysDisplay(); loadLeaveBalance(); };
+  SCREEN_ENTER_HOOKS['leave-history'] = loadLeaveHistory;
   SCREEN_ENTER_HOOKS.expense = () => { resetExpenseForm(); hideError('expense-error'); };
   SCREEN_ENTER_HOOKS.history = loadHistory;
+  SCREEN_ENTER_HOOKS['supply-request'] = () => { hideError('supply-req-error'); };
+  SCREEN_ENTER_HOOKS['my-supply'] = loadMySupply;
+  SCREEN_ENTER_HOOKS.admin = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadAdminEmployeeSelects();
+    document.getElementById('admin-search-results').innerHTML = '';
+  };
 
   const session = getSession();
   if (session && session.employeeId) {

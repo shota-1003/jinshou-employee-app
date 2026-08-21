@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>迅翔興業 社員申請</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg">
+<link rel="apple-touch-icon" href="icons/icon.svg">
+<meta name="theme-color" content="#1a3a6b">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>迅翔興業 社員申請</header>
+<main>
+
+  <!-- ログイン画面 -->
+  <section id="screen-login" class="screen">
+    <div class="card">
+      <label for="login-code">社員番号を入力してください</label>
+      <input type="text" id="login-code" inputmode="numeric" placeholder="例: 0001" autocomplete="off">
+      <div class="error" id="login-error">社員番号が確認できませんでした。</div>
+      <button id="login-btn">ログイン</button>
+    </div>
+  </section>
+
+  <!-- メニュー画面 -->
+  <section id="screen-menu" class="screen">
+    <div class="greeting" id="menu-greeting"></div>
+    <div class="menu-list">
+      <button type="button" class="menu-item" data-nav="leave">
+        <div>有給休暇申請<span class="desc">開始日・終了日・理由を入力して申請</span></div>
+        <div class="arrow">›</div>
+      </button>
+      <button type="button" class="menu-item" data-nav="expense">
+        <div>経費精算(手入力)<span class="desc">レシート写真がない経費を直接申請</span></div>
+        <div class="arrow">›</div>
+      </button>
+      <button type="button" class="menu-item disabled" disabled>
+        <div>借入申請<span class="desc">準備中です</span></div>
+        <div class="arrow">›</div>
+      </button>
+    </div>
+    <button class="link" id="logout-btn">別の社員番号でログインし直す</button>
+  </section>
+
+  <!-- 有給申請フォーム -->
+  <section id="screen-leave" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="card">
+      <label for="leave-start">開始日</label>
+      <input type="date" id="leave-start">
+      <label for="leave-end">終了日</label>
+      <input type="date" id="leave-end">
+      <div class="checkbox-row">
+        <input type="checkbox" id="leave-half">
+        <label for="leave-half">半休</label>
+      </div>
+      <label for="leave-days">日数</label>
+      <input type="number" id="leave-days" step="0.5" min="0.5" placeholder="例: 1">
+      <label for="leave-reason">事由</label>
+      <input type="text" id="leave-reason" placeholder="例: 私用のため">
+      <label for="leave-note">備考(任意)</label>
+      <textarea id="leave-note"></textarea>
+      <div class="balance-note" id="leave-balance-note"></div>
+      <div class="error" id="leave-error"></div>
+      <button id="leave-submit">申請する</button>
+    </div>
+  </section>
+
+  <!-- 経費精算(手入力)フォーム -->
+  <section id="screen-expense" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="card">
+      <label for="expense-date">日付</label>
+      <input type="date" id="expense-date">
+      <label for="expense-store">店舗名・支払先</label>
+      <input type="text" id="expense-store" placeholder="例: ○○ガソリンスタンド">
+      <label for="expense-amount">金額(円)</label>
+      <input type="number" id="expense-amount" min="1" placeholder="例: 3000">
+      <label for="expense-site">現場名</label>
+      <input type="text" id="expense-site" placeholder="例: ○○現場">
+      <label for="expense-purpose">使用目的</label>
+      <input type="text" id="expense-purpose" placeholder="例: 給油代">
+      <label for="expense-payment">支払方法</label>
+      <select id="expense-payment">
+        <option value="現金">現金</option>
+        <option value="クレジットカード">クレジットカード</option>
+        <option value="電子マネー">電子マネー</option>
+        <option value="振込">振込</option>
+        <option value="その他">その他</option>
+      </select>
+      <div class="error" id="expense-error"></div>
+      <button id="expense-submit">申請する</button>
+    </div>
+  </section>
+
+  <!-- 完了画面 -->
+  <section id="screen-done" class="screen">
+    <div class="card center">
+      <div class="success-icon">✓</div>
+      <div id="done-message" style="font-size:15px; line-height:1.6;"></div>
+      <button class="secondary" data-nav="menu">メニューに戻る</button>
+    </div>
+  </section>
+
+</main>
+<script src="app.js"></script>
+</body>
+</html>

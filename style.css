@@ -317,3 +317,30 @@ button.link {
   font-size: 12px; font-weight: 400; padding: 6px 14px; margin: 6px auto 0; border-radius: 8px;
 }
 .item-details { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+
+.unread-badge {
+  position: absolute; top: 10px; right: 10px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--danger);
+}
+.anon-notice {
+  background: #eef2f9; border-radius: 12px; padding: 12px 14px; font-size: 13px; color: var(--primary);
+  margin-bottom: 16px; line-height: 1.5;
+}
+.consult-code-box {
+  text-align: center; padding: 20px; background: var(--card-bg); border-radius: 14px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 16px;
+}
+.consult-code-box .code { font-size: 26px; font-weight: 700; color: var(--primary); letter-spacing: 0.1em; margin: 8px 0; }
+.chat-thread { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.chat-bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.5; }
+.chat-bubble.from-employee { align-self: flex-end; background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+.chat-bubble.from-admin { align-self: flex-start; background: var(--card-bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.chat-bubble .meta { font-size: 10px; opacity: 0.7; margin-top: 4px; }
+.consult-list-item {
+  padding: 14px 16px; border-radius: 12px; background: var(--card-bg); border: 1px solid var(--border);
+  margin-bottom: 8px; cursor: pointer;
+}
+.urgency-tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; }
+.urgency-tag.urgent { background: #fbeae8; color: var(--danger); }
+.urgency-tag.soon { background: #fff4e0; color: #a15c00; }
+.urgency-tag.normal { background: #eef2f9; color: var(--primary); }

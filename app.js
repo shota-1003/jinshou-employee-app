@@ -235,6 +235,7 @@ function enterMenu() {
   document.getElementById('admin-section-title').style.display = showAdmin ? '' : 'none';
   document.getElementById('admin-menu-list').style.display = showAdmin ? '' : 'none';
   loadHomeLeaveStats('home-leave-balance', 'home-leave-used');
+  checkAnonUnreadBadge();
   showScreen('menu');
 }
 
@@ -851,6 +852,216 @@ async function doAdminSearch() {
   }
 }
 
+// ---------- 匿名相談ボックス ----------
+// 通常の申請(社員番号と紐付く)とは完全に別のデータ・別のローカルストレージキーで扱う。
+// ここにemployeeCode等を混ぜない(混ぜた瞬間に匿名性が崩れるため)。
+
+const ANON_STORAGE_KEY = 'jinshou_anon_consultations'; // [{code, token, category, createdAt}]
+let currentAnonCode = null;
+let currentAnonToken = null;
+let currentAnonAdminCode = null;
+
+function getAnonConsultations() {
+  try { return JSON.parse(localStorage.getItem(ANON_STORAGE_KEY)) || []; } catch { return []; }
+}
+function saveAnonConsultation(entry) {
+  const list = getAnonConsultations();
+  list.unshift(entry);
+  localStorage.setItem(ANON_STORAGE_KEY, JSON.stringify(list));
+}
+
+const URGENCY_LABEL = { normal: '通常', soon: '早めに対応希望', urgent: '緊急' };
+const ANON_STATUS_LABEL = { unconfirmed: '未確認', confirmed: '確認済み', in_progress: '対応中', resolved: '対応完了' };
+
+async function doSubmitAnonConsultation() {
+  const category = document.getElementById('anon-category').value;
+  const content = document.getElementById('anon-content').value.trim();
+  const urgency = document.querySelector('input[name="anon-urgency"]:checked').value;
+  hideError('anon-submit-error');
+
+  if (!content) {
+    showError('anon-submit-error', '相談内容を入力してください。');
+    return;
+  }
+
+  const btn = document.getElementById('anon-submit-btn');
+  btn.disabled = true;
+  try {
+    const rows = await rpc('submit_anonymous_consultation', { p_category: category, p_content: content, p_urgency: urgency });
+    const r = rows[0];
+    saveAnonConsultation({ code: r.consultation_code, token: r.anon_token, category, createdAt: new Date().toISOString() });
+    document.getElementById('anon-content').value = '';
+    document.getElementById('anon-done-code').textContent = r.consultation_code;
+    showScreen('anon-done');
+  } catch (e) {
+    showError('anon-submit-error', '送信に失敗しました。もう一度お試しください。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadMyAnonConsultations() {
+  const listEl = document.getElementById('anon-my-list');
+  const list = getAnonConsultations();
+  if (list.length === 0) { listEl.innerHTML = '<div class="hint">まだ相談を送っていません。</div>'; return; }
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+
+  const rendered = [];
+  for (const entry of list) {
+    try {
+      const rows = await rpc('get_anonymous_consultation_thread', { p_consultation_code: entry.code, p_anon_token: entry.token });
+      const status = rows[0] ? rows[0].status : 'unconfirmed';
+      const last = rows[rows.length - 1];
+      rendered.push(`
+        <div class="consult-list-item" data-code="${entry.code}">
+          <div class="row1"><span>${entry.category}</span><span class="status-badge ${status === 'resolved' ? 'done' : ''}">${ANON_STATUS_LABEL[status]}</span></div>
+          <div class="row2">相談番号: ${entry.code}${last ? ' ・最新: ' + (last.sender === 'admin' ? '会社からの返信あり' : '自分の送信') : ''}</div>
+        </div>
+      `);
+    } catch (e) {
+      rendered.push(`<div class="consult-list-item"><div class="row1">相談番号: ${entry.code}</div><div class="row2">読み込みに失敗しました</div></div>`);
+    }
+  }
+  listEl.innerHTML = rendered.join('');
+  listEl.querySelectorAll('.consult-list-item').forEach((el) => {
+    el.addEventListener('click', () => openAnonThread(el.dataset.code));
+  });
+}
+
+async function openAnonThread(code) {
+  const entry = getAnonConsultations().find((c) => c.code === code);
+  if (!entry) return;
+  currentAnonCode = entry.code;
+  currentAnonToken = entry.token;
+  document.getElementById('anon-thread-code').textContent = code;
+  showScreen('anon-thread');
+  await renderAnonThread();
+}
+
+async function renderAnonThread() {
+  const messagesEl = document.getElementById('anon-thread-messages');
+  messagesEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_anonymous_consultation_thread', { p_consultation_code: currentAnonCode, p_anon_token: currentAnonToken });
+    messagesEl.innerHTML = rows.map((m) => `
+      <div class="chat-bubble from-${m.sender}">
+        ${m.message}
+        <div class="meta">${m.sender === 'admin' ? '会社' : '自分'} ・ ${new Date(m.sent_at).toLocaleString('ja-JP')}</div>
+      </div>
+    `).join('') || '<div class="hint">メッセージがありません。</div>';
+  } catch (e) {
+    messagesEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doSendAnonThreadMessage() {
+  const message = document.getElementById('anon-thread-reply').value.trim();
+  hideError('anon-thread-error');
+  if (!message) return;
+  const btn = document.getElementById('anon-thread-send');
+  btn.disabled = true;
+  try {
+    await rpc('send_anonymous_employee_message', { p_consultation_code: currentAnonCode, p_anon_token: currentAnonToken, p_message: message });
+    document.getElementById('anon-thread-reply').value = '';
+    await renderAnonThread();
+  } catch (e) {
+    showError('anon-thread-error', '送信に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function checkAnonUnreadBadge() {
+  const list = getAnonConsultations();
+  const badge = document.getElementById('home-anon-badge');
+  for (const entry of list) {
+    try {
+      const unread = await rpc('has_unread_anonymous_reply', { p_consultation_code: entry.code, p_anon_token: entry.token });
+      if (unread) { badge.style.display = 'block'; return; }
+    } catch (e) { /* 個別の失敗は無視して他をチェックし続ける */ }
+  }
+  badge.style.display = 'none';
+}
+
+// ---------- 匿名相談管理(管理者) ----------
+
+async function loadAnonAdminList() {
+  const session = getSession();
+  const status = document.getElementById('anon-admin-status-filter').value || null;
+  const listEl = document.getElementById('anon-admin-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('list_anonymous_consultations_admin', { p_admin_employee_code: session.employeeCode, p_status: status });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する相談はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="consult-list-item" data-code="${r.consultation_code}">
+        <div class="row1">
+          <span><span class="urgency-tag ${r.urgency}">${r.urgency === 'urgent' ? '🔴 緊急' : URGENCY_LABEL[r.urgency]}</span> ${r.category}${r.has_unread_employee_message ? ' 🔵' : ''}</span>
+        </div>
+        <div class="row2">${r.content.length > 60 ? r.content.slice(0, 60) + '…' : r.content}</div>
+        <div class="row2">#${r.consultation_code} ・ ${new Date(r.created_at).toLocaleString('ja-JP')}</div>
+        <span class="status-badge ${r.status === 'resolved' ? 'done' : ''}">${ANON_STATUS_LABEL[r.status]}</span>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.consult-list-item').forEach((el) => {
+      el.addEventListener('click', () => openAnonAdminThread(el.dataset.code));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function openAnonAdminThread(code) {
+  currentAnonAdminCode = code;
+  document.getElementById('anon-admin-thread-code').textContent = code;
+  showScreen('anon-admin-thread');
+  await renderAnonAdminThread();
+}
+
+async function renderAnonAdminThread() {
+  const session = getSession();
+  const messagesEl = document.getElementById('anon-admin-thread-messages');
+  messagesEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_anonymous_consultation_admin_thread', { p_admin_employee_code: session.employeeCode, p_consultation_code: currentAnonAdminCode });
+    if (rows[0]) document.getElementById('anon-admin-status-select').value = rows[0].status;
+    messagesEl.innerHTML = rows.map((m) => `
+      <div class="chat-bubble from-${m.sender === 'admin' ? 'employee' : 'admin'}">
+        ${m.message}
+        <div class="meta">${m.sender === 'admin' ? '会社(自分)' : '社員'} ・ ${new Date(m.sent_at).toLocaleString('ja-JP')}</div>
+      </div>
+    `).join('') || '<div class="hint">メッセージがありません。</div>';
+  } catch (e) {
+    messagesEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doAdminReplyAnon() {
+  const session = getSession();
+  const message = document.getElementById('anon-admin-reply').value.trim();
+  hideError('anon-admin-thread-error');
+  if (!message) return;
+  const btn = document.getElementById('anon-admin-reply-btn');
+  btn.disabled = true;
+  try {
+    await rpc('admin_reply_anonymous_consultation', { p_admin_employee_code: session.employeeCode, p_consultation_code: currentAnonAdminCode, p_message: message });
+    document.getElementById('anon-admin-reply').value = '';
+    await renderAnonAdminThread();
+  } catch (e) {
+    showError('anon-admin-thread-error', '送信に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function doAdminChangeAnonStatus() {
+  const session = getSession();
+  const status = document.getElementById('anon-admin-status-select').value;
+  try {
+    await rpc('admin_update_anonymous_consultation_status', { p_admin_employee_code: session.employeeCode, p_consultation_code: currentAnonAdminCode, p_status: status });
+  } catch (e) { /* 失敗時は選択が反映されないだけなので致命的ではない */ }
+}
+
 // ---------- 初期化 ----------
 
 function init() {
@@ -884,6 +1095,12 @@ function init() {
   document.getElementById('admin-search-btn').addEventListener('click', doAdminSearch);
   document.getElementById('admin-reset-pin-btn').addEventListener('click', doAdminResetPin);
 
+  document.getElementById('anon-submit-btn').addEventListener('click', doSubmitAnonConsultation);
+  document.getElementById('anon-thread-send').addEventListener('click', doSendAnonThreadMessage);
+  document.getElementById('anon-admin-status-filter').addEventListener('change', loadAnonAdminList);
+  document.getElementById('anon-admin-status-select').addEventListener('change', doAdminChangeAnonStatus);
+  document.getElementById('anon-admin-reply-btn').addEventListener('click', doAdminReplyAnon);
+
   document.querySelectorAll('[data-nav]').forEach((el) => {
     el.addEventListener('click', () => {
       const target = el.getAttribute('data-nav');
@@ -905,6 +1122,12 @@ function init() {
     if (!isAdmin()) { enterMenu(); return; }
     loadAdminEmployeeSelects();
     document.getElementById('admin-search-results').innerHTML = '';
+  };
+  SCREEN_ENTER_HOOKS['anon-consult'] = loadMyAnonConsultations;
+  SCREEN_ENTER_HOOKS['anon-submit'] = () => { hideError('anon-submit-error'); document.getElementById('anon-content').value = ''; };
+  SCREEN_ENTER_HOOKS['anon-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadAnonAdminList();
   };
 
   const session = getSession();

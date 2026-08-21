@@ -106,6 +106,12 @@
         <span class="home-card-label">資格</span>
         <span class="home-card-desc">準備中です</span>
       </button>
+      <button type="button" class="home-card" data-nav="anon-consult" style="position:relative;">
+        <span class="home-card-icon">🤫</span>
+        <span class="home-card-label">匿名相談</span>
+        <span class="home-card-desc">悩み・意見を匿名で送る</span>
+        <span class="unread-badge" id="home-anon-badge" style="display:none;"></span>
+      </button>
     </div>
 
     <div class="section-title">自分の情報</div>
@@ -124,6 +130,10 @@
     <div class="menu-list" id="admin-menu-list" style="display:none;">
       <button type="button" class="menu-item" data-nav="admin">
         <div>社員検索・支給品管理<span class="desc">社員別の有給・支給品状況を確認</span></div>
+        <div class="arrow">›</div>
+      </button>
+      <button type="button" class="menu-item" data-nav="anon-admin">
+        <div>匿名相談管理<span class="desc">投稿者は表示されません</span></div>
         <div class="arrow">›</div>
       </button>
     </div>
@@ -399,6 +409,99 @@
       <button type="button" class="secondary" id="admin-search-btn">検索</button>
     </div>
     <div id="admin-search-results"></div>
+  </section>
+
+  <!-- 匿名相談トップ(送る/自分の相談一覧) -->
+  <section id="screen-anon-consult" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="form-title">匿名相談</div>
+    <div class="anon-notice">この相談からあなたの氏名・社員番号は会社側には表示されません。相談番号は返信の確認に使うので、忘れないようスクリーンショット等で保存してください。</div>
+    <button type="button" data-nav="anon-submit">＋ 新しく相談を送る</button>
+    <div class="section-title">これまでの相談</div>
+    <div id="anon-my-list"></div>
+  </section>
+
+  <!-- 匿名相談フォーム -->
+  <section id="screen-anon-submit" class="screen">
+    <button type="button" class="back-link" data-nav="anon-consult">‹ 戻る</button>
+    <div class="card">
+      <div class="form-title">匿名相談を送る</div>
+      <div class="anon-notice">この相談からあなたの氏名・社員番号は会社側には表示されません。</div>
+      <label for="anon-category">相談カテゴリー</label>
+      <select id="anon-category">
+        <option value="人間関係">人間関係</option>
+        <option value="ハラスメント">ハラスメント</option>
+        <option value="職場環境">職場環境</option>
+        <option value="安全について">安全について</option>
+        <option value="給与・待遇">給与・待遇</option>
+        <option value="上司について">上司について</option>
+        <option value="会社への改善提案">会社への改善提案</option>
+        <option value="その他">その他</option>
+      </select>
+      <label for="anon-content">相談内容</label>
+      <textarea id="anon-content" style="min-height:120px;"></textarea>
+      <label>緊急度</label>
+      <div class="checkbox-row"><input type="radio" name="anon-urgency" value="normal" id="anon-urgency-normal" checked><label for="anon-urgency-normal">通常</label></div>
+      <div class="checkbox-row"><input type="radio" name="anon-urgency" value="soon" id="anon-urgency-soon"><label for="anon-urgency-soon">できれば早めに対応してほしい</label></div>
+      <div class="checkbox-row"><input type="radio" name="anon-urgency" value="urgent" id="anon-urgency-urgent"><label for="anon-urgency-urgent">緊急</label></div>
+      <div class="error" id="anon-submit-error"></div>
+      <button id="anon-submit-btn">匿名で送信</button>
+    </div>
+  </section>
+
+  <!-- 匿名相談 送信完了(相談番号表示) -->
+  <section id="screen-anon-done" class="screen">
+    <button type="button" class="back-link" data-nav="anon-consult">‹ 戻る</button>
+    <div class="consult-code-box">
+      <div class="success-icon">✓</div>
+      <div>相談を送信しました</div>
+      <div class="code" id="anon-done-code"></div>
+      <div class="hint">この番号は会社からの返信の確認に必要です</div>
+    </div>
+  </section>
+
+  <!-- 匿名相談 スレッド(社員側) -->
+  <section id="screen-anon-thread" class="screen">
+    <button type="button" class="back-link" data-nav="anon-consult">‹ 戻る</button>
+    <div class="form-title">相談番号: <span id="anon-thread-code"></span></div>
+    <div class="chat-thread" id="anon-thread-messages"></div>
+    <label for="anon-thread-reply">追加メッセージ</label>
+    <textarea id="anon-thread-reply"></textarea>
+    <div class="error" id="anon-thread-error"></div>
+    <button id="anon-thread-send">送信</button>
+  </section>
+
+  <!-- 匿名相談管理(管理者) -->
+  <section id="screen-anon-admin" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="form-title">匿名相談管理</div>
+    <div class="hint" style="margin-bottom:12px;">社員名は表示されません(構造上、逆引きできません)。</div>
+    <select id="anon-admin-status-filter">
+      <option value="">すべて</option>
+      <option value="unconfirmed">未確認</option>
+      <option value="confirmed">確認済み</option>
+      <option value="in_progress">対応中</option>
+      <option value="resolved">対応完了</option>
+    </select>
+    <div id="anon-admin-list"></div>
+  </section>
+
+  <!-- 匿名相談スレッド(管理者側) -->
+  <section id="screen-anon-admin-thread" class="screen">
+    <button type="button" class="back-link" data-nav="anon-admin">‹ 戻る</button>
+    <div class="form-title">相談番号: <span id="anon-admin-thread-code"></span></div>
+    <label for="anon-admin-status-select">対応状況</label>
+    <select id="anon-admin-status-select">
+      <option value="unconfirmed">未確認</option>
+      <option value="confirmed">確認済み</option>
+      <option value="in_progress">対応中</option>
+      <option value="resolved">対応完了</option>
+    </select>
+    <div class="chat-thread" id="anon-admin-thread-messages"></div>
+    <label for="anon-admin-reply">返信</label>
+    <textarea id="anon-admin-reply"></textarea>
+    <div class="error" id="anon-admin-thread-error"></div>
+    <button id="anon-admin-reply-btn">返信する</button>
   </section>
 
   <!-- 完了画面 -->

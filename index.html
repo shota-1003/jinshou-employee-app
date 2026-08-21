@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>迅翔興業 社員申請</title>
+<title>迅翔興業 社員ポータル</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon.svg">
 <link rel="apple-touch-icon" href="icons/icon.svg">
@@ -11,14 +11,15 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>迅翔興業 社員申請</header>
+<header>迅翔興業 社員ポータル</header>
 <main>
 
   <!-- ログイン画面 -->
   <section id="screen-login" class="screen">
     <div class="card">
-      <label for="login-code">社員番号を入力してください</label>
+      <label for="login-code">社員番号</label>
       <input type="text" id="login-code" inputmode="numeric" placeholder="例: 0001" autocomplete="off">
+      <div class="hint">最初の1回だけ入力すれば、次回から自動的にログインします。</div>
       <div class="error" id="login-error">社員番号が確認できませんでした。</div>
       <button id="login-btn">ログイン</button>
     </div>
@@ -27,20 +28,39 @@
   <!-- メニュー画面 -->
   <section id="screen-menu" class="screen">
     <div class="greeting" id="menu-greeting"></div>
+
+    <div class="section-title">申請</div>
     <div class="menu-list">
       <button type="button" class="menu-item" data-nav="leave">
-        <div>有給休暇申請<span class="desc">開始日・終了日・理由を入力して申請</span></div>
+        <div>有給休暇申請<span class="desc">開始日・終了日を選ぶだけ(日数は自動計算)</span></div>
         <div class="arrow">›</div>
       </button>
       <button type="button" class="menu-item" data-nav="expense">
-        <div>経費精算(手入力)<span class="desc">レシート写真がない経費を直接申請</span></div>
+        <div>経費立替申請<span class="desc">領収書を撮影して申請(複数まとめて可)</span></div>
+        <div class="arrow">›</div>
+      </button>
+      <button type="button" class="menu-item" data-nav="meeting">
+        <div>会議申請<span class="desc">会議費の申請</span></div>
         <div class="arrow">›</div>
       </button>
       <button type="button" class="menu-item disabled" disabled>
-        <div>借入申請<span class="desc">準備中です</span></div>
+        <div>支給品申請<span class="desc">準備中です</span></div>
+        <div class="arrow">›</div>
+      </button>
+      <button type="button" class="menu-item disabled" disabled>
+        <div>資格申請<span class="desc">準備中です</span></div>
         <div class="arrow">›</div>
       </button>
     </div>
+
+    <div class="section-title">自分の情報</div>
+    <div class="menu-list">
+      <button type="button" class="menu-item" data-nav="history">
+        <div>申請履歴<span class="desc">これまでの申請と状態を確認</span></div>
+        <div class="arrow">›</div>
+      </button>
+    </div>
+
     <button class="link" id="logout-btn">別の社員番号でログインし直す</button>
   </section>
 
@@ -48,51 +68,117 @@
   <section id="screen-leave" class="screen">
     <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
     <div class="card">
+      <div class="form-title">有給休暇申請</div>
       <label for="leave-start">開始日</label>
       <input type="date" id="leave-start">
       <label for="leave-end">終了日</label>
       <input type="date" id="leave-end">
       <div class="checkbox-row">
         <input type="checkbox" id="leave-half">
-        <label for="leave-half">半休</label>
+        <label for="leave-half">半休(開始日と終了日が同じ日のみ)</label>
       </div>
-      <label for="leave-days">日数</label>
-      <input type="number" id="leave-days" step="0.5" min="0.5" placeholder="例: 1">
+      <div class="calc-box" id="leave-days-box">日数: -</div>
+      <div class="balance-box" id="leave-balance-box"></div>
       <label for="leave-reason">事由</label>
       <input type="text" id="leave-reason" placeholder="例: 私用のため">
-      <label for="leave-note">備考(任意)</label>
+      <label for="leave-note">備考</label>
+      <div class="hint-inline">任意</div>
       <textarea id="leave-note"></textarea>
-      <div class="balance-note" id="leave-balance-note"></div>
       <div class="error" id="leave-error"></div>
       <button id="leave-submit">申請する</button>
     </div>
   </section>
 
-  <!-- 経費精算(手入力)フォーム -->
+  <!-- 経費立替申請フォーム(複数明細) -->
   <section id="screen-expense" class="screen">
     <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
-    <div class="card">
-      <label for="expense-date">日付</label>
-      <input type="date" id="expense-date">
-      <label for="expense-store">店舗名・支払先</label>
-      <input type="text" id="expense-store" placeholder="例: ○○ガソリンスタンド">
-      <label for="expense-amount">金額(円)</label>
-      <input type="number" id="expense-amount" min="1" placeholder="例: 3000">
-      <label for="expense-site">現場名</label>
-      <input type="text" id="expense-site" placeholder="例: ○○現場">
-      <label for="expense-purpose">使用目的</label>
-      <input type="text" id="expense-purpose" placeholder="例: 給油代">
-      <label for="expense-payment">支払方法</label>
-      <select id="expense-payment">
-        <option value="現金">現金</option>
-        <option value="クレジットカード">クレジットカード</option>
-        <option value="電子マネー">電子マネー</option>
-        <option value="振込">振込</option>
-        <option value="その他">その他</option>
-      </select>
-      <div class="error" id="expense-error"></div>
-      <button id="expense-submit">申請する</button>
+    <div class="form-title">経費立替申請</div>
+    <div class="hint" style="margin: 0 0 14px;">領収書の写真が必要です。複数の領収書をまとめて1回の申請にできます。</div>
+
+    <div id="expense-item-list"></div>
+
+    <button type="button" class="secondary" id="expense-add-item">＋ 明細を追加</button>
+
+    <div class="card total-card">
+      <div class="total-row"><span>明細件数</span><span id="expense-total-count">0件</span></div>
+      <div class="total-row total-amount"><span>合計金額</span><span id="expense-total-amount">0円</span></div>
     </div>
+
+    <div class="error" id="expense-error"></div>
+    <button id="expense-submit">この内容で申請する</button>
+
+    <!-- 明細1件分のテンプレート(JSで複製して使う) -->
+    <template id="expense-item-template">
+      <div class="card expense-item-card">
+        <div class="item-header">
+          <span class="item-label"></span>
+          <button type="button" class="remove-item-btn">削除</button>
+        </div>
+        <label>領収書の写真</label>
+        <div class="hint-inline">カメラで撮影、または写真を選択(必須)</div>
+        <input type="file" accept="image/*" capture="environment" class="item-photo-input">
+        <img class="item-photo-preview" style="display:none;">
+        <div class="photo-status"></div>
+
+        <label>利用日</label>
+        <input type="date" class="item-date">
+
+        <label>支払先</label>
+        <div class="hint-inline">例: ○○ガソリンスタンド</div>
+        <input type="text" class="item-store">
+
+        <label>金額(円)</label>
+        <input type="number" class="item-amount" min="1">
+
+        <label>現場名</label>
+        <div class="hint-inline">例: ○○現場</div>
+        <input type="text" class="item-site">
+
+        <label>使用目的</label>
+        <div class="hint-inline">例: 給油代</div>
+        <input type="text" class="item-purpose">
+
+        <label>備考</label>
+        <div class="hint-inline">任意</div>
+        <input type="text" class="item-note">
+      </div>
+    </template>
+  </section>
+
+  <!-- 会議申請フォーム -->
+  <section id="screen-meeting" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="card">
+      <div class="form-title">会議申請</div>
+      <label for="meeting-date">会議日</label>
+      <input type="date" id="meeting-date">
+      <label for="meeting-place">場所</label>
+      <input type="text" id="meeting-place" placeholder="例: 本社会議室">
+      <label for="meeting-headcount">人数</label>
+      <input type="number" id="meeting-headcount" min="1" placeholder="例: 3">
+      <div class="checkbox-row">
+        <input type="checkbox" id="meeting-meal">
+        <label for="meeting-meal">食事あり</label>
+      </div>
+      <label for="meeting-content">会議内容</label>
+      <input type="text" id="meeting-content" placeholder="例: 現場定例会議">
+      <label for="meeting-amount">申請金額(円)</label>
+      <input type="number" id="meeting-amount" min="0">
+      <label for="meeting-receive">受取方法</label>
+      <select id="meeting-receive">
+        <option value="cash">現金</option>
+        <option value="bank_transfer">振込み(振込手数料は申請者負担)</option>
+      </select>
+      <div class="error" id="meeting-error"></div>
+      <button id="meeting-submit">申請する</button>
+    </div>
+  </section>
+
+  <!-- 申請履歴 -->
+  <section id="screen-history" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="form-title">申請履歴</div>
+    <div id="history-list"></div>
   </section>
 
   <!-- 完了画面 -->

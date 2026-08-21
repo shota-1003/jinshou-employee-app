@@ -164,5 +164,62 @@ button.link {
 }
 
 .center { text-align: center; }
-.back-link { color: var(--text-muted); font-size: 14px; margin-bottom: 14px; display: inline-block; cursor: pointer; }
+.back-link {
+  color: var(--text-muted); font-size: 14px; margin-bottom: 14px; display: inline-block;
+  background: none; border: none; padding: 0; width: auto; font-weight: 400;
+}
 .balance-note { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+.hint { font-size: 13px; color: var(--text-muted); }
+.hint-inline { font-size: 12px; color: var(--text-muted); margin-top: -2px; margin-bottom: 4px; }
+.section-title {
+  font-size: 13px; font-weight: 700; color: var(--text-muted); margin: 22px 0 10px 4px;
+  letter-spacing: 0.02em;
+}
+.section-title:first-of-type { margin-top: 4px; }
+.form-title { font-size: 18px; font-weight: 700; margin-bottom: 14px; }
+
+.calc-box {
+  background: #eef2f9; border-radius: 10px; padding: 12px 14px; font-size: 15px;
+  font-weight: 600; color: var(--primary); margin-top: 14px;
+}
+.balance-box {
+  font-size: 13px; color: var(--text-muted); margin-top: 8px; padding: 0 2px;
+}
+
+.total-card { padding: 16px 20px; }
+.total-row {
+  display: flex; justify-content: space-between; align-items: center; font-size: 14px;
+  color: var(--text-muted); padding: 4px 0;
+}
+.total-row.total-amount { font-size: 20px; font-weight: 700; color: var(--text); padding-top: 8px; }
+
+.expense-item-card { margin-bottom: 14px; }
+.item-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
+}
+.item-label { font-weight: 700; font-size: 15px; }
+.remove-item-btn {
+  width: auto; background: none; border: 1px solid var(--danger); color: var(--danger);
+  font-size: 12px; font-weight: 400; padding: 5px 10px; margin: 0; border-radius: 8px;
+}
+.item-photo-preview {
+  width: 100%; max-height: 200px; object-fit: cover; border-radius: 10px; margin: 8px 0;
+}
+.photo-status { font-size: 12px; margin-top: 4px; min-height: 16px; }
+.photo-status.ok { color: var(--success); }
+.photo-status.uploading { color: var(--text-muted); }
+.photo-status.err { color: var(--danger); }
+
+.history-item {
+  padding: 14px 16px; border-radius: 12px; background: var(--card-bg); border: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+.history-item .row1 { display: flex; justify-content: space-between; font-weight: 700; font-size: 15px; }
+.history-item .row2 { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.history-item .status-badge {
+  display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px;
+  margin-top: 6px; background: #eef2f9; color: var(--primary);
+}
+.history-item .status-badge.done { background: #e6f4ea; color: var(--success); }
+.history-item .status-badge.rejected { background: #fbeae8; color: var(--danger); }

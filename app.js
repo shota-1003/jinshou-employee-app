@@ -58,9 +58,15 @@ function clearSession() { localStorage.removeItem(STORAGE_KEY); }
 
 const SCREEN_ENTER_HOOKS = {};
 
+const BOTTOM_NAV_MAP = { menu: 'menu', expense: 'expense-advance', history: 'history', myinfo: 'myinfo' };
+
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach((el) => el.classList.remove('active'));
   document.getElementById(`screen-${id}`).classList.add('active');
+  document.getElementById('bottom-nav').style.display = id === 'login' ? 'none' : 'flex';
+  document.querySelectorAll('.bottom-nav-item').forEach((btn) => {
+    btn.classList.toggle('active', btn.getAttribute('data-nav') === (BOTTOM_NAV_MAP[id] || id));
+  });
   if (SCREEN_ENTER_HOOKS[id]) SCREEN_ENTER_HOOKS[id]();
 }
 
@@ -91,12 +97,23 @@ async function doLogin() {
   }
 }
 
+async function loadHomeLeaveStats(balanceElId, usedElId) {
+  const session = getSession();
+  try {
+    const rows = await rpc('get_leave_summary', { p_employee_code: session.employeeCode });
+    const b = rows && rows[0];
+    document.getElementById(balanceElId).textContent = b && b.has_initial_grant ? `${b.current_balance}日` : '未登録';
+    document.getElementById(usedElId).textContent = b ? `${b.used_this_year}日` : '-';
+  } catch (e) { /* 表示できなくても致命的ではないため無視 */ }
+}
+
 function enterMenu() {
   const session = getSession();
   document.getElementById('menu-greeting').textContent = `こんにちは、${session.employeeName}さん`;
   const showAdmin = session.requestRole === 'executive';
   document.getElementById('admin-section-title').style.display = showAdmin ? '' : 'none';
   document.getElementById('admin-menu-list').style.display = showAdmin ? '' : 'none';
+  loadHomeLeaveStats('home-leave-balance', 'home-leave-used');
   showScreen('menu');
 }
 
@@ -224,6 +241,13 @@ let currentExpenseCategory = 'employee_advance';
 let expenseItemSeq = 0;
 const expenseItemState = new Map(); // itemId -> { driveFileId, driveFileUrl, uploading, siteId }
 
+async function populateVendorList() {
+  try {
+    const rows = await rpc('search_vendors', { p_query: null });
+    document.getElementById('vendor-list').innerHTML = rows.map((v) => `<option value="${v.company_name}">`).join('');
+  } catch (e) { /* 取引先候補が引けなくても自由入力は継続できる */ }
+}
+
 function enterExpenseScreen(category) {
   currentExpenseCategory = category;
   const text = EXPENSE_SCREEN_TEXT[category];
@@ -231,6 +255,7 @@ function enterExpenseScreen(category) {
   document.getElementById('expense-screen-hint').textContent = text.hint;
   resetExpenseForm();
   hideError('expense-error');
+  populateVendorList();
   showScreen('expense');
 }
 
@@ -303,14 +328,18 @@ function addExpenseItem() {
     updateExpenseTotal();
   });
 
-  const photoInput = clone.querySelector('.item-photo-input');
   const preview = clone.querySelector('.item-photo-preview');
   const status = clone.querySelector('.photo-status');
-  photoInput.addEventListener('change', async () => {
-    const file = photoInput.files[0];
+  const photoStep = clone.querySelector('.item-photo-step');
+  const photoAttached = clone.querySelector('.item-photo-attached');
+  const details = clone.querySelector('.item-details');
+
+  async function handlePhotoFile(file) {
     if (!file) return;
+    photoStep.style.display = 'none';
+    photoAttached.style.display = 'block';
+    details.style.display = 'block';
     preview.src = URL.createObjectURL(file);
-    preview.style.display = 'block';
     status.textContent = 'アップロード中...';
     status.className = 'photo-status uploading';
     const state = expenseItemState.get(itemId);
@@ -330,6 +359,20 @@ function addExpenseItem() {
     } finally {
       state.uploading = false;
     }
+  }
+
+  clone.querySelector('.item-photo-input').addEventListener('change', (e) => handlePhotoFile(e.target.files[0]));
+  clone.querySelector('.item-photo-input-lib').addEventListener('change', (e) => handlePhotoFile(e.target.files[0]));
+  clone.querySelector('.retake-btn').addEventListener('click', () => {
+    photoStep.style.display = 'flex';
+    photoStep.style.flexDirection = 'column';
+    photoAttached.style.display = 'none';
+    status.textContent = '';
+    const cardEl = document.querySelector(`[data-item-id="${itemId}"]`);
+    cardEl.querySelector('.ocr-status').textContent = '';
+    const state = expenseItemState.get(itemId);
+    state.driveFileId = null;
+    state.driveFileUrl = null;
   });
 
   clone.querySelector('.item-amount').addEventListener('input', updateExpenseTotal);
@@ -677,6 +720,7 @@ function init() {
   document.getElementById('login-btn').addEventListener('click', doLogin);
   document.getElementById('login-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
   document.getElementById('logout-btn').addEventListener('click', () => { clearSession(); showScreen('login'); });
+  document.getElementById('logout-btn-2').addEventListener('click', () => { clearSession(); showScreen('login'); });
 
   document.getElementById('leave-submit').addEventListener('click', doSubmitLeave);
   ['leave-start', 'leave-end', 'leave-half'].forEach((id) => {
@@ -710,6 +754,7 @@ function init() {
   SCREEN_ENTER_HOOKS.history = loadHistory;
   SCREEN_ENTER_HOOKS['supply-request'] = () => { hideError('supply-req-error'); };
   SCREEN_ENTER_HOOKS['my-supply'] = loadMySupply;
+  SCREEN_ENTER_HOOKS.myinfo = () => loadHomeLeaveStats('myinfo-leave-balance', 'myinfo-leave-used');
   SCREEN_ENTER_HOOKS.admin = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadAdminEmployeeSelects();

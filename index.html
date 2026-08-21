@@ -11,49 +11,67 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>迅翔興業 社員ポータル</header>
+<header class="app-header">
+  <span class="app-header-logo">迅</span>
+  <span class="app-header-title">社員ポータル</span>
+</header>
 <main>
 
   <!-- ログイン画面 -->
   <section id="screen-login" class="screen">
-    <div class="card">
-      <label for="login-code">社員番号</label>
-      <input type="text" id="login-code" inputmode="numeric" placeholder="例: 0001" autocomplete="off">
-      <div class="hint">最初の1回だけ入力すれば、次回から自動的にログインします。</div>
-      <div class="error" id="login-error">社員番号が確認できませんでした。</div>
-      <button id="login-btn">ログイン</button>
+    <div class="login-wrap">
+      <div class="login-logo">迅</div>
+      <div class="login-company">株式会社 迅翔興業</div>
+      <div class="card">
+        <label for="login-code">社員番号</label>
+        <input type="text" id="login-code" inputmode="numeric" placeholder="例: 0001" autocomplete="off">
+        <div class="hint">最初の1回だけ入力すれば、次回から自動的にログインします。</div>
+        <div class="error" id="login-error">社員番号が確認できませんでした。</div>
+        <button id="login-btn">ログイン</button>
+      </div>
     </div>
   </section>
 
-  <!-- メニュー画面 -->
+  <!-- メニュー画面(ホーム) -->
   <section id="screen-menu" class="screen">
     <div class="greeting" id="menu-greeting"></div>
 
-    <div class="section-title">申請</div>
-    <div class="menu-list">
-      <button type="button" class="menu-item" data-nav="leave">
-        <div>有給休暇申請<span class="desc">開始日・終了日を選ぶだけ(日数は自動計算)</span></div>
-        <div class="arrow">›</div>
+    <div class="stat-mini-row">
+      <div class="stat-mini"><span class="stat-mini-label">有給残日数</span><span class="stat-mini-value" id="home-leave-balance">-</span></div>
+      <div class="stat-mini"><span class="stat-mini-label">今年使用</span><span class="stat-mini-value" id="home-leave-used">-</span></div>
+    </div>
+
+    <div class="section-title">申請する</div>
+    <div class="home-card-grid">
+      <button type="button" class="home-card" data-nav="leave">
+        <span class="home-card-icon">🏖</span>
+        <span class="home-card-label">有給休暇</span>
+        <span class="home-card-desc">休みを申請する</span>
       </button>
-      <button type="button" class="menu-item" data-nav="expense-advance">
-        <div>経費立替申請<span class="desc">自分で支払った会社経費を申請(後日会社から返金)</span></div>
-        <div class="arrow">›</div>
+      <button type="button" class="home-card" data-nav="expense-advance">
+        <span class="home-card-icon">🧾</span>
+        <span class="home-card-label">経費立替</span>
+        <span class="home-card-desc">自分で払った経費</span>
       </button>
-      <button type="button" class="menu-item" data-nav="expense-company">
-        <div>会社経費登録<span class="desc">会社が支払った経費・領収書を登録(返金不要)</span></div>
-        <div class="arrow">›</div>
+      <button type="button" class="home-card" data-nav="expense-company">
+        <span class="home-card-icon">🏢</span>
+        <span class="home-card-label">会社経費</span>
+        <span class="home-card-desc">会社払いの領収書</span>
       </button>
-      <button type="button" class="menu-item" data-nav="meeting">
-        <div>会議申請<span class="desc">会議費の申請</span></div>
-        <div class="arrow">›</div>
+      <button type="button" class="home-card" data-nav="meeting">
+        <span class="home-card-icon">👥</span>
+        <span class="home-card-label">会議</span>
+        <span class="home-card-desc">会議費を申請</span>
       </button>
-      <button type="button" class="menu-item" data-nav="supply-request">
-        <div>支給品申請<span class="desc">制服・安全用品などを申請</span></div>
-        <div class="arrow">›</div>
+      <button type="button" class="home-card" data-nav="supply-request">
+        <span class="home-card-icon">📦</span>
+        <span class="home-card-label">支給品</span>
+        <span class="home-card-desc">制服・安全用品</span>
       </button>
-      <button type="button" class="menu-item disabled" disabled>
-        <div>資格申請<span class="desc">準備中です</span></div>
-        <div class="arrow">›</div>
+      <button type="button" class="home-card disabled" disabled>
+        <span class="home-card-icon">🎓</span>
+        <span class="home-card-label">資格</span>
+        <span class="home-card-desc">準備中です</span>
       </button>
     </div>
 
@@ -132,55 +150,69 @@
     <div class="error" id="expense-error"></div>
     <button id="expense-submit">この内容で申請する</button>
 
-    <!-- 明細1件分のテンプレート(JSで複製して使う) -->
+    <!-- 明細1件分のテンプレート(JSで複製して使う)。写真を追加するまでは撮影ボタンだけを
+         表示し、追加後に詳細項目を開く(領収書撮影を中心にしたUXにするための段階表示)。 -->
     <template id="expense-item-template">
       <div class="card expense-item-card">
         <div class="item-header">
           <span class="item-label"></span>
           <button type="button" class="remove-item-btn">削除</button>
         </div>
-        <label>領収書の写真</label>
-        <div class="hint-inline">カメラで撮影、または写真を選択(必須)。写真を追加すると自動で内容を読み取ります。</div>
-        <input type="file" accept="image/*" capture="environment" class="item-photo-input">
-        <img class="item-photo-preview" style="display:none;">
-        <div class="photo-status"></div>
-        <div class="ocr-status"></div>
 
-        <label>利用日</label>
-        <input type="date" class="item-date">
+        <div class="item-photo-step">
+          <label class="photo-capture-btn">
+            <span class="photo-capture-icon">📷</span>
+            <span>領収書を撮影する</span>
+            <input type="file" accept="image/*" capture="environment" class="item-photo-input">
+          </label>
+          <label class="photo-pick-link">写真から選ぶ<input type="file" accept="image/*" class="item-photo-input-lib"></label>
+        </div>
 
-        <label>支払先(店舗名)</label>
-        <div class="hint-inline">例: ○○ガソリンスタンド</div>
-        <input type="text" class="item-store">
+        <div class="item-photo-attached" style="display:none;">
+          <img class="item-photo-preview">
+          <div class="photo-status"></div>
+          <div class="ocr-status"></div>
+          <button type="button" class="retake-btn">撮り直す</button>
+        </div>
 
-        <label>金額(円)</label>
-        <input type="number" class="item-amount" min="1">
+        <div class="item-details" style="display:none;">
+          <label>利用日</label>
+          <input type="date" class="item-date">
 
-        <label>消費税(円)</label>
-        <div class="hint-inline">分かる場合のみ(任意)</div>
-        <input type="number" class="item-tax" min="0">
+          <label>支払先(店舗名)</label>
+          <div class="hint-inline">例: ○○ガソリンスタンド</div>
+          <input type="text" class="item-store">
 
-        <label>現場<span class="required-mark">(必須)</span></label>
-        <div class="hint-inline">どの現場に関係する経費か選択してください。該当が無ければ「会社共通」「現場外」を選べます</div>
-        <input type="text" class="item-site-search" placeholder="現場名で検索...">
-        <select class="item-site-select"></select>
+          <label>金額(円)</label>
+          <input type="number" class="item-amount" min="1">
 
-        <label>取引先</label>
-        <div class="hint-inline">現場の元請け・関係先など(任意、支払先とは別項目)</div>
-        <input type="text" class="item-vendor">
+          <label>消費税(円)</label>
+          <div class="hint-inline">分かる場合のみ(任意)</div>
+          <input type="number" class="item-tax" min="0">
 
-        <label>使用目的<span class="required-mark">(必須)</span></label>
-        <div class="hint-inline">例: 現場用消耗品購入・駐車料金・社員用飲料・取引先との打合せ・出張宿泊・資材購入</div>
-        <input type="text" class="item-purpose">
+          <label>現場<span class="required-mark">(必須)</span></label>
+          <div class="hint-inline">どの現場に関係する経費か選択してください。該当が無ければ「会社共通」「現場外」を選べます</div>
+          <input type="text" class="item-site-search" placeholder="現場名で検索...">
+          <select class="item-site-select"></select>
 
-        <label>支払方法</label>
-        <select class="item-payment"></select>
+          <label>取引先</label>
+          <div class="hint-inline">現場の元請け・関係先など(任意、支払先とは別項目)</div>
+          <input type="text" class="item-vendor" list="vendor-list">
 
-        <label>備考</label>
-        <div class="hint-inline">任意</div>
-        <input type="text" class="item-note">
+          <label>使用目的<span class="required-mark">(必須)</span></label>
+          <div class="hint-inline">例: 現場用消耗品購入・駐車料金・社員用飲料・取引先との打合せ・出張宿泊・資材購入</div>
+          <input type="text" class="item-purpose">
+
+          <label>支払方法</label>
+          <select class="item-payment"></select>
+
+          <label>備考</label>
+          <div class="hint-inline">任意</div>
+          <input type="text" class="item-note">
+        </div>
       </div>
     </template>
+    <datalist id="vendor-list"></datalist>
   </section>
 
   <!-- 会議申請フォーム -->
@@ -210,6 +242,34 @@
       <div class="error" id="meeting-error"></div>
       <button id="meeting-submit">申請する</button>
     </div>
+  </section>
+
+  <!-- 自分の情報ハブ -->
+  <section id="screen-myinfo" class="screen">
+    <div class="form-title">自分の情報</div>
+    <div class="stat-mini-row">
+      <div class="stat-mini"><span class="stat-mini-label">有給残日数</span><span class="stat-mini-value" id="myinfo-leave-balance">-</span></div>
+      <div class="stat-mini"><span class="stat-mini-label">今年使用</span><span class="stat-mini-value" id="myinfo-leave-used">-</span></div>
+    </div>
+    <div class="menu-list">
+      <button type="button" class="menu-item" data-nav="history">
+        <div>申請履歴<span class="desc">これまでの申請と状態を確認</span></div>
+        <div class="arrow">›</div>
+      </button>
+      <button type="button" class="menu-item" data-nav="leave-history">
+        <div>有給取得履歴<span class="desc">これまで取得した有給を確認</span></div>
+        <div class="arrow">›</div>
+      </button>
+      <button type="button" class="menu-item" data-nav="my-supply">
+        <div>支給品履歴<span class="desc">これまで支給された物を確認</span></div>
+        <div class="arrow">›</div>
+      </button>
+      <button type="button" class="menu-item disabled" disabled>
+        <div>保有資格<span class="desc">準備中です</span></div>
+        <div class="arrow">›</div>
+      </button>
+    </div>
+    <button class="link" id="logout-btn-2">別の社員番号でログインし直す</button>
   </section>
 
   <!-- 申請履歴 -->
@@ -316,6 +376,14 @@
   </section>
 
 </main>
+
+<nav class="bottom-nav" id="bottom-nav">
+  <button type="button" class="bottom-nav-item" data-nav="menu"><span class="bn-icon">🏠</span><span>ホーム</span></button>
+  <button type="button" class="bottom-nav-item" data-nav="expense-advance"><span class="bn-icon">🧾</span><span>経費</span></button>
+  <button type="button" class="bottom-nav-item" data-nav="history"><span class="bn-icon">📋</span><span>履歴</span></button>
+  <button type="button" class="bottom-nav-item" data-nav="myinfo"><span class="bn-icon">👤</span><span>自分の情報</span></button>
+</nav>
+
 <script src="app.js"></script>
 </body>
 </html>

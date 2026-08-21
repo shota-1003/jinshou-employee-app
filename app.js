@@ -2,14 +2,21 @@
 
 // 迅翔興業 社員ポータルPWA。既存の「各種書類(株式会社迅翔興業様) の原本」スプレッドシートを
 // 社員全員で直接共有編集する(誰が何を消したか分からなくなる)問題を避けるため、
-// 各社員が自分の端末からSupabaseへ直接送信する構成にした。認証は新しいログイン基盤を
-// 作らず、LINE連携(line_employee_links)と同じ強度の社員番号確認のみ(verify_employee_login)。
-// ログインは端末に保存し、本人が明示的にログアウトするまで自動ログインを維持する。
+// 各社員が自分の端末からSupabaseへ直接送信する構成にした。
+//
+// 認証(2026-08-22改訂): 社員番号だけでの本人確認はセキュリティ上不十分という指摘を受け、
+// 暗証番号(4〜6桁、pgcryptoでサーバー側ハッシュ化、平文は一切保存しない)を追加した。
+// 「端末記憶」と「認証情報」を分離する設計: localStorageには社員番号だけを覚えさせ
+// (=次回起動時に社員番号入力を省略するため)、実際の本人確認(暗証番号照合)は毎回
+// サーバー側で行う。認証成功後の「ログイン状態」はsessionStorageに置き、アプリを
+// 完全に開き直すたび(タブを閉じる・PWAを終了する等)に暗証番号の再入力を求める
+// (ページを更新しただけの間は再入力不要)。
 
 const SUPABASE_URL = 'https://tcxbtanumtuyfrqtjtvo.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_UVAjFJSjIs7Sl2tMpLWRkQ_uyDw9eyW';
 const N8N_BASE_URL = 'https://shota1003.app.n8n.cloud';
-const STORAGE_KEY = 'jinshou_employee_session';
+const SESSION_KEY = 'jinshou_employee_session'; // sessionStorage(タブを閉じると消える)
+const REMEMBERED_CODE_KEY = 'jinshou_remembered_employee_code'; // localStorage(端末記憶)
 
 async function rpc(name, params) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
@@ -22,7 +29,13 @@ async function rpc(name, params) {
     body: JSON.stringify(params),
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(text || `通信エラー(${res.status})`);
+  if (!res.ok) {
+    // SupabaseのRPCエラー(RAISE EXCEPTIONのメッセージ)はJSONで返るため、
+    // 表示用に読みやすいメッセージだけを取り出す(生JSONをそのまま見せない)。
+    let message = `通信エラー(${res.status})`;
+    try { const parsed = JSON.parse(text); if (parsed && parsed.message) message = parsed.message; } catch { /* JSONでなければそのまま */ }
+    throw new Error(message);
+  }
   return text ? JSON.parse(text) : null;
 }
 
@@ -51,10 +64,15 @@ async function uploadReceiptPhoto(employeeCode, file) {
 }
 
 function getSession() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch { return null; }
+  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch { return null; }
 }
-function setSession(session) { localStorage.setItem(STORAGE_KEY, JSON.stringify(session)); }
-function clearSession() { localStorage.removeItem(STORAGE_KEY); }
+function setSession(session) { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); }
+function clearSession() {
+  sessionStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(REMEMBERED_CODE_KEY);
+}
+function getRememberedCode() { return localStorage.getItem(REMEMBERED_CODE_KEY); }
+function setRememberedCode(code) { localStorage.setItem(REMEMBERED_CODE_KEY, code); }
 
 const SCREEN_ENTER_HOOKS = {};
 
@@ -63,7 +81,8 @@ const BOTTOM_NAV_MAP = { menu: 'menu', expense: 'expense-advance', history: 'his
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach((el) => el.classList.remove('active'));
   document.getElementById(`screen-${id}`).classList.add('active');
-  document.getElementById('bottom-nav').style.display = id === 'login' ? 'none' : 'flex';
+  const preAuthScreens = ['login', 'pin-entry', 'pin-register'];
+  document.getElementById('bottom-nav').style.display = preAuthScreens.includes(id) ? 'none' : 'flex';
   document.querySelectorAll('.bottom-nav-item').forEach((btn) => {
     btn.classList.toggle('active', btn.getAttribute('data-nav') === (BOTTOM_NAV_MAP[id] || id));
   });
@@ -79,22 +98,124 @@ function hideError(elId) {
   document.getElementById(elId).classList.remove('show');
 }
 
-async function doLogin() {
+let pendingLoginCode = null; // 社員番号入力〜暗証番号入力/登録の間だけ保持する一時変数
+
+// 起動時: 端末が社員番号を覚えていれば暗証番号入力画面へ、覚えていなければ社員番号入力画面へ。
+async function startLoginFlow() {
+  const remembered = getRememberedCode();
+  if (!remembered) { showScreen('login'); return; }
+
+  pendingLoginCode = remembered;
+  hideError('pin-entry-error');
+  document.getElementById('pin-entry-name').textContent = '確認中...';
+  showScreen('pin-entry');
+  try {
+    const rows = await rpc('check_employee_has_pin', { p_employee_code: remembered });
+    const info = rows && rows[0];
+    if (!info || !info.exists_and_active) {
+      // 退職・無効化された社員番号を端末が覚えていた場合は、社員番号入力からやり直させる。
+      clearSession();
+      showScreen('login');
+      return;
+    }
+    if (!info.has_pin) {
+      showScreen('pin-register');
+      document.getElementById('pin-register-name').textContent = `${info.employee_name}さん`;
+      return;
+    }
+    document.getElementById('pin-entry-name').textContent = `${info.employee_name}さん`;
+  } catch (e) {
+    document.getElementById('pin-entry-name').textContent = '';
+    showError('pin-entry-error', '通信エラーが発生しました。');
+  }
+}
+
+async function doSubmitEmployeeCode() {
   const code = document.getElementById('login-code').value.trim();
   hideError('login-error');
   if (!code) return;
   try {
-    const rows = await rpc('verify_employee_login', { p_employee_code: code });
-    if (!rows || rows.length === 0) {
+    const rows = await rpc('check_employee_has_pin', { p_employee_code: code });
+    const info = rows && rows[0];
+    if (!info || !info.exists_and_active) {
       showError('login-error', '社員番号が確認できませんでした。');
       return;
     }
-    const emp = rows[0];
-    setSession({ employeeCode: code, employeeId: emp.employee_id, employeeName: emp.employee_name, requestRole: emp.request_role });
-    enterMenu();
+    pendingLoginCode = code;
+    setRememberedCode(code);
+    if (info.has_pin) {
+      hideError('pin-entry-error');
+      document.getElementById('pin-entry-name').textContent = `${info.employee_name}さん`;
+      showScreen('pin-entry');
+    } else {
+      hideError('pin-register-error');
+      document.getElementById('pin-register-name').textContent = `${info.employee_name}さん`;
+      showScreen('pin-register');
+    }
   } catch (e) {
     showError('login-error', '通信エラーが発生しました。電波の良い場所でもう一度お試しください。');
   }
+}
+
+async function doVerifyPin() {
+  const pin = document.getElementById('pin-entry-code').value.trim();
+  hideError('pin-entry-error');
+  if (!pin) return;
+  const btn = document.getElementById('pin-entry-submit');
+  btn.disabled = true;
+  try {
+    const rows = await rpc('verify_employee_pin', { p_employee_code: pendingLoginCode, p_pin: pin });
+    if (!rows || rows.length === 0) {
+      showError('pin-entry-error', '暗証番号が違います。');
+      document.getElementById('pin-entry-code').value = '';
+      return;
+    }
+    const emp = rows[0];
+    setSession({ employeeCode: pendingLoginCode, employeeId: emp.out_employee_id, employeeName: emp.out_employee_name, requestRole: emp.out_request_role });
+    document.getElementById('pin-entry-code').value = '';
+    enterMenu();
+  } catch (e) {
+    showError('pin-entry-error', e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function doRegisterPin() {
+  const pin = document.getElementById('pin-register-code').value.trim();
+  const pinConfirm = document.getElementById('pin-register-confirm').value.trim();
+  hideError('pin-register-error');
+
+  if (!/^[0-9]{4,6}$/.test(pin)) {
+    showError('pin-register-error', '暗証番号は4〜6桁の数字で入力してください。');
+    return;
+  }
+  if (pin !== pinConfirm) {
+    showError('pin-register-error', '確認用の暗証番号が一致しません。');
+    return;
+  }
+
+  const btn = document.getElementById('pin-register-submit');
+  btn.disabled = true;
+  try {
+    const rows = await rpc('register_employee_pin', { p_employee_code: pendingLoginCode, p_pin: pin });
+    const emp = rows[0];
+    setSession({ employeeCode: pendingLoginCode, employeeId: emp.out_employee_id, employeeName: emp.out_employee_name, requestRole: emp.out_request_role });
+    document.getElementById('pin-register-code').value = '';
+    document.getElementById('pin-register-confirm').value = '';
+    enterMenu();
+  } catch (e) {
+    showError('pin-register-error', e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function switchEmployee() {
+  clearSession();
+  pendingLoginCode = null;
+  document.getElementById('login-code').value = '';
+  showScreen('login');
 }
 
 async function loadHomeLeaveStats(balanceElId, usedElId) {
@@ -641,6 +762,22 @@ async function loadAdminEmployeeDetail() {
   }
 }
 
+async function doAdminResetPin() {
+  const session = getSession();
+  const targetCode = document.getElementById('admin-employee-select').value;
+  const statusEl = document.getElementById('admin-reset-pin-status');
+  if (!targetCode) return;
+  statusEl.textContent = '';
+  try {
+    await rpc('admin_reset_employee_pin', { p_admin_employee_code: session.employeeCode, p_target_employee_code: targetCode });
+    statusEl.textContent = 'リセットしました。対象の社員は次回ログイン時に新しい暗証番号を設定できます。';
+    statusEl.style.color = 'var(--success)';
+  } catch (e) {
+    statusEl.textContent = 'リセットに失敗しました: ' + e.message;
+    statusEl.style.color = 'var(--danger)';
+  }
+}
+
 async function doAdminRecordIssuance() {
   const session = getSession();
   const targetCode = document.getElementById('admin-issue-employee').value;
@@ -717,10 +854,18 @@ async function doAdminSearch() {
 // ---------- 初期化 ----------
 
 function init() {
-  document.getElementById('login-btn').addEventListener('click', doLogin);
-  document.getElementById('login-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
-  document.getElementById('logout-btn').addEventListener('click', () => { clearSession(); showScreen('login'); });
-  document.getElementById('logout-btn-2').addEventListener('click', () => { clearSession(); showScreen('login'); });
+  document.getElementById('login-btn').addEventListener('click', doSubmitEmployeeCode);
+  document.getElementById('login-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSubmitEmployeeCode(); });
+
+  document.getElementById('pin-entry-submit').addEventListener('click', doVerifyPin);
+  document.getElementById('pin-entry-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') doVerifyPin(); });
+  document.getElementById('pin-entry-switch').addEventListener('click', switchEmployee);
+
+  document.getElementById('pin-register-submit').addEventListener('click', doRegisterPin);
+  document.getElementById('pin-register-switch').addEventListener('click', switchEmployee);
+
+  document.getElementById('logout-btn').addEventListener('click', switchEmployee);
+  document.getElementById('logout-btn-2').addEventListener('click', switchEmployee);
 
   document.getElementById('leave-submit').addEventListener('click', doSubmitLeave);
   ['leave-start', 'leave-end', 'leave-half'].forEach((id) => {
@@ -737,6 +882,7 @@ function init() {
   document.getElementById('admin-employee-select').addEventListener('change', loadAdminEmployeeDetail);
   document.getElementById('admin-issue-submit').addEventListener('click', doAdminRecordIssuance);
   document.getElementById('admin-search-btn').addEventListener('click', doAdminSearch);
+  document.getElementById('admin-reset-pin-btn').addEventListener('click', doAdminResetPin);
 
   document.querySelectorAll('[data-nav]').forEach((el) => {
     el.addEventListener('click', () => {
@@ -765,7 +911,7 @@ function init() {
   if (session && session.employeeId) {
     enterMenu();
   } else {
-    showScreen('login');
+    startLoginFlow();
   }
 
   if ('serviceWorker' in navigator) {

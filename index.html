@@ -17,7 +17,7 @@
 </header>
 <main>
 
-  <!-- ログイン画面 -->
+  <!-- ログイン画面(社員番号入力、初回またはログイン先切り替え時のみ) -->
   <section id="screen-login" class="screen">
     <div class="login-wrap">
       <div class="login-logo">迅</div>
@@ -25,9 +25,42 @@
       <div class="card">
         <label for="login-code">社員番号</label>
         <input type="text" id="login-code" inputmode="numeric" placeholder="例: 0001" autocomplete="off">
-        <div class="hint">最初の1回だけ入力すれば、次回から自動的にログインします。</div>
+        <div class="hint">最初の1回だけ入力すれば、次回から社員番号の入力は不要になります(暗証番号でログインします)。</div>
         <div class="error" id="login-error">社員番号が確認できませんでした。</div>
-        <button id="login-btn">ログイン</button>
+        <button id="login-btn">次へ</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 暗証番号入力画面(2回目以降、端末が社員番号を記憶している場合) -->
+  <section id="screen-pin-entry" class="screen">
+    <div class="login-wrap">
+      <div class="login-logo">迅</div>
+      <div class="login-company" id="pin-entry-name">読み込み中...</div>
+      <div class="card">
+        <label for="pin-entry-code">暗証番号を入力してください</label>
+        <input type="password" id="pin-entry-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+        <div class="error" id="pin-entry-error"></div>
+        <button id="pin-entry-submit">ログイン</button>
+        <button class="link" id="pin-entry-switch">別の社員番号でログイン</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 暗証番号登録画面(初回、または管理者リセット後) -->
+  <section id="screen-pin-register" class="screen">
+    <div class="login-wrap">
+      <div class="login-logo">迅</div>
+      <div class="login-company" id="pin-register-name">初めての方へ</div>
+      <div class="card">
+        <div class="hint" style="margin-bottom:14px;">今後ログインに使う暗証番号(4〜6桁の数字)を設定してください。次回からはこの暗証番号だけでログインできます。</div>
+        <label for="pin-register-code">暗証番号(4〜6桁)</label>
+        <input type="password" id="pin-register-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+        <label for="pin-register-confirm">確認のためもう一度入力</label>
+        <input type="password" id="pin-register-confirm" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+        <div class="error" id="pin-register-error"></div>
+        <button id="pin-register-submit">登録してログイン</button>
+        <button class="link" id="pin-register-switch">別の社員番号でログイン</button>
       </div>
     </div>
   </section>
@@ -322,6 +355,8 @@
       <label for="admin-employee-select">社員を選択</label>
       <select id="admin-employee-select"></select>
       <div id="admin-employee-detail"></div>
+      <button type="button" class="secondary" id="admin-reset-pin-btn">この社員の暗証番号をリセットする</button>
+      <div class="hint-inline" id="admin-reset-pin-status"></div>
     </div>
 
     <div class="section-title">支給品を記録する(実際に渡した時)</div>

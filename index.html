@@ -65,7 +65,9 @@
     </div>
   </section>
 
-  <!-- メニュー画面(ホーム) -->
+  <!-- メニュー画面(ホーム)。ここには個別の申請フォームを直接置かず、「今日やること」+
+       大きなカテゴリーカード(申請/自分の情報/会社/管理者)だけを表示する。各カテゴリーを
+       タップした先の専用画面で、初めてそのカテゴリーの中身(フォーム一覧等)を表示する構造。 -->
   <section id="screen-menu" class="screen">
     <div class="greeting" id="menu-greeting"></div>
 
@@ -74,12 +76,42 @@
     <div class="section-title">今日やること</div>
     <div class="today-list" id="today-list"></div>
 
+    <div class="section-title">メニュー</div>
+    <div class="main-menu-grid">
+      <button type="button" class="main-menu-card" data-nav="menu-apply">
+        <span class="main-menu-icon">📝</span>
+        <span class="main-menu-label">申請</span>
+        <span class="main-menu-desc">有給・経費・会議・支給品</span>
+      </button>
+      <button type="button" class="main-menu-card" data-nav="myinfo">
+        <span class="main-menu-icon">👤</span>
+        <span class="main-menu-label">自分の情報</span>
+        <span class="main-menu-desc">履歴・残日数・資格</span>
+      </button>
+      <button type="button" class="main-menu-card" data-nav="menu-company" style="position:relative;">
+        <span class="main-menu-icon">🏢</span>
+        <span class="main-menu-label">会社</span>
+        <span class="main-menu-desc">お知らせ・匿名相談</span>
+        <span class="unread-badge" id="home-company-badge" style="display:none;"></span>
+      </button>
+      <button type="button" class="main-menu-card" data-nav="menu-admin" id="main-menu-admin" style="display:none;">
+        <span class="main-menu-icon">🛠</span>
+        <span class="main-menu-label">管理者</span>
+        <span class="main-menu-desc">承認・ダッシュボード</span>
+      </button>
+    </div>
+
+    <button class="link" id="logout-btn">別の社員番号でログインし直す</button>
+  </section>
+
+  <!-- 「申請」カテゴリー(ホームのメニューカードから遷移) -->
+  <section id="screen-menu-apply" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="form-title">申請</div>
     <div class="stat-mini-row">
       <div class="stat-mini"><span class="stat-mini-label">有給残日数</span><span class="stat-mini-value" id="home-leave-balance">-</span></div>
       <div class="stat-mini"><span class="stat-mini-label">今年使用</span><span class="stat-mini-value" id="home-leave-used">-</span></div>
     </div>
-
-    <div class="section-title">申請する</div>
     <div class="home-card-grid">
       <button type="button" class="home-card" data-nav="leave">
         <span class="home-card-icon">🏖</span>
@@ -106,37 +138,99 @@
         <span class="home-card-label">支給品</span>
         <span class="home-card-desc">制服・安全用品</span>
       </button>
-      <button type="button" class="home-card disabled" disabled>
+      <button type="button" class="home-card" data-nav="qual-submit">
         <span class="home-card-icon">🎓</span>
         <span class="home-card-label">資格</span>
-        <span class="home-card-desc">準備中です</span>
-      </button>
-      <button type="button" class="home-card" data-nav="anon-consult" style="position:relative;">
-        <span class="home-card-icon">🤫</span>
-        <span class="home-card-label">匿名相談</span>
-        <span class="home-card-desc">悩み・意見を匿名で送る</span>
-        <span class="unread-badge" id="home-anon-badge" style="display:none;"></span>
+        <span class="home-card-desc">資格を登録する</span>
       </button>
     </div>
+  </section>
 
-    <div class="section-title">自分の情報</div>
+  <!-- 資格申請フォーム -->
+  <section id="screen-qual-submit" class="screen">
+    <button type="button" class="back-link" data-nav="menu-apply">‹ メニューに戻る</button>
+    <div class="card">
+      <div class="form-title">資格を登録する</div>
+      <div class="hint" style="margin-bottom:10px;">資格証の写真またはPDFを添付できます(任意)。登録後、管理者が内容を確認して有効化します。</div>
+      <label for="qual-name">資格名<span class="required-mark">(必須)</span></label>
+      <input type="text" id="qual-name" placeholder="例: フォークリフト運転技能講習">
+      <label for="qual-number">資格番号</label>
+      <div class="hint-inline">任意</div>
+      <input type="text" id="qual-number">
+      <label for="qual-obtained">取得日</label>
+      <input type="date" id="qual-obtained">
+      <label for="qual-expiry">有効期限</label>
+      <input type="date" id="qual-expiry">
+      <label for="qual-renewal">更新期限</label>
+      <div class="hint-inline">更新手続きが必要な期限(分かる場合のみ)</div>
+      <input type="date" id="qual-renewal">
+
+      <label>資格証の写真</label>
+      <label class="photo-capture-btn">
+        <span class="photo-capture-icon">📷</span>
+        <span id="qual-photo-label">写真を選ぶ</span>
+        <input type="file" accept="image/*" id="qual-photo-input">
+      </label>
+      <div class="ocr-status" id="qual-photo-status"></div>
+
+      <label>資格証のPDF</label>
+      <label class="photo-capture-btn">
+        <span class="photo-capture-icon">📄</span>
+        <span id="qual-pdf-label">PDFを選ぶ</span>
+        <input type="file" accept="application/pdf" id="qual-pdf-input">
+      </label>
+      <div class="ocr-status" id="qual-pdf-status"></div>
+
+      <label for="qual-note">備考</label>
+      <div class="hint-inline">任意</div>
+      <textarea id="qual-note"></textarea>
+      <div class="error" id="qual-error"></div>
+      <button id="qual-submit">登録する</button>
+    </div>
+  </section>
+
+  <!-- 自分の資格情報 -->
+  <section id="screen-my-qual" class="screen">
+    <button type="button" class="back-link" data-nav="myinfo">‹ 戻る</button>
+    <div class="form-title">資格情報</div>
+    <button type="button" data-nav="qual-submit">＋ 資格を登録する</button>
+    <div id="my-qual-list"></div>
+  </section>
+
+  <!-- 資格管理(管理者) -->
+  <section id="screen-qual-admin" class="screen">
+    <button type="button" class="back-link" data-nav="menu-admin">‹ メニューに戻る</button>
+    <div class="form-title">資格管理</div>
+    <select id="qual-admin-filter">
+      <option value="">すべて</option>
+      <option value="pending">確認待ち</option>
+      <option value="expiring">期限が近い(60日以内)</option>
+    </select>
+    <div id="qual-admin-list"></div>
+  </section>
+
+  <!-- 「会社」カテゴリー(お知らせ・匿名相談) -->
+  <section id="screen-menu-company" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="form-title">会社</div>
     <div class="menu-list">
       <button type="button" class="menu-item" data-nav="announcements">
         <div>お知らせ<span class="desc">会社からの通知を確認</span></div>
         <div class="arrow">›</div>
       </button>
-      <button type="button" class="menu-item" data-nav="history">
-        <div>申請履歴<span class="desc">これまでの申請と状態を確認</span></div>
-        <div class="arrow">›</div>
-      </button>
-      <button type="button" class="menu-item" data-nav="my-supply">
-        <div>支給品履歴<span class="desc">これまで支給された物を確認</span></div>
+      <button type="button" class="menu-item" data-nav="anon-consult" style="position:relative;">
+        <div>匿名相談<span class="desc">悩み・意見を匿名で送る</span></div>
+        <span class="unread-badge" id="home-anon-badge" style="display:none;"></span>
         <div class="arrow">›</div>
       </button>
     </div>
+  </section>
 
-    <div class="section-title" id="admin-section-title" style="display:none;">管理者メニュー</div>
-    <div class="menu-list" id="admin-menu-list" style="display:none;">
+  <!-- 「管理者」カテゴリー(社員には表示されない) -->
+  <section id="screen-menu-admin" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="form-title">管理者メニュー</div>
+    <div class="menu-list">
       <button type="button" class="menu-item" data-nav="admin-dashboard">
         <div>管理者ダッシュボード<span class="desc">今すぐ対応が必要なことをまとめて確認</span></div>
         <div class="arrow">›</div>
@@ -153,9 +247,37 @@
         <div>お知らせ管理<span class="desc">通知の作成・既読状況を確認</span></div>
         <div class="arrow">›</div>
       </button>
+      <button type="button" class="menu-item" data-nav="qual-admin">
+        <div>資格管理<span class="desc">確認待ち・期限が近い資格を確認</span></div>
+        <div class="arrow">›</div>
+      </button>
+      <button type="button" class="menu-item" data-nav="category-review">
+        <div>勘定科目確認<span class="desc">AI提案の確信度が低いものを確認</span></div>
+        <div class="arrow">›</div>
+      </button>
     </div>
+  </section>
 
-    <button class="link" id="logout-btn">別の社員番号でログインし直す</button>
+  <!-- 勘定科目確認(管理者) -->
+  <section id="screen-category-review" class="screen">
+    <button type="button" class="back-link" data-nav="menu-admin">‹ メニューに戻る</button>
+    <div class="form-title">勘定科目確認</div>
+    <div class="hint" style="margin-bottom:12px;">AIによる勘定科目の提案のうち、確信度が高くないものだけを表示しています。内容を確認し、正しい科目を確定してください。</div>
+    <div id="category-review-list"></div>
+    <datalist id="category-suggest-list">
+      <option value="旅費交通費"></option>
+      <option value="消耗品費"></option>
+      <option value="会議費"></option>
+      <option value="燃料費"></option>
+      <option value="修繕費"></option>
+      <option value="通信費"></option>
+      <option value="接待交際費"></option>
+      <option value="地代家賃"></option>
+      <option value="水道光熱費"></option>
+      <option value="車両費"></option>
+      <option value="工具器具費"></option>
+      <option value="雑費"></option>
+    </datalist>
   </section>
 
   <!-- 有給申請フォーム -->
@@ -198,9 +320,16 @@
     <div class="form-title" id="expense-screen-title">経費立替申請</div>
     <div class="hint" style="margin: 0 0 14px;" id="expense-screen-hint">領収書の写真が必要です。複数の領収書をまとめて1回の申請にできます。</div>
 
+    <label class="photo-capture-btn" style="margin-bottom:10px;">
+      <span class="photo-capture-icon">🖼</span>
+      <span>複数の領収書をまとめて選ぶ</span>
+      <input type="file" accept="image/*" multiple id="expense-batch-input">
+    </label>
+    <div class="hint" style="margin: 0 0 14px; text-align:center;">選んだ写真1枚ごとに、自動で明細を1件作成します</div>
+
     <div id="expense-item-list"></div>
 
-    <button type="button" class="secondary" id="expense-add-item">＋ 明細を追加</button>
+    <button type="button" class="secondary" id="expense-add-item">＋ 明細を1件だけ追加(カメラで撮影)</button>
 
     <div class="card total-card">
       <div class="total-row"><span>明細件数</span><span id="expense-total-count">0件</span></div>
@@ -326,8 +455,8 @@
         <div>支給品履歴<span class="desc">これまで支給された物を確認</span></div>
         <div class="arrow">›</div>
       </button>
-      <button type="button" class="menu-item disabled" disabled>
-        <div>保有資格<span class="desc">準備中です</span></div>
+      <button type="button" class="menu-item" data-nav="my-qual">
+        <div>保有資格<span class="desc">資格の登録・期限を確認</span></div>
         <div class="arrow">›</div>
       </button>
     </div>

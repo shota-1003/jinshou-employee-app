@@ -405,6 +405,48 @@ button.link {
 .read-status-row .read-at { color: var(--text-muted); }
 .read-status-row .read-at.unread { color: var(--danger); }
 
+/* ホーム画面の主要メニュー(申請/自分の情報/会社/管理者) */
+.main-menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 6px; }
+.main-menu-card {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; text-align: center; background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: 18px; padding: 26px 12px; font-family: inherit;
+}
+.main-menu-icon { font-size: 32px; }
+.main-menu-label { font-size: 15px; font-weight: 700; color: var(--text); }
+.main-menu-desc { font-size: 11px; color: var(--text-muted); }
+
+/* 資格台帳・資格申請 */
+.qual-item {
+  padding: 14px 16px; border-radius: 12px; background: var(--card-bg); border: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.qual-item .row1 { display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 15px; }
+.qual-item .row2 { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.qual-item.expiring { border-left: 4px solid #a15c00; }
+.qual-item.expired { border-left: 4px solid var(--danger); }
+.qual-item .file-link { font-size: 12px; color: var(--primary); margin-right: 12px; }
+.qual-verify-btns { display: flex; gap: 8px; margin-top: 10px; }
+.qual-verify-btns button { width: auto; flex: 1; padding: 8px; font-size: 13px; }
+.qual-verify-btns .reject-btn { background: none; border: 1px solid var(--danger); color: var(--danger); }
+
+/* 勘定科目確認(管理者) */
+.category-review-item {
+  padding: 14px 16px; border-radius: 12px; background: var(--card-bg); border: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.category-review-item .row1 { display: flex; justify-content: space-between; font-weight: 700; font-size: 14px; }
+.category-review-item .row2 { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.category-review-item .ai-suggest { font-size: 12px; color: var(--primary); margin-top: 6px; background: #eef2f9; border-radius: 8px; padding: 8px 10px; }
+.category-review-item input[list] { margin-top: 8px; }
+.category-review-item .confirm-btn { margin-top: 8px; padding: 8px; font-size: 13px; }
+
+/* 管理者ダッシュボードのドリルダウン一覧: 承認/差戻しボタン */
+.history-item .qual-verify-btns { margin-top: 10px; }
+.reject-reason-box { margin-top: 8px; }
+.reject-reason-input { width: 100%; min-height: 60px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; font-family: inherit; box-sizing: border-box; }
+.reject-confirm-btn { margin-top: 6px; padding: 8px; font-size: 13px; background: var(--danger); }
+
 /* 経費フォーム: 過去の入力履歴からのAI候補(タップで入力欄へ反映、自動確定はしない) */
 .item-suggest-area { margin-bottom: 6px; }
 .item-suggest-label { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }

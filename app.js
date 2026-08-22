@@ -232,9 +232,7 @@ function enterMenu() {
   const session = getSession();
   document.getElementById('menu-greeting').textContent = `こんにちは、${session.employeeName}さん`;
   const showAdmin = session.requestRole === 'executive';
-  document.getElementById('admin-section-title').style.display = showAdmin ? '' : 'none';
-  document.getElementById('admin-menu-list').style.display = showAdmin ? '' : 'none';
-  loadHomeLeaveStats('home-leave-balance', 'home-leave-used');
+  document.getElementById('main-menu-admin').style.display = showAdmin ? '' : 'none';
   checkAnonUnreadBadge().then(loadTodayList);
   loadAnnounceBanner();
   showScreen('menu');
@@ -384,9 +382,16 @@ function enterExpenseScreen(category) {
 
 async function populateSiteSelect(selectEl, query) {
   try {
-    const rows = await rpc('search_sites', { p_query: query || null });
+    const session = getSession();
+    const rows = await rpc('search_sites', { p_query: query || null, p_employee_code: session ? session.employeeCode : null });
     const current = selectEl.value;
-    selectEl.innerHTML = '<option value="">選択してください</option>' + rows.map((s) => `<option value="${s.id}" data-name="${s.site_name}">${s.site_name}</option>`).join('');
+    const recent = rows.filter((s) => s.recently_used);
+    const others = rows.filter((s) => !s.recently_used);
+    const opt = (s) => `<option value="${s.id}" data-name="${s.site_name}">${s.site_name}</option>`;
+    let html = '<option value="">選択してください</option>';
+    if (recent.length > 0) html += `<optgroup label="最近使った現場">${recent.map(opt).join('')}</optgroup>`;
+    html += (recent.length > 0 ? '<optgroup label="現場一覧">' : '') + others.map(opt).join('') + (recent.length > 0 ? '</optgroup>' : '');
+    selectEl.innerHTML = html;
     if (current && rows.some((s) => String(s.id) === current)) selectEl.value = current;
   } catch (e) { /* 現場マスターが引けない場合は空のまま(自由入力は不可、要確認扱い) */ }
 }
@@ -457,7 +462,7 @@ async function runOcrForItem(card, file) {
   }
 }
 
-function addExpenseItem() {
+function addExpenseItem(initialFile) {
   const template = document.getElementById('expense-item-template');
   const clone = template.content.cloneNode(true);
   const itemId = `item-${++expenseItemSeq}`;
@@ -535,6 +540,13 @@ function addExpenseItem() {
 
   document.getElementById('expense-item-list').appendChild(clone);
   updateExpenseTotal();
+  if (initialFile) handlePhotoFile(initialFile);
+}
+
+// 複数の領収書写真を一度に選択したとき、写真1枚ごとに明細を1件自動作成してOCRを走らせる
+// (写真1→OCR→明細1、写真2→OCR→明細2、…という流れ。1枚ずつ手作業で追加する必要をなくす)。
+function addExpenseItemsBatch(files) {
+  Array.from(files || []).forEach((file) => addExpenseItem(file));
 }
 
 function updateExpenseTotal() {
@@ -1111,10 +1123,13 @@ async function loadTodayList() {
       if (d.unread_announcements > 0) items.push({ icon: '📢', label: '未読のお知らせがあります', count: `${d.unread_announcements}件`, nav: 'announcements' });
       if (d.needs_info_count > 0) items.push({ icon: '✏️', label: '確認・修正が必要な申請があります', count: `${d.needs_info_count}件`, nav: 'history', urgent: true });
       if (d.waiting_approval_count > 0) items.push({ icon: '⏳', label: '承認待ちの申請があります', count: `${d.waiting_approval_count}件`, nav: 'history' });
+      if (d.qualification_expiring_count > 0) items.push({ icon: '🎓', label: '期限が近い資格があります', count: `${d.qualification_expiring_count}件`, nav: 'my-qual', urgent: true });
     }
-    if (document.getElementById('home-anon-badge').style.display !== 'none') {
+    const anonUnread = document.getElementById('home-anon-badge').style.display !== 'none';
+    if (anonUnread) {
       items.push({ icon: '🤫', label: '匿名相談に会社から返信があります', count: '', nav: 'anon-consult' });
     }
+    document.getElementById('home-company-badge').style.display = (anonUnread || (d && d.unread_announcements > 0)) ? 'block' : 'none';
     if (items.length === 0) {
       listEl.innerHTML = '<div class="today-empty">今日確認が必要なことはありません。</div>';
       return;
@@ -1192,6 +1207,9 @@ const DASH_CARDS = [
   { key: 'pending_supply_requests', filter: 'supply', label: '支給品申請 確認待ち', icon: '📦' },
   { key: 'needs_correction_count', filter: 'needs_correction', label: '確認・修正が必要な申請', icon: '✏️' },
   { key: 'unanswered_consultations', filter: null, label: '未対応の匿名相談', icon: '🤫', nav: 'anon-admin' },
+  { key: 'pending_qualifications', filter: null, label: '資格の確認待ち', icon: '🎓', nav: 'qual-admin' },
+  { key: 'qualification_expiring_count', filter: null, label: '期限が近い資格', icon: '⏰', nav: 'qual-admin' },
+  { key: 'category_review_needed_count', filter: null, label: '勘定科目の確認待ち', icon: '📊', nav: 'category-review' },
 ];
 
 async function loadAdminDashboard() {
@@ -1233,21 +1251,58 @@ async function loadAdminRequestList() {
   const session = getSession();
   const listEl = document.getElementById('admin-request-list');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  const canDecide = ['expense', 'leave', 'meeting'].includes(currentAdminRequestFilter);
   try {
     const rows = await rpc('list_pending_requests_admin', { p_admin_employee_code: session.employeeCode, p_filter: currentAdminRequestFilter });
     if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する申請はありません。</div>'; return; }
     listEl.innerHTML = rows.map((r) => {
       const amountStr = r.amount != null ? `${Number(r.amount).toLocaleString()}円` : '';
       return `
-        <div class="history-item">
+        <div class="history-item" data-id="${r.id}">
           <div class="row1"><span>${r.employee_name || ''}・${REQUEST_TYPE_LABEL[r.request_type] || r.request_type}</span><span>${amountStr}</span></div>
           <div class="row2">${new Date(r.requested_at).toLocaleDateString('ja-JP')}　${r.summary || ''}</div>
           <span class="status-badge">${STATUS_LABEL[r.status] || r.status}</span>
+          ${canDecide ? `
+            <div class="qual-verify-btns">
+              <button type="button" class="approve-btn">承認する</button>
+              <button type="button" class="reject-btn">差し戻す</button>
+            </div>
+            <div class="reject-reason-box" style="display:none;">
+              <textarea class="reject-reason-input" placeholder="差戻し理由を入力してください"></textarea>
+              <button type="button" class="reject-confirm-btn">差戻しを確定する</button>
+            </div>
+          ` : ''}
         </div>
       `;
     }).join('');
+    listEl.querySelectorAll('.approve-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => doDecideRequest(e.target.closest('.history-item').dataset.id, 'approved'));
+    });
+    listEl.querySelectorAll('.reject-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.target.closest('.history-item').querySelector('.reject-reason-box').style.display = 'block';
+      });
+    });
+    listEl.querySelectorAll('.reject-confirm-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const item = e.target.closest('.history-item');
+        const reason = item.querySelector('.reject-reason-input').value.trim();
+        if (!reason) return;
+        doDecideRequest(item.dataset.id, 'rejected', reason);
+      });
+    });
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doDecideRequest(requestId, action, reason) {
+  const session = getSession();
+  try {
+    await rpc('admin_decide_request', { p_admin_employee_code: session.employeeCode, p_request_id: Number(requestId), p_action: action, p_rejection_reason: reason || null });
+    await loadAdminRequestList();
+  } catch (e) {
+    window.alert(e.message || '処理に失敗しました。');
   }
 }
 
@@ -1336,6 +1391,189 @@ async function openAnnounceStatus(id, title) {
   }
 }
 
+// ---------- 資格 ----------
+
+let qualPhotoUpload = null;
+let qualPdfUpload = null;
+
+async function handleQualFile(file, kind) {
+  if (!file) return;
+  const statusEl = document.getElementById(`qual-${kind}-status`);
+  const labelEl = document.getElementById(`qual-${kind}-label`);
+  statusEl.textContent = 'アップロード中...';
+  try {
+    const session = getSession();
+    const result = await uploadReceiptPhoto(session.employeeCode, file);
+    if (kind === 'photo') qualPhotoUpload = result; else qualPdfUpload = result;
+    statusEl.textContent = 'アップロード完了';
+    labelEl.textContent = file.name;
+  } catch (e) {
+    statusEl.textContent = 'アップロードに失敗しました。';
+  }
+}
+
+function resetQualForm() {
+  ['qual-name', 'qual-number', 'qual-obtained', 'qual-expiry', 'qual-renewal', 'qual-note'].forEach((id) => { document.getElementById(id).value = ''; });
+  document.getElementById('qual-photo-input').value = '';
+  document.getElementById('qual-pdf-input').value = '';
+  document.getElementById('qual-photo-label').textContent = '写真を選ぶ';
+  document.getElementById('qual-pdf-label').textContent = 'PDFを選ぶ';
+  document.getElementById('qual-photo-status').textContent = '';
+  document.getElementById('qual-pdf-status').textContent = '';
+  qualPhotoUpload = null;
+  qualPdfUpload = null;
+  hideError('qual-error');
+}
+
+async function doSubmitQualification() {
+  const session = getSession();
+  const name = document.getElementById('qual-name').value.trim();
+  hideError('qual-error');
+  if (!name) { showError('qual-error', '資格名を入力してください。'); return; }
+  const btn = document.getElementById('qual-submit');
+  btn.disabled = true;
+  try {
+    await rpc('submit_qualification', {
+      p_employee_code: session.employeeCode,
+      p_qualification_name: name,
+      p_qualification_number: document.getElementById('qual-number').value.trim() || null,
+      p_obtained_date: document.getElementById('qual-obtained').value || null,
+      p_expiry_date: document.getElementById('qual-expiry').value || null,
+      p_renewal_deadline: document.getElementById('qual-renewal').value || null,
+      p_note: document.getElementById('qual-note').value.trim() || null,
+      p_photo_drive_file_id: qualPhotoUpload ? qualPhotoUpload.driveFileId : null,
+      p_photo_drive_file_url: qualPhotoUpload ? qualPhotoUpload.driveFileUrl : null,
+      p_pdf_drive_file_id: qualPdfUpload ? qualPdfUpload.driveFileId : null,
+      p_pdf_drive_file_url: qualPdfUpload ? qualPdfUpload.driveFileUrl : null,
+    });
+    resetQualForm();
+    document.getElementById('done-message').textContent = '資格を登録しました。管理者の確認をお待ちください。';
+    showScreen('done');
+  } catch (e) {
+    showError('qual-error', e.message || '送信に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+const QUAL_STATUS_LABEL = { pending_verification: '確認待ち', active: '有効', rejected: '却下', expired: '期限切れ' };
+
+async function loadMyQualifications() {
+  const session = getSession();
+  const listEl = document.getElementById('my-qual-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_qualifications', { p_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">登録された資格はまだありません。</div>'; return; }
+    listEl.innerHTML = rows.map((q) => {
+      const expiring = q.status === 'active' && q.days_until_expiry != null && q.days_until_expiry >= 0 && q.days_until_expiry <= 60;
+      const expired = q.status === 'active' && q.days_until_expiry != null && q.days_until_expiry < 0;
+      const expiryText = q.expiry_date ? `有効期限: ${new Date(q.expiry_date).toLocaleDateString('ja-JP')}${expiring ? `(残り${q.days_until_expiry}日)` : ''}${expired ? '(期限切れ)' : ''}` : '';
+      return `
+        <div class="qual-item ${expiring ? 'expiring' : ''} ${expired ? 'expired' : ''}">
+          <div class="row1"><span>${q.qualification_name}</span><span class="status-badge ${q.status === 'active' ? 'done' : (q.status === 'rejected' ? 'rejected' : '')}">${QUAL_STATUS_LABEL[q.status] || q.status}</span></div>
+          <div class="row2">${expiryText}</div>
+          <div class="row2">${q.qualification_number ? `番号: ${q.qualification_number}` : ''}</div>
+          <div style="margin-top:8px;">
+            ${q.certificate_photo_url ? `<a class="file-link" href="${q.certificate_photo_url}" target="_blank" rel="noopener">写真を見る</a>` : ''}
+            ${q.certificate_pdf_url ? `<a class="file-link" href="${q.certificate_pdf_url}" target="_blank" rel="noopener">PDFを見る</a>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+// ---------- 資格管理(管理者) ----------
+
+async function loadQualAdminList() {
+  const session = getSession();
+  const filter = document.getElementById('qual-admin-filter').value || null;
+  const listEl = document.getElementById('qual-admin-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_qualifications', { p_admin_employee_code: session.employeeCode, p_filter: filter });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する資格はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((q) => {
+      const expiring = q.status === 'active' && q.days_until_expiry != null && q.days_until_expiry <= 60;
+      const expiryText = q.expiry_date ? `有効期限: ${new Date(q.expiry_date).toLocaleDateString('ja-JP')}${q.days_until_expiry != null ? `(残り${q.days_until_expiry}日)` : ''}` : '期限未登録';
+      return `
+        <div class="qual-item ${expiring ? 'expiring' : ''}" data-id="${q.id}">
+          <div class="row1"><span>${q.employee_name}・${q.qualification_name}</span><span class="status-badge ${q.status === 'active' ? 'done' : (q.status === 'rejected' ? 'rejected' : '')}">${QUAL_STATUS_LABEL[q.status] || q.status}</span></div>
+          <div class="row2">${expiryText}</div>
+          <div class="row2">${q.qualification_number ? `番号: ${q.qualification_number}` : ''}</div>
+          <div style="margin-top:8px;">
+            ${q.certificate_photo_url ? `<a class="file-link" href="${q.certificate_photo_url}" target="_blank" rel="noopener">写真を見る</a>` : ''}
+            ${q.certificate_pdf_url ? `<a class="file-link" href="${q.certificate_pdf_url}" target="_blank" rel="noopener">PDFを見る</a>` : ''}
+          </div>
+          ${q.status === 'pending_verification' ? `
+            <div class="qual-verify-btns">
+              <button type="button" class="approve-btn">有効化する</button>
+              <button type="button" class="reject-btn">却下する</button>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }).join('');
+    listEl.querySelectorAll('.approve-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => doVerifyQualification(e.target.closest('.qual-item').dataset.id, 'active'));
+    });
+    listEl.querySelectorAll('.reject-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => doVerifyQualification(e.target.closest('.qual-item').dataset.id, 'rejected'));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doVerifyQualification(id, action) {
+  const session = getSession();
+  try {
+    await rpc('admin_verify_qualification', { p_admin_employee_code: session.employeeCode, p_qualification_id: Number(id), p_action: action });
+    await loadQualAdminList();
+  } catch (e) { /* 失敗時は一覧が更新されないだけ */ }
+}
+
+// ---------- 勘定科目確認(管理者) ----------
+
+async function loadCategoryReview() {
+  const session = getSession();
+  const listEl = document.getElementById('category-review-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_category_review', { p_admin_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">確認が必要な勘定科目はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="category-review-item" data-document-id="${r.document_id}">
+        <div class="row1"><span>${r.employee_name}・${r.store_name || ''}</span><span>${r.amount != null ? `${Number(r.amount).toLocaleString()}円` : ''}</span></div>
+        <div class="row2">${r.document_date ? new Date(r.document_date).toLocaleDateString('ja-JP') : ''}　現場: ${r.site_name || '-'}　用途: ${r.purpose || '-'}</div>
+        <div class="ai-suggest">AI提案: ${r.category_candidate || '(候補なし)'}${r.category_confidence ? `(確信度: ${r.category_confidence === 'medium' ? '中' : '低'})` : '(未提案)'}</div>
+        <input type="text" class="category-input" list="category-suggest-list" placeholder="正しい勘定科目を入力" value="${r.category_candidate || ''}">
+        <button type="button" class="confirm-btn">この科目で確定する</button>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.category-review-item').forEach((el) => {
+      el.querySelector('.confirm-btn').addEventListener('click', () => {
+        const value = el.querySelector('.category-input').value.trim();
+        if (!value) return;
+        doConfirmCategory(el.dataset.documentId, value);
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doConfirmCategory(documentId, category) {
+  const session = getSession();
+  try {
+    await rpc('admin_set_account_category', { p_admin_employee_code: session.employeeCode, p_document_id: Number(documentId), p_category: category, p_note: null });
+    await loadCategoryReview();
+  } catch (e) { /* 失敗時は一覧が更新されないだけ */ }
+}
+
 // ---------- 初期化 ----------
 
 function init() {
@@ -1357,8 +1595,12 @@ function init() {
     document.getElementById(id).addEventListener('change', updateLeaveDaysDisplay);
   });
 
-  document.getElementById('expense-add-item').addEventListener('click', addExpenseItem);
+  document.getElementById('expense-add-item').addEventListener('click', () => addExpenseItem());
   document.getElementById('expense-submit').addEventListener('click', doSubmitExpense);
+  document.getElementById('expense-batch-input').addEventListener('change', (e) => {
+    addExpenseItemsBatch(e.target.files);
+    e.target.value = '';
+  });
 
   document.getElementById('meeting-submit').addEventListener('click', doSubmitMeeting);
 
@@ -1383,6 +1625,11 @@ function init() {
       document.getElementById('announce-target-hint').style.display = showSelect ? '' : 'none';
     });
   });
+
+  document.getElementById('qual-submit').addEventListener('click', doSubmitQualification);
+  document.getElementById('qual-photo-input').addEventListener('change', (e) => handleQualFile(e.target.files[0], 'photo'));
+  document.getElementById('qual-pdf-input').addEventListener('change', (e) => handleQualFile(e.target.files[0], 'pdf'));
+  document.getElementById('qual-admin-filter').addEventListener('change', loadQualAdminList);
 
   document.querySelectorAll('[data-nav]').forEach((el) => {
     el.addEventListener('click', () => {
@@ -1426,6 +1673,18 @@ function init() {
     hideError('announce-error');
     loadAnnounceAdminEmployeeSelect();
     loadAnnounceAdminList();
+  };
+  SCREEN_ENTER_HOOKS['menu-apply'] = () => loadHomeLeaveStats('home-leave-balance', 'home-leave-used');
+  SCREEN_ENTER_HOOKS['menu-admin'] = () => { if (!isAdmin()) enterMenu(); };
+  SCREEN_ENTER_HOOKS['qual-submit'] = resetQualForm;
+  SCREEN_ENTER_HOOKS['my-qual'] = loadMyQualifications;
+  SCREEN_ENTER_HOOKS['qual-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadQualAdminList();
+  };
+  SCREEN_ENTER_HOOKS['category-review'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadCategoryReview();
   };
 
   const session = getSession();

@@ -391,6 +391,33 @@ async function populateSiteSelect(selectEl, query) {
   } catch (e) { /* 現場マスターが引けない場合は空のまま(自由入力は不可、要確認扱い) */ }
 }
 
+// 過去の入力履歴から現場・使用目的の候補を提示する(タップで入力欄へ反映するだけで、
+// 自動で確定・送信はしない。候補が無ければ何も表示しない=AIが推測で埋めることはない)。
+async function showExpenseSuggestion(card, storeName) {
+  const area = card.querySelector('.item-suggest-area');
+  area.style.display = 'none';
+  area.innerHTML = '';
+  if (!storeName) return;
+  try {
+    const rows = await rpc('suggest_expense_context', { p_store_name: storeName });
+    const s = rows && rows[0];
+    if (!s || !s.site_id) return;
+    area.innerHTML = `
+      <div class="item-suggest-label">前回の入力から候補(タップで入力欄へ反映、必ず内容を確認してください)</div>
+      <button type="button" class="item-suggest-chip">現場候補: ${s.site_name}／用途候補: ${s.purpose}${s.vendor_name ? `／取引先候補: ${s.vendor_name}` : ''}</button>
+    `;
+    area.style.display = 'block';
+    area.querySelector('.item-suggest-chip').addEventListener('click', async () => {
+      const siteSelect = card.querySelector('.item-site-select');
+      await populateSiteSelect(siteSelect, '');
+      siteSelect.value = String(s.site_id);
+      card.querySelector('.item-purpose').value = s.purpose || '';
+      if (s.vendor_name) card.querySelector('.item-vendor').value = s.vendor_name;
+      area.innerHTML = '<div class="item-suggest-label">候補を反映しました。内容を確認してください。</div>';
+    });
+  } catch (e) { /* 候補が引けなくても致命的ではないため無視 */ }
+}
+
 async function runOcrForItem(card, file) {
   const ocrStatus = card.querySelector('.ocr-status');
   ocrStatus.textContent = 'AIが内容を読み取っています...';
@@ -423,6 +450,8 @@ async function runOcrForItem(card, file) {
       card.querySelector('.item-date').value = '';
       card.querySelector('.item-store').value = '';
     }
+
+    if (receipt.counterparty_raw && confidence !== 'low') showExpenseSuggestion(card, receipt.counterparty_raw);
   } catch (e) {
     ocrStatus.textContent = '';
   }
@@ -499,6 +528,10 @@ function addExpenseItem() {
   });
 
   clone.querySelector('.item-amount').addEventListener('input', updateExpenseTotal);
+  clone.querySelector('.item-store').addEventListener('blur', (e) => {
+    const cardEl = document.querySelector(`[data-item-id="${itemId}"]`);
+    if (e.target.value.trim()) showExpenseSuggestion(cardEl, e.target.value.trim());
+  });
 
   document.getElementById('expense-item-list').appendChild(clone);
   updateExpenseTotal();

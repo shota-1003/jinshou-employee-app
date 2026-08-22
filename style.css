@@ -404,3 +404,12 @@ button.link {
 .read-status-row .name { color: var(--text); }
 .read-status-row .read-at { color: var(--text-muted); }
 .read-status-row .read-at.unread { color: var(--danger); }
+
+/* 経費フォーム: 過去の入力履歴からのAI候補(タップで入力欄へ反映、自動確定はしない) */
+.item-suggest-area { margin-bottom: 6px; }
+.item-suggest-label { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+.item-suggest-chip {
+  display: block; width: 100%; text-align: left; background: #eef2f9; border: 1px dashed var(--primary-light);
+  border-radius: 10px; padding: 10px 12px; font-size: 13px; color: var(--primary); font-family: inherit; cursor: pointer;
+}
+.item-suggest-chip .hint-inline { margin: 2px 0 0; }

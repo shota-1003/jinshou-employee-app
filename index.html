@@ -69,6 +69,11 @@
   <section id="screen-menu" class="screen">
     <div class="greeting" id="menu-greeting"></div>
 
+    <div id="announce-banner-area"></div>
+
+    <div class="section-title">今日やること</div>
+    <div class="today-list" id="today-list"></div>
+
     <div class="stat-mini-row">
       <div class="stat-mini"><span class="stat-mini-label">有給残日数</span><span class="stat-mini-value" id="home-leave-balance">-</span></div>
       <div class="stat-mini"><span class="stat-mini-label">今年使用</span><span class="stat-mini-value" id="home-leave-used">-</span></div>
@@ -116,6 +121,10 @@
 
     <div class="section-title">自分の情報</div>
     <div class="menu-list">
+      <button type="button" class="menu-item" data-nav="announcements">
+        <div>お知らせ<span class="desc">会社からの通知を確認</span></div>
+        <div class="arrow">›</div>
+      </button>
       <button type="button" class="menu-item" data-nav="history">
         <div>申請履歴<span class="desc">これまでの申請と状態を確認</span></div>
         <div class="arrow">›</div>
@@ -128,12 +137,20 @@
 
     <div class="section-title" id="admin-section-title" style="display:none;">管理者メニュー</div>
     <div class="menu-list" id="admin-menu-list" style="display:none;">
+      <button type="button" class="menu-item" data-nav="admin-dashboard">
+        <div>管理者ダッシュボード<span class="desc">今すぐ対応が必要なことをまとめて確認</span></div>
+        <div class="arrow">›</div>
+      </button>
       <button type="button" class="menu-item" data-nav="admin">
         <div>社員検索・支給品管理<span class="desc">社員別の有給・支給品状況を確認</span></div>
         <div class="arrow">›</div>
       </button>
       <button type="button" class="menu-item" data-nav="anon-admin">
         <div>匿名相談管理<span class="desc">投稿者は表示されません</span></div>
+        <div class="arrow">›</div>
+      </button>
+      <button type="button" class="menu-item" data-nav="admin-announce">
+        <div>お知らせ管理<span class="desc">通知の作成・既読状況を確認</span></div>
         <div class="arrow">›</div>
       </button>
     </div>
@@ -315,6 +332,13 @@
     <button class="link" id="logout-btn-2">別の社員番号でログインし直す</button>
   </section>
 
+  <!-- お知らせ一覧(社員側) -->
+  <section id="screen-announcements" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="form-title">お知らせ</div>
+    <div id="announcements-list"></div>
+  </section>
+
   <!-- 申請履歴 -->
   <section id="screen-history" class="screen">
     <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
@@ -409,6 +433,55 @@
       <button type="button" class="secondary" id="admin-search-btn">検索</button>
     </div>
     <div id="admin-search-results"></div>
+  </section>
+
+  <!-- 管理者ダッシュボード -->
+  <section id="screen-admin-dashboard" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="form-title">管理者ダッシュボード</div>
+    <div class="hint" style="margin-bottom:12px;">今すぐ対応が必要なことをまとめて表示しています。件数をタップすると一覧に移動します。</div>
+    <div class="dash-card-grid" id="admin-dashboard-grid"></div>
+  </section>
+
+  <!-- 管理者ダッシュボードのドリルダウン一覧(承認待ち等) -->
+  <section id="screen-admin-request-list" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">‹ ダッシュボードに戻る</button>
+    <div class="form-title" id="admin-request-list-title">一覧</div>
+    <div id="admin-request-list"></div>
+  </section>
+
+  <!-- お知らせ管理(作成・一覧・既読状況) -->
+  <section id="screen-admin-announce" class="screen">
+    <button type="button" class="back-link" data-nav="menu">‹ メニューに戻る</button>
+    <div class="form-title">お知らせ管理</div>
+
+    <div class="card">
+      <div class="form-title" style="font-size:15px;">新しいお知らせを作成</div>
+      <label for="announce-title">タイトル</label>
+      <input type="text" id="announce-title">
+      <label for="announce-body">本文</label>
+      <textarea id="announce-body" style="min-height:100px;"></textarea>
+      <label>重要度</label>
+      <div class="checkbox-row"><input type="radio" name="announce-importance" value="normal" id="announce-importance-normal" checked><label for="announce-importance-normal">通常</label></div>
+      <div class="checkbox-row"><input type="radio" name="announce-importance" value="important" id="announce-importance-important"><label for="announce-importance-important">重要(ホーム画面上部に表示)</label></div>
+      <label>配信先</label>
+      <div class="checkbox-row"><input type="radio" name="announce-target" value="all" id="announce-target-all" checked><label for="announce-target-all">全社員</label></div>
+      <div class="checkbox-row"><input type="radio" name="announce-target" value="select" id="announce-target-select"><label for="announce-target-select">特定の社員を選択</label></div>
+      <select id="announce-employee-select" multiple size="6" style="display:none;"></select>
+      <div class="hint-inline" id="announce-target-hint" style="display:none;">Ctrl(Macは⌘)を押しながらクリックで複数選択できます</div>
+      <div class="error" id="announce-error"></div>
+      <button id="announce-submit">送信する</button>
+    </div>
+
+    <div class="section-title">これまでのお知らせ</div>
+    <div id="announce-admin-list"></div>
+  </section>
+
+  <!-- お知らせ既読状況(管理者) -->
+  <section id="screen-announce-status" class="screen">
+    <button type="button" class="back-link" data-nav="admin-announce">‹ 戻る</button>
+    <div class="form-title" id="announce-status-title">既読状況</div>
+    <div id="announce-status-list"></div>
   </section>
 
   <!-- 匿名相談トップ(送る/自分の相談一覧) -->

@@ -344,3 +344,63 @@ button.link {
 .urgency-tag.urgent { background: #fbeae8; color: var(--danger); }
 .urgency-tag.soon { background: #fff4e0; color: #a15c00; }
 .urgency-tag.normal { background: #eef2f9; color: var(--primary); }
+
+/* 今日やること(ホーム画面ダッシュボード) */
+.today-list { margin-bottom: 4px; }
+.today-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 8px; cursor: pointer; font-family: inherit;
+}
+.today-item-icon { font-size: 20px; flex-shrink: 0; }
+.today-item-body { flex: 1; min-width: 0; }
+.today-item-label { font-size: 14px; font-weight: 600; color: var(--text); }
+.today-item-count { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.today-item-arrow { color: var(--text-muted); font-size: 18px; flex-shrink: 0; }
+.today-item.urgent { border-color: #f0c4bd; background: #fdf3f1; }
+.today-empty { font-size: 13px; color: var(--text-muted); padding: 8px 4px 4px; }
+
+/* 重要なお知らせバナー(ホーム画面上部) */
+.announce-banner {
+  display: block; width: 100%; text-align: left; background: #fff4e0; border: 1px solid #e8b566;
+  border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; font-family: inherit; cursor: pointer;
+}
+.announce-banner-label { font-size: 11px; font-weight: 700; color: #a15c00; }
+.announce-banner-title { font-size: 14px; font-weight: 700; color: var(--text); margin-top: 2px; }
+
+/* お知らせ一覧 */
+.announce-item {
+  padding: 14px 16px; border-radius: 12px; background: var(--card-bg); border: 1px solid var(--border);
+  margin-bottom: 8px; cursor: pointer;
+}
+.announce-item.unread { border-left: 4px solid var(--primary); }
+.announce-item .row1 { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.announce-item .title { font-size: 14px; font-weight: 700; color: var(--text); }
+.announce-item .date { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+.announce-item .body { font-size: 13px; color: var(--text-muted); margin-top: 6px; line-height: 1.5; white-space: pre-wrap; display: none; }
+.announce-item.expanded .body { display: block; }
+.announce-item .badges { display: flex; gap: 6px; margin-top: 6px; }
+
+/* 管理者ダッシュボード カード */
+.dash-card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.dash-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%;
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 16px;
+  cursor: pointer; font-family: inherit;
+}
+.dash-card-count { font-size: 26px; font-weight: 700; color: var(--primary); }
+.dash-card-count.zero { color: var(--text-muted); }
+.dash-card-count.alert { color: var(--danger); }
+.dash-card-label { font-size: 13px; color: var(--text); font-weight: 600; }
+
+/* お知らせ管理(admin) */
+.announce-admin-item {
+  padding: 14px 16px; border-radius: 12px; background: var(--card-bg); border: 1px solid var(--border);
+  margin-bottom: 8px; cursor: pointer;
+}
+.announce-admin-item .row1 { display: flex; justify-content: space-between; font-weight: 700; font-size: 14px; }
+.announce-admin-item .row2 { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.read-status-row { display: flex; justify-content: space-between; padding: 10px 4px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.read-status-row .name { color: var(--text); }
+.read-status-row .read-at { color: var(--text-muted); }
+.read-status-row .read-at.unread { color: var(--danger); }

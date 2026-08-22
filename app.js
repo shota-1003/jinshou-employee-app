@@ -235,7 +235,8 @@ function enterMenu() {
   document.getElementById('admin-section-title').style.display = showAdmin ? '' : 'none';
   document.getElementById('admin-menu-list').style.display = showAdmin ? '' : 'none';
   loadHomeLeaveStats('home-leave-balance', 'home-leave-used');
-  checkAnonUnreadBadge();
+  checkAnonUnreadBadge().then(loadTodayList);
+  loadAnnounceBanner();
   showScreen('menu');
 }
 
@@ -860,6 +861,7 @@ const ANON_STORAGE_KEY = 'jinshou_anon_consultations'; // [{code, token, categor
 let currentAnonCode = null;
 let currentAnonToken = null;
 let currentAnonAdminCode = null;
+let currentAdminRequestFilter = null;
 
 function getAnonConsultations() {
   try { return JSON.parse(localStorage.getItem(ANON_STORAGE_KEY)) || []; } catch { return []; }
@@ -1062,6 +1064,245 @@ async function doAdminChangeAnonStatus() {
   } catch (e) { /* 失敗時は選択が反映されないだけなので致命的ではない */ }
 }
 
+// ---------- 今日やること・お知らせ(社員側) ----------
+
+async function loadTodayList() {
+  const session = getSession();
+  const listEl = document.getElementById('today-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_dashboard', { p_employee_code: session.employeeCode });
+    const d = rows && rows[0];
+    const items = [];
+    if (d) {
+      if (d.unread_announcements > 0) items.push({ icon: '📢', label: '未読のお知らせがあります', count: `${d.unread_announcements}件`, nav: 'announcements' });
+      if (d.needs_info_count > 0) items.push({ icon: '✏️', label: '確認・修正が必要な申請があります', count: `${d.needs_info_count}件`, nav: 'history', urgent: true });
+      if (d.waiting_approval_count > 0) items.push({ icon: '⏳', label: '承認待ちの申請があります', count: `${d.waiting_approval_count}件`, nav: 'history' });
+    }
+    if (document.getElementById('home-anon-badge').style.display !== 'none') {
+      items.push({ icon: '🤫', label: '匿名相談に会社から返信があります', count: '', nav: 'anon-consult' });
+    }
+    if (items.length === 0) {
+      listEl.innerHTML = '<div class="today-empty">今日確認が必要なことはありません。</div>';
+      return;
+    }
+    listEl.innerHTML = items.map((it, i) => `
+      <button type="button" class="today-item ${it.urgent ? 'urgent' : ''}" data-idx="${i}">
+        <span class="today-item-icon">${it.icon}</span>
+        <span class="today-item-body"><span class="today-item-label">${it.label}</span><span class="today-item-count">${it.count}</span></span>
+        <span class="today-item-arrow">›</span>
+      </button>
+    `).join('');
+    listEl.querySelectorAll('.today-item').forEach((el) => {
+      el.addEventListener('click', () => showScreen(items[Number(el.dataset.idx)].nav));
+    });
+  } catch (e) {
+    listEl.innerHTML = '';
+  }
+}
+
+async function loadAnnounceBanner() {
+  const session = getSession();
+  const area = document.getElementById('announce-banner-area');
+  area.innerHTML = '';
+  try {
+    const rows = await rpc('get_my_announcements', { p_employee_code: session.employeeCode });
+    const important = (rows || []).find((a) => a.importance === 'important' && !a.is_read);
+    if (!important) return;
+    area.innerHTML = `
+      <button type="button" class="announce-banner" id="home-announce-banner">
+        <div class="announce-banner-label">📢 重要なお知らせ</div>
+        <div class="announce-banner-title">${important.title}</div>
+      </button>
+    `;
+    document.getElementById('home-announce-banner').addEventListener('click', () => showScreen('announcements'));
+  } catch (e) { /* 表示できなくても致命的ではないため無視 */ }
+}
+
+async function loadAnnouncements() {
+  const session = getSession();
+  const listEl = document.getElementById('announcements-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_announcements', { p_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">お知らせはありません。</div>'; return; }
+    listEl.innerHTML = rows.map((a) => `
+      <div class="announce-item ${a.is_read ? '' : 'unread'}" data-id="${a.id}">
+        <div class="row1">
+          <span class="title">${a.importance === 'important' ? '📢 ' : ''}${a.title}</span>
+          <span class="date">${new Date(a.created_at).toLocaleDateString('ja-JP')}</span>
+        </div>
+        <div class="body">${a.body}</div>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.announce-item').forEach((el) => {
+      el.addEventListener('click', async () => {
+        const wasUnread = el.classList.contains('unread');
+        el.classList.toggle('expanded');
+        if (wasUnread) {
+          el.classList.remove('unread');
+          try { await rpc('mark_announcement_read', { p_employee_code: session.employeeCode, p_announcement_id: Number(el.dataset.id) }); } catch (e) { /* 無視 */ }
+        }
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+// ---------- 管理者ダッシュボード ----------
+
+const DASH_CARDS = [
+  { key: 'pending_expense_approvals', filter: 'expense', label: '経費立替 承認待ち', icon: '🧾' },
+  { key: 'pending_leave_approvals', filter: 'leave', label: '有給申請 承認待ち', icon: '🏖' },
+  { key: 'pending_meeting_approvals', filter: 'meeting', label: '会議申請 承認待ち', icon: '👥' },
+  { key: 'pending_supply_requests', filter: 'supply', label: '支給品申請 確認待ち', icon: '📦' },
+  { key: 'needs_correction_count', filter: 'needs_correction', label: '確認・修正が必要な申請', icon: '✏️' },
+  { key: 'unanswered_consultations', filter: null, label: '未対応の匿名相談', icon: '🤫', nav: 'anon-admin' },
+];
+
+async function loadAdminDashboard() {
+  const session = getSession();
+  const grid = document.getElementById('admin-dashboard-grid');
+  grid.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_admin_dashboard', { p_admin_employee_code: session.employeeCode });
+    const d = rows && rows[0];
+    grid.innerHTML = DASH_CARDS.map((c) => {
+      const count = d ? d[c.key] : 0;
+      return `
+        <button type="button" class="dash-card" data-filter="${c.filter || ''}" data-nav="${c.nav || ''}">
+          <span class="dash-card-count ${count === 0 ? 'zero' : 'alert'}">${count}</span>
+          <span class="dash-card-label">${c.icon} ${c.label}</span>
+        </button>
+      `;
+    }).join('');
+    grid.querySelectorAll('.dash-card').forEach((el) => {
+      el.addEventListener('click', () => {
+        const nav = el.dataset.nav;
+        if (nav) { showScreen(nav); return; }
+        openAdminRequestList(el.dataset.filter);
+      });
+    });
+  } catch (e) {
+    grid.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+function openAdminRequestList(filter) {
+  currentAdminRequestFilter = filter;
+  const found = DASH_CARDS.find((c) => c.filter === filter);
+  document.getElementById('admin-request-list-title').textContent = found ? found.label : '一覧';
+  showScreen('admin-request-list');
+}
+
+async function loadAdminRequestList() {
+  const session = getSession();
+  const listEl = document.getElementById('admin-request-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('list_pending_requests_admin', { p_admin_employee_code: session.employeeCode, p_filter: currentAdminRequestFilter });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する申請はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => {
+      const amountStr = r.amount != null ? `${Number(r.amount).toLocaleString()}円` : '';
+      return `
+        <div class="history-item">
+          <div class="row1"><span>${r.employee_name || ''}・${REQUEST_TYPE_LABEL[r.request_type] || r.request_type}</span><span>${amountStr}</span></div>
+          <div class="row2">${new Date(r.requested_at).toLocaleDateString('ja-JP')}　${r.summary || ''}</div>
+          <span class="status-badge">${STATUS_LABEL[r.status] || r.status}</span>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+// ---------- お知らせ管理(管理者) ----------
+
+async function loadAnnounceAdminEmployeeSelect() {
+  const session = getSession();
+  try {
+    const rows = await rpc('list_active_employees', { p_admin_employee_code: session.employeeCode });
+    document.getElementById('announce-employee-select').innerHTML = rows.map((e) => `<option value="${e.employee_code}">${e.employee_code} ${e.employee_name}</option>`).join('');
+  } catch (e) { /* 無視 */ }
+}
+
+async function doCreateAnnouncement() {
+  const session = getSession();
+  const title = document.getElementById('announce-title').value.trim();
+  const body = document.getElementById('announce-body').value.trim();
+  const importance = document.querySelector('input[name="announce-importance"]:checked').value;
+  const target = document.querySelector('input[name="announce-target"]:checked').value;
+  hideError('announce-error');
+  if (!title || !body) { showError('announce-error', 'タイトルと本文を入力してください。'); return; }
+  let employeeCodes = null;
+  if (target === 'select') {
+    const select = document.getElementById('announce-employee-select');
+    employeeCodes = Array.from(select.selectedOptions).map((o) => o.value);
+    if (employeeCodes.length === 0) { showError('announce-error', '配信先の社員を選択してください。'); return; }
+  }
+  const btn = document.getElementById('announce-submit');
+  btn.disabled = true;
+  try {
+    await rpc('admin_create_announcement', {
+      p_admin_employee_code: session.employeeCode, p_title: title, p_body: body,
+      p_importance: importance, p_employee_codes: employeeCodes,
+    });
+    document.getElementById('announce-title').value = '';
+    document.getElementById('announce-body').value = '';
+    document.getElementById('announce-importance-normal').checked = true;
+    document.getElementById('announce-target-all').checked = true;
+    document.getElementById('announce-employee-select').style.display = 'none';
+    document.getElementById('announce-target-hint').style.display = 'none';
+    await loadAnnounceAdminList();
+  } catch (e) {
+    showError('announce-error', e.message || '送信に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadAnnounceAdminList() {
+  const session = getSession();
+  const listEl = document.getElementById('announce-admin-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('list_announcements_admin', { p_admin_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">まだお知らせを送信していません。</div>'; return; }
+    listEl.innerHTML = rows.map((a) => `
+      <div class="announce-admin-item" data-id="${a.id}" data-title="${a.title.replace(/"/g, '&quot;')}">
+        <div class="row1"><span>${a.importance === 'important' ? '📢 ' : ''}${a.title}</span><span>${a.read_count}/${a.recipient_count} 既読</span></div>
+        <div class="row2">${new Date(a.created_at).toLocaleString('ja-JP')}</div>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.announce-admin-item').forEach((el) => {
+      el.addEventListener('click', () => openAnnounceStatus(Number(el.dataset.id), el.dataset.title));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function openAnnounceStatus(id, title) {
+  const session = getSession();
+  document.getElementById('announce-status-title').textContent = title;
+  showScreen('announce-status');
+  const listEl = document.getElementById('announce-status-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_announcement_read_status_admin', { p_admin_employee_code: session.employeeCode, p_announcement_id: id });
+    listEl.innerHTML = rows.map((r) => `
+      <div class="read-status-row">
+        <span class="name">${r.employee_name}</span>
+        <span class="read-at ${r.read_at ? '' : 'unread'}">${r.read_at ? new Date(r.read_at).toLocaleString('ja-JP') : '未読'}</span>
+      </div>
+    `).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
 // ---------- 初期化 ----------
 
 function init() {
@@ -1101,6 +1342,15 @@ function init() {
   document.getElementById('anon-admin-status-select').addEventListener('change', doAdminChangeAnonStatus);
   document.getElementById('anon-admin-reply-btn').addEventListener('click', doAdminReplyAnon);
 
+  document.getElementById('announce-submit').addEventListener('click', doCreateAnnouncement);
+  document.querySelectorAll('input[name="announce-target"]').forEach((el) => {
+    el.addEventListener('change', () => {
+      const showSelect = document.getElementById('announce-target-select').checked;
+      document.getElementById('announce-employee-select').style.display = showSelect ? '' : 'none';
+      document.getElementById('announce-target-hint').style.display = showSelect ? '' : 'none';
+    });
+  });
+
   document.querySelectorAll('[data-nav]').forEach((el) => {
     el.addEventListener('click', () => {
       const target = el.getAttribute('data-nav');
@@ -1128,6 +1378,21 @@ function init() {
   SCREEN_ENTER_HOOKS['anon-admin'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadAnonAdminList();
+  };
+  SCREEN_ENTER_HOOKS.announcements = loadAnnouncements;
+  SCREEN_ENTER_HOOKS['admin-dashboard'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadAdminDashboard();
+  };
+  SCREEN_ENTER_HOOKS['admin-request-list'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadAdminRequestList();
+  };
+  SCREEN_ENTER_HOOKS['admin-announce'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    hideError('announce-error');
+    loadAnnounceAdminEmployeeSelect();
+    loadAnnounceAdminList();
   };
 
   const session = getSession();

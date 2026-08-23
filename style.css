@@ -483,6 +483,8 @@ button.link {
 .announce-item .title { font-size: 14px; font-weight: 700; color: var(--text); }
 .announce-item .date { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
 .announce-item .body { font-size: 13px; color: var(--text-muted); margin-top: 8px; line-height: 1.6; white-space: pre-wrap; display: none; }
+.announce-ack-row { margin-top: 8px; }
+.announce-ack-row .announce-ack-btn { width: auto; margin: 0; padding: 7px 14px; font-size: 12.5px; }
 .announce-item.expanded .body { display: block; }
 .announce-item .badges { display: flex; gap: 6px; margin-top: 6px; }
 

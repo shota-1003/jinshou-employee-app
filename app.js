@@ -1038,12 +1038,17 @@ async function doSubmitMeeting() {
 
 // ---------- 申請履歴 ----------
 
-const REQUEST_TYPE_LABEL = { paid_leave: '有給休暇申請', expense_reimbursement: '経費立替申請', meeting: '会議申請', supply_item: '支給品申請', other: 'その他' };
+const REQUEST_TYPE_LABEL = {
+  paid_leave: '有給休暇申請', expense_reimbursement: '経費立替申請', meeting: '会議申請', supply_item: '支給品申請',
+  entertainment_preapproval: '接待事前申請', qualification: '資格・免許', other: 'その他',
+};
 const STATUS_LABEL = {
-  ready_for_review: '確認中', waiting_employee_info: '確認中', needs_review: '確認中', stopped: '処理停止',
+  ready_for_review: '確認中', waiting_employee_info: '差し戻し(要修正)', needs_review: '確認中', stopped: '処理停止',
   waiting_approval: '承認待ち', approved: '承認済み', rejected: '却下', on_hold: '保留',
   waiting_payment: '支払待ち', paid: '支払済み', cancelled: '取消',
+  pending: '確認待ち', pending_verification: '確認待ち', active: '有効', expired: '期限切れ',
 };
+const STATUS_GROUP_LABEL = { pending: '承認待ち', needs_review: '差し戻し(要修正)', special_review: '特別承認待ち', approved: '承認済み', rejected: '却下' };
 
 async function loadHistory() {
   const session = getSession();
@@ -1617,20 +1622,39 @@ async function loadAnnouncements() {
     listEl.innerHTML = rows.map((a) => `
       <div class="announce-item ${a.is_read ? '' : 'unread'}" data-id="${a.id}">
         <div class="row1">
-          <span class="title">${a.importance === 'important' ? '📢 ' : ''}${a.title}</span>
+          <span class="title">${a.importance === 'important' ? `<span class="icon-slot" data-icon="alert-triangle"></span> ` : ''}${a.title}</span>
           <span class="date">${new Date(a.created_at).toLocaleDateString('ja-JP')}</span>
         </div>
-        <div class="body">${a.body}</div>
+        <div class="body">${a.body}${a.attachment_url ? `<br><a href="${a.attachment_url}" target="_blank" rel="noopener">添付ファイルを開く</a>` : ''}</div>
+        ${a.importance === 'important' ? `
+          <div class="announce-ack-row">
+            ${a.acknowledged_at
+              ? `<span class="mini-tag info">確認済み(${new Date(a.acknowledged_at).toLocaleString('ja-JP')})</span>`
+              : `<button type="button" class="secondary announce-ack-btn">確認しました</button>`}
+          </div>
+        ` : ''}
       </div>
     `).join('');
+    hydrateIcons(listEl);
     listEl.querySelectorAll('.announce-item').forEach((el) => {
-      el.addEventListener('click', async () => {
+      el.addEventListener('click', async (e) => {
+        if (e.target.closest('.announce-ack-btn') || e.target.closest('a')) return;
         const wasUnread = el.classList.contains('unread');
         el.classList.toggle('expanded');
         if (wasUnread) {
           el.classList.remove('unread');
-          try { await rpc('mark_announcement_read', { p_employee_code: session.employeeCode, p_announcement_id: Number(el.dataset.id) }); } catch (e) { /* 無視 */ }
+          try { await rpc('mark_announcement_read', { p_employee_code: session.employeeCode, p_announcement_id: Number(el.dataset.id) }); } catch (e2) { /* 無視 */ }
         }
+      });
+    });
+    listEl.querySelectorAll('.announce-ack-btn').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const item = btn.closest('.announce-item');
+        try {
+          await rpc('acknowledge_announcement', { p_employee_code: session.employeeCode, p_announcement_id: Number(item.dataset.id) });
+          loadAnnouncements();
+        } catch (e3) { /* 無視 */ }
       });
     });
   } catch (e) {
@@ -1656,6 +1680,12 @@ const DASH_CARDS = [
   { key: 'health_checkup_overdue_count', filter: null, label: '健診 期限超過', icon: 'check-circle', nav: 'health-admin', healthFilter: 'overdue' },
   { key: 'health_checkup_due_soon_count', filter: null, label: '健診 期限間近', icon: 'clock', nav: 'health-admin', healthFilter: 'due_soon' },
   { key: 'health_checkup_retest_pending_count', filter: null, label: '再検査確認待ち', icon: 'alert-triangle', nav: 'health-admin', healthFilter: 'retest' },
+  { key: 'today_submissions_count', filter: null, label: '本日の申請', icon: 'clock', nav: 'admin-all-requests', areqFilter: { type: '', status: '' } },
+  { key: 'approved_recent_count', filter: null, label: '承認済み(30日)', icon: 'check-circle', nav: 'admin-all-requests', areqFilter: { type: '', status: 'approved' } },
+  { key: 'rejected_recent_count', filter: null, label: '却下(30日)', icon: 'x-circle', nav: 'admin-all-requests', areqFilter: { type: '', status: 'rejected' } },
+  { key: 'entertainment_special_review_count', filter: null, label: '接待: 後日申請(特別承認待ち)', icon: 'alert-triangle', nav: 'admin-all-requests', areqFilter: { type: 'entertainment_preapproval', status: 'special_review' } },
+  { key: 'entertainment_override_count', filter: null, label: '接待: 事前申請なし(例外承認累計)', icon: 'users-round', nav: 'entertainment-admin' },
+  { key: 'daily_report_exception_count', filter: null, label: '日報: 特殊ケース未対応', icon: 'clipboard-list', nav: 'daily-report-admin' },
 ];
 
 async function loadAdminDashboard() {
@@ -1681,7 +1711,17 @@ async function loadAdminDashboard() {
           healthAdminFilter = c.healthFilter;
           document.querySelectorAll('#screen-health-admin .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.healthFilter === c.healthFilter));
         }
-        if (c.nav) { showScreen(c.nav); return; }
+        if (c.areqFilter) {
+          areqFilters = { type: c.areqFilter.type || '', status: c.areqFilter.status || '', name: '', dateFrom: '', dateTo: '', site: '', partner: '' };
+        }
+        if (c.nav) {
+          showScreen(c.nav);
+          if (c.areqFilter) {
+            document.querySelectorAll('#areq-type-filter .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.type === areqFilters.type));
+            document.querySelectorAll('#areq-status-filter .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.status === areqFilters.status));
+          }
+          return;
+        }
         openAdminRequestList(c.filter);
       });
     });
@@ -1758,12 +1798,51 @@ async function doDecideRequest(requestId, action, reason) {
 
 // ---------- お知らせ管理(管理者) ----------
 
+let announceAllEmployees = [];
+const announceSelectedCodes = new Set();
+let announceAttachment = null; // { driveFileId, driveFileUrl }
+
+function renderAnnounceEmployeeChecklist(query) {
+  const listEl = document.getElementById('announce-employee-checklist');
+  const q = (query || '').trim();
+  const matches = announceAllEmployees.filter((e) => q === '' || e.employee_name.includes(q) || e.employee_code.includes(q));
+  listEl.innerHTML = matches.map((e) => `
+    <label class="checkbox-row" style="margin:0;">
+      <input type="checkbox" class="announce-emp-check" value="${e.employee_code}" ${announceSelectedCodes.has(e.employee_code) ? 'checked' : ''}>
+      <span>${e.employee_name}(${e.employee_code})</span>
+    </label>
+  `).join('');
+  listEl.querySelectorAll('.announce-emp-check').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) announceSelectedCodes.add(cb.value); else announceSelectedCodes.delete(cb.value);
+      document.getElementById('announce-employee-selected-count').textContent = announceSelectedCodes.size;
+    });
+  });
+}
+
 async function loadAnnounceAdminEmployeeSelect() {
   const session = getSession();
   try {
-    const rows = await rpc('list_active_employees', { p_admin_employee_code: session.employeeCode });
-    document.getElementById('announce-employee-select').innerHTML = rows.map((e) => `<option value="${e.employee_code}">${e.employee_code} ${e.employee_name}</option>`).join('');
+    announceAllEmployees = await rpc('list_active_employees', { p_admin_employee_code: session.employeeCode });
+    renderAnnounceEmployeeChecklist('');
   } catch (e) { /* 無視 */ }
+}
+
+async function handleAnnounceAttachment(file) {
+  if (!file) return;
+  const statusEl = document.getElementById('announce-attachment-status');
+  const labelEl = document.getElementById('announce-attachment-label');
+  statusEl.textContent = 'アップロード中...';
+  try {
+    const session = getSession();
+    const result = await uploadReceiptPhoto(session.employeeCode, file);
+    announceAttachment = { driveFileId: result.driveFileId, driveFileUrl: result.driveFileUrl };
+    labelEl.textContent = file.name;
+    statusEl.textContent = 'アップロード完了';
+  } catch (e) {
+    statusEl.textContent = 'アップロードに失敗しました。もう一度お試しください。';
+    announceAttachment = null;
+  }
 }
 
 async function doCreateAnnouncement() {
@@ -1776,8 +1855,7 @@ async function doCreateAnnouncement() {
   if (!title || !body) { showError('announce-error', 'タイトルと本文を入力してください。'); return; }
   let employeeCodes = null;
   if (target === 'select') {
-    const select = document.getElementById('announce-employee-select');
-    employeeCodes = Array.from(select.selectedOptions).map((o) => o.value);
+    employeeCodes = Array.from(announceSelectedCodes);
     if (employeeCodes.length === 0) { showError('announce-error', '配信先の社員を選択してください。'); return; }
   }
   const btn = document.getElementById('announce-submit');
@@ -1786,13 +1864,19 @@ async function doCreateAnnouncement() {
     await rpc('admin_create_announcement', {
       p_admin_employee_code: session.employeeCode, p_title: title, p_body: body,
       p_importance: importance, p_employee_codes: employeeCodes,
+      p_attachment_drive_file_id: announceAttachment ? announceAttachment.driveFileId : null,
+      p_attachment_drive_url: announceAttachment ? announceAttachment.driveFileUrl : null,
     });
     document.getElementById('announce-title').value = '';
     document.getElementById('announce-body').value = '';
     document.getElementById('announce-importance-normal').checked = true;
     document.getElementById('announce-target-all').checked = true;
-    document.getElementById('announce-employee-select').style.display = 'none';
-    document.getElementById('announce-target-hint').style.display = 'none';
+    document.getElementById('announce-employee-picker').style.display = 'none';
+    announceSelectedCodes.clear();
+    document.getElementById('announce-employee-selected-count').textContent = '0';
+    document.getElementById('announce-attachment-label').textContent = 'ファイルを選ぶ';
+    document.getElementById('announce-attachment-status').textContent = '';
+    announceAttachment = null;
     await loadAnnounceAdminList();
   } catch (e) {
     showError('announce-error', e.message || '送信に失敗しました。');
@@ -1810,10 +1894,11 @@ async function loadAnnounceAdminList() {
     if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">まだお知らせを送信していません。</div>'; return; }
     listEl.innerHTML = rows.map((a) => `
       <div class="announce-admin-item" data-id="${a.id}" data-title="${a.title.replace(/"/g, '&quot;')}">
-        <div class="row1"><span>${a.importance === 'important' ? '📢 ' : ''}${a.title}</span><span>${a.read_count}/${a.recipient_count} 既読</span></div>
-        <div class="row2">${new Date(a.created_at).toLocaleString('ja-JP')}</div>
+        <div class="row1"><span>${a.importance === 'important' ? `<span class="icon-slot" data-icon="alert-triangle"></span> ` : ''}${a.title}</span><span>${a.read_count}/${a.recipient_count} 既読</span></div>
+        <div class="row2">${new Date(a.created_at).toLocaleString('ja-JP')}${a.source_system !== 'admin_manual' ? `・自動通知(${a.source_system})` : ''}${a.importance === 'important' ? `・確認済み${a.acknowledged_count}/${a.recipient_count}` : ''}</div>
       </div>
     `).join('');
+    hydrateIcons(listEl);
     listEl.querySelectorAll('.announce-admin-item').forEach((el) => {
       el.addEventListener('click', () => openAnnounceStatus(Number(el.dataset.id), el.dataset.title));
     });
@@ -1834,6 +1919,7 @@ async function openAnnounceStatus(id, title) {
       <div class="read-status-row">
         <span class="name">${r.employee_name}</span>
         <span class="read-at ${r.read_at ? '' : 'unread'}">${r.read_at ? new Date(r.read_at).toLocaleString('ja-JP') : '未読'}</span>
+        ${r.acknowledged_at ? `<span class="mini-tag info">確認済み ${new Date(r.acknowledged_at).toLocaleString('ja-JP')}</span>` : ''}
       </div>
     `).join('');
   } catch (e) {
@@ -2364,12 +2450,12 @@ async function loadEmployeeDetailRequests() {
     if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">申請履歴はありません。</div>'; return; }
     listEl.innerHTML = rows.map((r) => {
       const amountStr = r.amount != null ? `${Number(r.amount).toLocaleString()}円` : '';
-      const statusClass = ['approved', 'paid'].includes(r.status) ? 'done' : (['rejected', 'cancelled'].includes(r.status) ? 'rejected' : '');
+      const statusClass = r.status_group === 'approved' ? 'done' : (r.status_group === 'rejected' ? 'rejected' : '');
       return `
         <div class="history-item">
-          <div class="row1"><span>${REQUEST_TYPE_LABEL[r.request_type] || r.request_type}</span><span>${amountStr}</span></div>
+          <div class="row1"><span>${REQUEST_TYPE_LABEL[r.source_type] || r.source_type}</span><span>${amountStr}</span></div>
           <div class="row2">${new Date(r.requested_at).toLocaleDateString('ja-JP')}　${r.summary || ''}</div>
-          <span class="status-badge ${statusClass}">${STATUS_LABEL[r.status] || r.status}</span>
+          <span class="status-badge ${statusClass}">${STATUS_LABEL[r.status] || STATUS_GROUP_LABEL[r.status_group] || r.status}</span>
         </div>
       `;
     }).join('');
@@ -3167,6 +3253,178 @@ async function loadDailyReportAdminList() {
   }
 }
 
+// ---------- 申請管理(管理者、全申請横断検索) ----------
+
+let areqFilters = { type: '', status: '', name: '', dateFrom: '', dateTo: '', site: '', partner: '' };
+
+async function loadAdminAllRequests() {
+  const session = getSession();
+  const listEl = document.getElementById('areq-list');
+  const countEl = document.getElementById('areq-count');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_search_requests', {
+      p_admin_employee_code: session.employeeCode,
+      p_request_type: areqFilters.type || null,
+      p_employee_code: null,
+      p_employee_name: areqFilters.name || null,
+      p_status_group: areqFilters.status || null,
+      p_date_from: areqFilters.dateFrom || null,
+      p_date_to: areqFilters.dateTo || null,
+      p_site_name: areqFilters.site || null,
+      p_partner_name: areqFilters.partner || null,
+      p_keyword: null,
+    });
+    countEl.textContent = `${rows.length}件`;
+    if (rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する申請はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => {
+      const amountStr = r.amount != null ? `${Number(r.amount).toLocaleString()}円` : '';
+      const statusClass = r.status_group === 'approved' ? 'done' : (r.status_group === 'rejected' ? 'rejected' : '');
+      return `
+        <div class="history-item" data-type="${r.source_type}" data-id="${r.source_id}">
+          <div class="row1"><span>${r.employee_name}・${REQUEST_TYPE_LABEL[r.source_type] || r.source_type}</span><span>${amountStr}</span></div>
+          <div class="row2">${new Date(r.requested_at).toLocaleDateString('ja-JP')}　${r.summary || ''}</div>
+          <span class="status-badge ${statusClass}">${STATUS_GROUP_LABEL[r.status_group] || r.status}</span>
+          ${r.requires_special_review ? '<span class="mini-tag danger">事前申請なし</span>' : ''}
+        </div>
+      `;
+    }).join('');
+    listEl.querySelectorAll('.history-item').forEach((el) => {
+      el.addEventListener('click', () => openRequestDetail(el.dataset.type, el.dataset.id));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+let currentRequestDetail = null;
+
+async function openRequestDetail(sourceType, sourceId) {
+  const session = getSession();
+  currentRequestDetail = { sourceType, sourceId: Number(sourceId) };
+  document.getElementById('rdetail-title').textContent = REQUEST_TYPE_LABEL[sourceType] || sourceType;
+  document.getElementById('rdetail-fields').innerHTML = '<div class="hint">読み込み中...</div>';
+  document.getElementById('rdetail-history').innerHTML = '';
+  document.getElementById('rdetail-actions').innerHTML = '';
+  hideError('rdetail-error');
+  showScreen('request-detail');
+
+  try {
+    const rows = await rpc('admin_search_requests', {
+      p_admin_employee_code: session.employeeCode, p_request_type: sourceType, p_employee_code: null, p_employee_name: null,
+      p_status_group: null, p_date_from: null, p_date_to: null, p_site_name: null, p_partner_name: null, p_keyword: null,
+    });
+    const r = rows.find((x) => String(x.source_id) === String(sourceId));
+    if (!r) { document.getElementById('rdetail-fields').innerHTML = '<div class="hint">見つかりませんでした。</div>'; return; }
+
+    document.getElementById('rdetail-fields').innerHTML = [
+      ['申請者', r.employee_name], ['申請日時', new Date(r.requested_at).toLocaleString('ja-JP')],
+      ['対象日', r.target_date || '-'], ['現在のステータス', STATUS_GROUP_LABEL[r.status_group] || r.status],
+      ['現場', r.site_name || '-'], ['取引先', r.partner_name || '-'], ['金額', r.amount != null ? `${Number(r.amount).toLocaleString()}円` : '-'],
+      ['内容', r.summary || '-'],
+    ].map(([label, value]) => `<div class="field-row"><span class="field-label">${label}</span><span class="field-value">${value}</span></div>`).join('');
+
+    const targetTable = sourceType === 'entertainment_preapproval' ? 'entertainment_preapprovals'
+      : sourceType === 'qualification' ? 'employee_qualifications' : 'employee_requests';
+    const history = await rpc('admin_get_request_audit_log', { p_admin_employee_code: session.employeeCode, p_target_table: targetTable, p_target_id: Number(sourceId) }).catch(() => []);
+    const historyEl = document.getElementById('rdetail-history');
+    historyEl.innerHTML = history.length === 0 ? '<div class="hint">変更履歴はありません。</div>' : history.map((h) => `
+      <div class="change-request-item"><div class="row1"><span>${h.action}</span></div><div class="row2">${h.actor_name}・${new Date(h.created_at).toLocaleString('ja-JP')}</div></div>
+    `).join('');
+
+    renderRequestDetailActions(sourceType, r);
+  } catch (e) {
+    document.getElementById('rdetail-fields').innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+function renderRequestDetailActions(sourceType, r) {
+  const box = document.getElementById('rdetail-actions');
+  if (['expense_reimbursement', 'paid_leave', 'meeting'].includes(sourceType)) {
+    if (r.status_group !== 'pending') { box.innerHTML = '<div class="hint">この申請は既に処理済みです。</div>'; return; }
+    box.innerHTML = `
+      <button type="button" id="rdetail-approve">承認する</button>
+      <button type="button" class="secondary" id="rdetail-needs-info">差し戻す(要修正)</button>
+      <button type="button" class="secondary" id="rdetail-reject">却下する</button>
+      <div id="rdetail-reason-box" style="display:none;">
+        <label>理由<span class="required-mark">(必須)</span></label>
+        <textarea id="rdetail-reason"></textarea>
+        <button type="button" id="rdetail-reason-confirm">確定する</button>
+      </div>
+    `;
+    document.getElementById('rdetail-approve').addEventListener('click', () => doRequestDetailDecide('approved', null));
+    document.getElementById('rdetail-needs-info').addEventListener('click', () => { document.getElementById('rdetail-reason-box').dataset.action = 'needs_info'; document.getElementById('rdetail-reason-box').style.display = 'block'; });
+    document.getElementById('rdetail-reject').addEventListener('click', () => { document.getElementById('rdetail-reason-box').dataset.action = 'rejected'; document.getElementById('rdetail-reason-box').style.display = 'block'; });
+    document.getElementById('rdetail-reason-confirm').addEventListener('click', () => {
+      const reason = document.getElementById('rdetail-reason').value.trim();
+      if (!reason) { showError('rdetail-error', '理由を入力してください。'); return; }
+      doRequestDetailDecide(document.getElementById('rdetail-reason-box').dataset.action, reason);
+    });
+  } else if (sourceType === 'supply_item') {
+    if (r.status_group !== 'pending') { box.innerHTML = '<div class="hint">この申請は既に処理済みです。</div>'; return; }
+    box.innerHTML = `
+      <div class="hint" style="margin-bottom:10px;">承認(実際に支給品を渡す)は「支給品の記録・検索」画面から行ってください。</div>
+      <button type="button" class="secondary" id="rdetail-supply-reject">却下する</button>
+      <div id="rdetail-reason-box" style="display:none;">
+        <label>却下理由<span class="required-mark">(必須)</span></label>
+        <textarea id="rdetail-reason"></textarea>
+        <button type="button" id="rdetail-reason-confirm">確定する</button>
+      </div>
+    `;
+    document.getElementById('rdetail-supply-reject').addEventListener('click', () => { document.getElementById('rdetail-reason-box').style.display = 'block'; });
+    document.getElementById('rdetail-reason-confirm').addEventListener('click', async () => {
+      const reason = document.getElementById('rdetail-reason').value.trim();
+      if (!reason) { showError('rdetail-error', '却下理由を入力してください。'); return; }
+      const session = getSession();
+      try {
+        await rpc('admin_decide_supply_request', { p_admin_employee_code: session.employeeCode, p_request_id: currentRequestDetail.sourceId, p_rejection_reason: reason });
+        showScreen('admin-all-requests');
+      } catch (e) { showError('rdetail-error', e.message || '処理に失敗しました。'); }
+    });
+  } else if (sourceType === 'entertainment_preapproval') {
+    if (r.status_group !== 'pending' && r.status_group !== 'special_review') { box.innerHTML = '<div class="hint">この申請は既に処理済みです。</div>'; return; }
+    const special = r.status_group === 'special_review';
+    box.innerHTML = `
+      ${special ? `${icon('alert-triangle')}<div class="preapproval-warning">この接待は事前申請されていません。例外承認の理由を入力してください。</div>
+        <label>例外承認の理由<span class="required-mark">(必須)</span></label>
+        <textarea id="rdetail-ent-reason"></textarea>` : ''}
+      <button type="button" id="rdetail-ent-approve">${special ? '例外承認する' : '承認する'}</button>
+      <button type="button" class="secondary" id="rdetail-ent-reject">却下する</button>
+    `;
+    document.getElementById('rdetail-ent-approve').addEventListener('click', async () => {
+      const session = getSession();
+      const reasonEl = document.getElementById('rdetail-ent-reason');
+      try {
+        await rpc('admin_decide_entertainment_preapproval', { p_admin_employee_code: session.employeeCode, p_id: currentRequestDetail.sourceId, p_action: 'approved', p_exception_reason: reasonEl ? reasonEl.value.trim() : null });
+        showScreen('admin-all-requests');
+      } catch (e) { showError('rdetail-error', e.message || '処理に失敗しました。'); }
+    });
+    document.getElementById('rdetail-ent-reject').addEventListener('click', async () => {
+      const session = getSession();
+      try {
+        await rpc('admin_decide_entertainment_preapproval', { p_admin_employee_code: session.employeeCode, p_id: currentRequestDetail.sourceId, p_action: 'rejected', p_exception_reason: null });
+        showScreen('admin-all-requests');
+      } catch (e) { showError('rdetail-error', e.message || '処理に失敗しました。'); }
+    });
+  } else if (sourceType === 'qualification') {
+    box.innerHTML = `<button type="button" class="secondary" data-nav="qual-admin">資格・免許管理で確認する</button>`;
+    box.querySelector('[data-nav]').addEventListener('click', () => showScreen('qual-admin'));
+  } else {
+    box.innerHTML = '<div class="hint">この種類の申請はここからは操作できません。</div>';
+  }
+}
+
+async function doRequestDetailDecide(action, reason) {
+  const session = getSession();
+  hideError('rdetail-error');
+  try {
+    await rpc('admin_decide_request', { p_admin_employee_code: session.employeeCode, p_request_id: currentRequestDetail.sourceId, p_action: action, p_rejection_reason: reason });
+    showScreen('admin-all-requests');
+  } catch (e) {
+    showError('rdetail-error', e.message || '処理に失敗しました。');
+  }
+}
+
 // ---------- 使用目的マスター管理(管理者) ----------
 
 function resetPurposeForm() {
@@ -3277,11 +3535,12 @@ function init() {
   document.getElementById('announce-submit').addEventListener('click', doCreateAnnouncement);
   document.querySelectorAll('input[name="announce-target"]').forEach((el) => {
     el.addEventListener('change', () => {
-      const showSelect = document.getElementById('announce-target-select').checked;
-      document.getElementById('announce-employee-select').style.display = showSelect ? '' : 'none';
-      document.getElementById('announce-target-hint').style.display = showSelect ? '' : 'none';
+      const showPicker = document.getElementById('announce-target-select').checked;
+      document.getElementById('announce-employee-picker').style.display = showPicker ? 'block' : 'none';
     });
   });
+  document.getElementById('announce-employee-search').addEventListener('input', (e) => renderAnnounceEmployeeChecklist(e.target.value));
+  document.getElementById('announce-attachment-input').addEventListener('change', (e) => handleAnnounceAttachment(e.target.files[0]));
 
   document.getElementById('qual-submit').addEventListener('click', doSubmitQualification);
   document.getElementById('qual-photo-input').addEventListener('change', (e) => handleQualFile(e.target.files[0], 'photo'));
@@ -3323,6 +3582,41 @@ function init() {
 
   document.getElementById('license-type-submit').addEventListener('click', doSaveLicenseType);
   document.getElementById('purpose-submit').addEventListener('click', doSavePurpose);
+
+  let areqSearchTimer = null;
+  document.getElementById('areq-search-name').addEventListener('input', (e) => {
+    clearTimeout(areqSearchTimer);
+    areqSearchTimer = setTimeout(() => { areqFilters.name = e.target.value.trim(); loadAdminAllRequests(); }, 300);
+  });
+  document.querySelectorAll('#areq-type-filter .filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#areq-type-filter .filter-chip').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      areqFilters.type = btn.dataset.type;
+      loadAdminAllRequests();
+    });
+  });
+  document.querySelectorAll('#areq-status-filter .filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#areq-status-filter .filter-chip').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      areqFilters.status = btn.dataset.status;
+      loadAdminAllRequests();
+    });
+  });
+  document.getElementById('areq-toggle-advanced').addEventListener('click', () => {
+    const el = document.getElementById('areq-advanced');
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  });
+  ['areq-date-from', 'areq-date-to', 'areq-site', 'areq-partner'].forEach((id) => {
+    document.getElementById(id).addEventListener('change', () => {
+      areqFilters.dateFrom = document.getElementById('areq-date-from').value;
+      areqFilters.dateTo = document.getElementById('areq-date-to').value;
+      areqFilters.site = document.getElementById('areq-site').value.trim();
+      areqFilters.partner = document.getElementById('areq-partner').value.trim();
+      loadAdminAllRequests();
+    });
+  });
 
   document.getElementById('daily-report-date').addEventListener('change', (e) => loadDailyReportForDate(e.target.value));
   document.getElementById('daily-report-add-entry').addEventListener('click', () => addDailyReportEntry());
@@ -3461,6 +3755,10 @@ function init() {
   SCREEN_ENTER_HOOKS['purpose-admin'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadPurposeAdminList();
+  };
+  SCREEN_ENTER_HOOKS['admin-all-requests'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadAdminAllRequests();
   };
 
   const session = getSession();

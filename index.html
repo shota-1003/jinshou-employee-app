@@ -810,6 +810,11 @@
 
     <div class="section-title">管理メニュー</div>
     <div class="menu-list">
+      <button type="button" class="menu-item" data-nav="admin-all-requests">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <div class="menu-item-body">申請管理<span class="desc">全申請を種類横断で検索・確認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
       <button type="button" class="menu-item" data-nav="info-change-admin">
         <span class="icon-slot" data-icon="edit"></span>
         <div class="menu-item-body">個人情報の変更申請<span class="desc">住所・電話番号等の変更を確認</span></div>
@@ -883,6 +888,63 @@
     <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
     <div class="form-title" id="admin-request-list-title">一覧</div>
     <div id="admin-request-list"></div>
+  </section>
+
+  <!-- 申請管理: 全申請を種類横断で検索・確認 -->
+  <section id="screen-admin-all-requests" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">申請管理</div>
+
+    <div class="search-bar">
+      <span class="icon-slot" data-icon="search"></span>
+      <input type="text" id="areq-search-name" placeholder="社員名で検索...">
+    </div>
+    <div class="filter-row" id="areq-type-filter">
+      <button type="button" class="filter-chip active" data-type="">すべての種類</button>
+      <button type="button" class="filter-chip" data-type="expense_reimbursement">経費立替</button>
+      <button type="button" class="filter-chip" data-type="paid_leave">有給</button>
+      <button type="button" class="filter-chip" data-type="meeting">会議</button>
+      <button type="button" class="filter-chip" data-type="supply_item">支給品</button>
+      <button type="button" class="filter-chip" data-type="entertainment_preapproval">接待事前申請</button>
+      <button type="button" class="filter-chip" data-type="qualification">資格・免許</button>
+    </div>
+    <div class="filter-row" id="areq-status-filter">
+      <button type="button" class="filter-chip active" data-status="">すべての状態</button>
+      <button type="button" class="filter-chip" data-status="pending">承認待ち</button>
+      <button type="button" class="filter-chip" data-status="needs_review">差し戻し</button>
+      <button type="button" class="filter-chip" data-status="special_review">特別承認待ち</button>
+      <button type="button" class="filter-chip" data-status="approved">承認済み</button>
+      <button type="button" class="filter-chip" data-status="rejected">却下</button>
+    </div>
+    <button type="button" class="link" id="areq-toggle-advanced">詳細検索(日付・現場・取引先)</button>
+    <div id="areq-advanced" style="display:none;">
+      <label for="areq-date-from">申請日(開始)</label>
+      <input type="date" id="areq-date-from">
+      <label for="areq-date-to">申請日(終了)</label>
+      <input type="date" id="areq-date-to">
+      <label for="areq-site">現場</label>
+      <input type="text" id="areq-site" placeholder="現場名で検索...">
+      <label for="areq-partner">取引先</label>
+      <input type="text" id="areq-partner" placeholder="取引先名で検索...">
+    </div>
+    <div class="hint" id="areq-count" style="margin:10px 0;"></div>
+    <div id="areq-list"></div>
+  </section>
+
+  <!-- 申請詳細(管理者) -->
+  <section id="screen-request-detail" class="screen">
+    <button type="button" class="back-link" data-nav="admin-all-requests">申請管理に戻る</button>
+    <div class="card">
+      <div class="form-title" id="rdetail-title">申請詳細</div>
+      <div class="field-group" id="rdetail-fields"></div>
+    </div>
+    <div class="section-title">変更履歴</div>
+    <div id="rdetail-history"></div>
+    <div class="card" id="rdetail-action-box">
+      <div class="form-title" style="font-size:15px;">操作</div>
+      <div id="rdetail-actions"></div>
+      <div class="error" id="rdetail-error"></div>
+    </div>
   </section>
 
   <!-- 個人情報の変更申請確認(管理者) -->
@@ -1182,11 +1244,22 @@
       <label>重要度</label>
       <div class="checkbox-row"><input type="radio" name="announce-importance" value="normal" id="announce-importance-normal" checked><label for="announce-importance-normal">通常</label></div>
       <div class="checkbox-row"><input type="radio" name="announce-importance" value="important" id="announce-importance-important"><label for="announce-importance-important">重要(ホーム画面上部に表示)</label></div>
+      <label>添付ファイル</label>
+      <div class="hint-inline">任意(画像・PDF)</div>
+      <label class="photo-capture-btn">
+        <span class="icon-slot" data-icon="file"></span>
+        <span id="announce-attachment-label">ファイルを選ぶ</span>
+        <input type="file" accept="image/*,application/pdf" id="announce-attachment-input">
+      </label>
+      <div class="ocr-status" id="announce-attachment-status"></div>
       <label>配信先</label>
       <div class="checkbox-row"><input type="radio" name="announce-target" value="all" id="announce-target-all" checked><label for="announce-target-all">全社員</label></div>
-      <div class="checkbox-row"><input type="radio" name="announce-target" value="select" id="announce-target-select"><label for="announce-target-select">特定の社員を選択</label></div>
-      <select id="announce-employee-select" multiple size="6" style="display:none;"></select>
-      <div class="hint-inline" id="announce-target-hint" style="display:none;">Ctrl(Macは⌘)を押しながらクリックで複数選択できます</div>
+      <div class="checkbox-row"><input type="radio" name="announce-target" value="select" id="announce-target-select"><label for="announce-target-select">個人・複数社員を選択</label></div>
+      <div id="announce-employee-picker" style="display:none;">
+        <input type="text" id="announce-employee-search" placeholder="社員名・社員番号で検索...">
+        <div id="announce-employee-checklist" class="candidate-results"></div>
+        <div class="hint-inline">選択中: <span id="announce-employee-selected-count">0</span>名</div>
+      </div>
       <div class="error" id="announce-error"></div>
       <button id="announce-submit">送信する</button>
     </div>

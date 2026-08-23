@@ -1263,10 +1263,22 @@
 
   <!-- 新規現場の確認(管理者) -->
   <section id="screen-site-admin" class="screen">
-    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
-    <div class="form-title">新規現場の確認</div>
-    <div class="hint" style="margin-bottom:12px;">社員が経費申請時に新しく入力した現場名です。承認すると次回から候補に表示されます。</div>
+    <button type="button" class="back-link" data-nav="menu">ホームに戻る</button>
+    <div class="form-title">現場管理</div>
+    <div class="card">
+      <div class="form-title" style="font-size:15px;">新規現場を登録</div>
+      <div class="hint" style="margin-bottom:8px;">承認待ちを経由せず、すぐに使える現場として登録します。</div>
+      <label>現場名<span class="required-mark">(必須)</span></label>
+      <input type="text" id="site-create-name" placeholder="例: 〇〇マンション新築工事">
+      <button type="button" id="site-create-submit">登録する</button>
+      <div class="error" id="site-create-error"></div>
+    </div>
+    <div class="section-title">承認待ちの新規現場</div>
+    <div class="hint" style="margin-bottom:12px;">社員が日報・経費申請等で新しく入力した現場名です。承認すると次回から候補に表示されます。名前を修正してから承認することもできます。</div>
     <div id="site-admin-list"></div>
+    <div class="section-title">現場一覧</div>
+    <input type="text" id="site-list-search" placeholder="現場名で検索...">
+    <div id="site-all-list"></div>
   </section>
 
   <!-- 接待交際費 事前申請(管理者) -->

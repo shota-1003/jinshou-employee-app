@@ -312,25 +312,49 @@ function enterMenu() {
   const session = getSession();
   document.getElementById('menu-greeting-hi').textContent = greetingWord();
   document.getElementById('menu-greeting-name').textContent = `${session.employeeName}さん`;
-  const showAdmin = session.requestRole === 'executive';
-  const bannerArea = document.getElementById('admin-banner-area');
-  bannerArea.innerHTML = showAdmin ? `
-    <button type="button" class="main-menu-card" data-nav="admin-dashboard" style="width:100%; flex-direction:row; align-items:center; gap:14px; margin-top:8px;">
-      <span class="main-menu-card-icon">${icon('shield')}</span>
-      <span style="text-align:left;">
-        <span class="main-menu-label" style="display:block;">管理者ダッシュボード</span>
-        <span class="main-menu-desc">承認待ち・社員管理をまとめて確認</span>
-      </span>
-      <span style="margin-left:auto; color:var(--text-faint);">${icon('chevron-right')}</span>
-    </button>
-  ` : '';
-  bannerArea.querySelectorAll('[data-nav]').forEach((el) => {
-    el.addEventListener('click', () => showScreen(el.getAttribute('data-nav')));
-  });
   checkAnonUnreadBadge().then(loadTodayList);
   loadAnnounceBanner();
   loadHomeAnnouncePreview();
   showScreen('menu');
+  renderHomeAdminBanner(session);
+}
+
+// executiveはadmin-dashboard(全管理メニュー)、日報担当(nippo_admin、executiveではない)は
+// 日報管理画面への専用入口を表示する。nippo_adminはrequestRole(セッションに直接入っている値)
+// では判定できず、都度サーバーへ確認が必要(check_nippo_admin RPC)なため非同期。
+// admin-dashboard自体がisAdmin()(executive)限定のため、この入口が無いとnippo_adminは
+// 日報管理画面へ辿り着く手段が無くなってしまう。
+async function renderHomeAdminBanner(session) {
+  const bannerArea = document.getElementById('admin-banner-area');
+  const showAdmin = session.requestRole === 'executive';
+  let html = '';
+  if (showAdmin) {
+    html = `
+      <button type="button" class="main-menu-card" data-nav="admin-dashboard" style="width:100%; flex-direction:row; align-items:center; gap:14px; margin-top:8px;">
+        <span class="main-menu-card-icon">${icon('shield')}</span>
+        <span style="text-align:left;">
+          <span class="main-menu-label" style="display:block;">管理者ダッシュボード</span>
+          <span class="main-menu-desc">承認待ち・社員管理をまとめて確認</span>
+        </span>
+        <span style="margin-left:auto; color:var(--text-faint);">${icon('chevron-right')}</span>
+      </button>
+    `;
+  } else if (await isNippoAdmin()) {
+    html = `
+      <button type="button" class="main-menu-card" data-nav="daily-report-management" style="width:100%; flex-direction:row; align-items:center; gap:14px; margin-top:8px;">
+        <span class="main-menu-card-icon">${icon('clipboard-list')}</span>
+        <span style="text-align:left;">
+          <span class="main-menu-label" style="display:block;">日報管理(日報担当)</span>
+          <span class="main-menu-desc">日報の確認・未提出者確認・外注代理入力</span>
+        </span>
+        <span style="margin-left:auto; color:var(--text-faint);">${icon('chevron-right')}</span>
+      </button>
+    `;
+  }
+  bannerArea.innerHTML = html;
+  bannerArea.querySelectorAll('[data-nav]').forEach((el) => {
+    el.addEventListener('click', () => showScreen(el.getAttribute('data-nav')));
+  });
 }
 
 // ホーム画面「会社からのお知らせ」の最新2〜3件ミニプレビュー。
@@ -2952,7 +2976,7 @@ async function doDecideEntertainment(id, action, exceptionReason) {
   }
 }
 
-// ---------- 新規現場の確認(管理者) ----------
+// ---------- 現場管理(管理者・日報担当) ----------
 
 async function loadSiteAdminList() {
   const session = getSession();
@@ -2963,7 +2987,7 @@ async function loadSiteAdminList() {
     if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">確認待ちの新規現場はありません。</div>'; return; }
     listEl.innerHTML = rows.map((s) => `
       <div class="qual-item" data-id="${s.id}">
-        <div class="row1"><span>${s.site_name}</span></div>
+        <div class="row1"><input type="text" class="site-rename-input" value="${s.site_name}"></div>
         <div class="row2">${new Date(s.created_at).toLocaleString('ja-JP')}</div>
         <div class="qual-verify-btns">
           <button type="button" class="approve-btn">承認する</button>
@@ -2972,22 +2996,76 @@ async function loadSiteAdminList() {
       </div>
     `).join('');
     listEl.querySelectorAll('.approve-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => doDecideSite(e.target.closest('.qual-item').dataset.id, 'active'));
+      btn.addEventListener('click', (e) => doDecideSite(e.target.closest('.qual-item'), 'active'));
     });
     listEl.querySelectorAll('.reject-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => doDecideSite(e.target.closest('.qual-item').dataset.id, 'inactive'));
+      btn.addEventListener('click', (e) => doDecideSite(e.target.closest('.qual-item'), 'inactive'));
     });
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }
+  loadAllSitesList();
 }
 
-async function doDecideSite(id, action) {
+async function doDecideSite(itemEl, action) {
   const session = getSession();
+  const id = itemEl.dataset.id;
+  const renamedTo = itemEl.querySelector('.site-rename-input').value.trim();
   try {
+    if (action === 'active' && renamedTo) {
+      await rpc('admin_update_site_name', { p_admin_employee_code: session.employeeCode, p_site_id: Number(id), p_site_name: renamedTo });
+    }
     await rpc('admin_decide_pending_site', { p_admin_employee_code: session.employeeCode, p_site_id: Number(id), p_action: action });
     await loadSiteAdminList();
   } catch (e) { /* 失敗時は一覧が更新されないだけ */ }
+}
+
+async function doCreateSite() {
+  const session = getSession();
+  const nameInput = document.getElementById('site-create-name');
+  const name = nameInput.value.trim();
+  hideError('site-create-error');
+  if (!name) { showError('site-create-error', '現場名を入力してください。'); return; }
+  try {
+    await rpc('admin_create_site', { p_admin_employee_code: session.employeeCode, p_site_name: name });
+    nameInput.value = '';
+    await loadSiteAdminList();
+  } catch (e) {
+    showError('site-create-error', e.message || '登録に失敗しました。');
+  }
+}
+
+let siteListQuery = '';
+async function loadAllSitesList() {
+  const session = getSession();
+  const listEl = document.getElementById('site-all-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_sites', { p_admin_employee_code: session.employeeCode, p_include_inactive: true, p_query: siteListQuery || null });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する現場はありません。</div>'; return; }
+    const statusLabel = { active: '有効', pending: '承認待ち', inactive: '無効' };
+    listEl.innerHTML = rows.map((s) => `
+      <div class="qual-item" data-id="${s.id}">
+        <div class="row1"><input type="text" class="site-rename-input" value="${s.site_name}"><span class="mini-tag ${s.status === 'active' ? 'info' : (s.status === 'pending' ? 'danger' : '')}">${statusLabel[s.status] || s.status}</span></div>
+        <div class="qual-verify-btns">
+          <button type="button" class="site-save-btn">名前を保存</button>
+        </div>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.site-save-btn').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        const item = e.target.closest('.qual-item');
+        const newName = item.querySelector('.site-rename-input').value.trim();
+        if (!newName) return;
+        try {
+          await rpc('admin_update_site_name', { p_admin_employee_code: session.employeeCode, p_site_id: Number(item.dataset.id), p_site_name: newName });
+          await loadAllSitesList();
+        } catch (e2) { window.alert(e2.message || '保存に失敗しました。'); }
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
 }
 
 // ---------- 免許種別マスター管理(管理者) ----------
@@ -4764,10 +4842,16 @@ function init() {
     if (!isAdmin()) { enterMenu(); return; }
     loadEntertainmentAdminList();
   };
-  SCREEN_ENTER_HOOKS['site-admin'] = () => {
-    if (!isAdmin()) { enterMenu(); return; }
+  SCREEN_ENTER_HOOKS['site-admin'] = async () => {
+    if (!(await isNippoAdmin())) { enterMenu(); return; }
     loadSiteAdminList();
   };
+  document.getElementById('site-create-submit').addEventListener('click', doCreateSite);
+  let siteListSearchTimer = null;
+  document.getElementById('site-list-search').addEventListener('input', (e) => {
+    clearTimeout(siteListSearchTimer);
+    siteListSearchTimer = setTimeout(() => { siteListQuery = e.target.value.trim(); loadAllSitesList(); }, 300);
+  });
   SCREEN_ENTER_HOOKS['license-admin'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadLicenseTypeAdminList();

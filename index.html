@@ -506,14 +506,15 @@
           </div>
 
           <label>使用目的<span class="required-mark">(必須)</span></label>
-          <div class="hint-inline">候補から選ぶか、無ければそのまま自由に入力してください(次回から候補になります)</div>
-          <input type="text" class="item-purpose-category" list="purpose-list" placeholder="例: 接待交際費・駐車料金・資材購入">
+          <div class="hint-inline">検索して候補から選択してください</div>
+          <input type="text" class="item-purpose-search" placeholder="使用目的を検索...">
+          <select class="item-purpose-category"></select>
           <label class="item-purpose-detail-label">詳細・具体的な使用目的</label>
-          <div class="hint-inline">例: 現場用消耗品購入・駐車料金・出張宿泊・資材購入。「その他」「打ち合わせ」「接待交際費」を選んだ場合は必須です</div>
+          <div class="hint-inline">例: 現場用消耗品購入・駐車料金・出張宿泊・資材購入。「その他」「取引先との打ち合わせ」「接待交際費」を選んだ場合は必須です</div>
           <input type="text" class="item-purpose">
 
           <label>取引先</label>
-          <div class="hint-inline">現場の元請け・関係先など(「打ち合わせ」「接待交際費」の場合は必須、検索して選ぶか新しい取引先名を入力)</div>
+          <div class="hint-inline">現場の元請け・関係先など(「取引先との打ち合わせ」「接待交際費」の場合は必須、検索して選ぶか新しい取引先名を入力)</div>
           <input type="text" class="item-vendor" list="vendor-list">
           <input type="hidden" class="item-business-partner-id">
 
@@ -548,7 +549,6 @@
       </div>
     </template>
     <datalist id="vendor-list"></datalist>
-    <datalist id="purpose-list"></datalist>
   </section>
 
   <!-- 会議申請フォーム -->
@@ -840,6 +840,11 @@
         <div class="menu-item-body">免許種別マスター管理<span class="desc">選択肢の追加・編集・停止</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
+      <button type="button" class="menu-item" data-nav="purpose-admin">
+        <span class="icon-slot" data-icon="filter"></span>
+        <div class="menu-item-body">使用目的マスター管理<span class="desc">経費の使用目的を追加・編集・無効化</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
       <button type="button" class="menu-item" data-nav="site-admin">
         <span class="icon-slot" data-icon="map-pin"></span>
         <div class="menu-item-body">新規現場の確認<span class="desc">社員が入力した新しい現場を承認</span></div>
@@ -933,6 +938,23 @@
     <div id="license-type-list"></div>
   </section>
 
+  <!-- 使用目的マスター管理(管理者) -->
+  <section id="screen-purpose-admin" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">使用目的マスター管理</div>
+    <div class="hint" style="margin-bottom:12px;">経費立替申請の「使用目的」の候補を管理します。社員はここで無効化した候補を選べなくなります(過去の申請データは変わりません)。</div>
+    <div class="card">
+      <div class="form-title" style="font-size:15px;">使用目的を追加</div>
+      <input type="hidden" id="purpose-edit-id">
+      <label for="purpose-name">使用目的名</label>
+      <input type="text" id="purpose-name" placeholder="例: 車両維持費">
+      <div class="error" id="purpose-error"></div>
+      <button id="purpose-submit">保存する</button>
+    </div>
+    <div class="section-title">登録済みの使用目的</div>
+    <div id="purpose-admin-list"></div>
+  </section>
+
   <!-- 新規現場の確認(管理者) -->
   <section id="screen-site-admin" class="screen">
     <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
@@ -995,8 +1017,36 @@
   <section id="screen-my-entertainment" class="screen">
     <button type="button" class="back-link" data-nav="myinfo">自分の情報に戻る</button>
     <div class="form-title">接待交際費 事前申請</div>
+    <div class="hint" style="margin-bottom:10px;">1回の接待(ゴルフ→食事→2軒目 等)は1つの事前申請にまとめてください。人数や参加者が変わった場合は新規申請ではなく「実績を更新する」から更新してください。</div>
     <button type="button" data-nav="entertainment-submit">＋ 新しく事前申請する</button>
     <div id="my-entertainment-list"></div>
+  </section>
+
+  <!-- 接待事前申請: 実績の更新(参加者・人数の変更) -->
+  <section id="screen-entertainment-update" class="screen">
+    <button type="button" class="back-link" data-nav="my-entertainment">戻る</button>
+    <div class="card">
+      <div class="form-title">実績を更新する</div>
+      <div class="hint" style="margin-bottom:10px;">当初の予定は変更されません。現時点の実績(実際の参加者・人数)として保存されます。</div>
+      <input type="hidden" id="ent-update-id">
+      <div id="ent-update-planned-summary" class="hint" style="margin-bottom:10px;"></div>
+
+      <label for="ent-update-partner-participants">取引先参加者(実績)</label>
+      <input type="text" id="ent-update-partner-participants" placeholder="例: 山田様、鈴木様">
+      <label for="ent-update-partner-count">取引先の参加人数(実績)<span class="required-mark">(必須)</span></label>
+      <input type="number" id="ent-update-partner-count" min="1">
+      <label>自社参加者(実績)<span class="required-mark">(必須)</span></label>
+      <div class="participant-select" id="ent-update-our-participants"></div>
+      <div class="hint-inline">自社人数: <span id="ent-update-our-count">0</span>名(自動計算)</div>
+
+      <label for="ent-update-note">変更理由・メモ</label>
+      <div class="hint-inline">任意(例: 先方の都合で2名追加)</div>
+      <textarea id="ent-update-note"></textarea>
+      <div class="error" id="ent-update-error"></div>
+      <button id="ent-update-submit">実績を保存する</button>
+    </div>
+    <div class="section-title">変更履歴</div>
+    <div id="ent-update-history"></div>
   </section>
 
   <!-- 社員名簿(管理者) -->

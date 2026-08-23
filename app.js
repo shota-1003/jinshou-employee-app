@@ -88,6 +88,7 @@ const BOTTOM_NAV_MAP = {
   myinfo: 'myinfo', 'leave-history': 'myinfo', 'my-supply': 'myinfo', 'my-qual': 'myinfo', 'my-health': 'myinfo',
   'my-change-requests': 'myinfo', 'profile-edit': 'myinfo', 'anon-consult': 'myinfo', 'anon-submit': 'myinfo',
   'anon-done': 'myinfo', 'anon-thread': 'myinfo', 'my-entertainment': 'myinfo', 'my-daily-reports': 'myinfo',
+  'entertainment-update': 'myinfo',
 };
 
 // 絵文字を廃止し線画SVG(icons.js)へ統一するための一括反映。静的HTML内の
@@ -452,13 +453,16 @@ async function populateVendorList() {
   } catch (e) { /* 取引先候補が引けなくても自由入力は継続できる */ }
 }
 
-// 使用目的マスター(expense_purpose_master)から候補を読み込む。候補に無い値を入力した場合は
-// 送信時(submit_expense_claim側)に新しい候補として自動登録され、次回から検索・選択できるようになる。
-async function populatePurposeList() {
+// 使用目的マスター(expense_purpose_master、管理者のみ追加・編集・無効化可)から検索して選択する。
+// 表記揺れ(「接待」「接待費」等がバラバラに保存される)を防ぐため、自由入力は許可しない
+// (site-selectと同じ「検索→select」の方式)。
+async function populatePurposeSelect(selectEl, query) {
   try {
-    const rows = await rpc('search_expense_purposes', { p_query: null });
-    document.getElementById('purpose-list').innerHTML = rows.map((p) => `<option value="${p.name}">`).join('');
-  } catch (e) { /* 候補が引けなくても自由入力は継続できる */ }
+    const rows = await rpc('search_expense_purposes', { p_query: query || null });
+    const current = selectEl.value;
+    selectEl.innerHTML = '<option value="">選択してください</option>' + rows.map((p) => `<option value="${p.name}">${p.name}</option>`).join('');
+    if (current && rows.some((p) => p.name === current)) selectEl.value = current;
+  } catch (e) { /* 候補が引けなくても他の項目は引き続き入力できる */ }
 }
 
 // 取引先参加者名を複数登録できる簡易チップ入力(検索は不要な自由記入の氏名リスト)。
@@ -494,7 +498,15 @@ function wirePartnerParticipantChips(card) {
     if (e.key === 'Enter') { e.preventDefault(); addName(); }
   });
 
-  return { getNames() { return names.slice(); } };
+  return {
+    getNames() { return names.slice(); },
+    // 接待事前申請の紐付け時、取引先参加者名(「、」区切りの文字列)から事前反映するために使う。
+    setNames(namesText) {
+      names.length = 0;
+      (namesText || '').split(/[、,]/).map((n) => n.trim()).filter(Boolean).forEach((n) => names.push(n));
+      renderChips();
+    },
+  };
 }
 
 // 打ち合わせ・接待交際費の「自社参加者」複数選択(検索→タップで選択、チップで表示)。
@@ -511,7 +523,7 @@ function createParticipantSelect(container) {
   let allEmployees = [];
   let onChange = null;
 
-  (async () => {
+  const employeesLoaded = (async () => {
     const session = getSession();
     try { allEmployees = await rpc('list_employees_for_participant_select', { p_employee_code: session.employeeCode }); } catch (e) { /* 無視 */ }
   })();
@@ -548,6 +560,17 @@ function createParticipantSelect(container) {
     setOnChange(cb) { onChange = cb; },
     getSelectedCodes() { return Array.from(selected.keys()); },
     getCount() { return selected.size; },
+    // 接待事前申請の紐付け時、自社参加者を候補データから事前選択するために使う。
+    async setSelectedCodes(codes) {
+      await employeesLoaded;
+      selected.clear();
+      (codes || []).forEach((code) => {
+        const emp = allEmployees.find((e) => e.employee_code === code);
+        selected.set(code, emp ? emp.employee_name : code);
+      });
+      renderChips();
+      if (onChange) onChange();
+    },
   };
 }
 
@@ -581,6 +604,27 @@ async function searchAndShowPreapprovals(card, itemId) {
         area.querySelectorAll('.preapproval-candidate').forEach((x) => x.classList.remove('linked'));
         el.classList.add('linked');
         state.entertainmentPreapprovalId = candidates[i].id;
+
+        // 事前申請で入力済みの情報を自動反映する(同じ内容を二度入力させない)。
+        const c = candidates[i];
+        if (c.business_partner_id) {
+          vendorNameToId.set(c.partner_name_snapshot, c.business_partner_id);
+          card.querySelector('.item-vendor').value = c.partner_name_snapshot || '';
+        }
+        if (!card.querySelector('.item-date').value && c.planned_datetime) {
+          card.querySelector('.item-date').value = new Date(c.planned_datetime).toISOString().slice(0, 10);
+        }
+        if (!card.querySelector('.item-purpose').value && c.purpose) {
+          card.querySelector('.item-purpose').value = c.purpose;
+        }
+        if (c.partner_participants && state.partnerParticipantChips) state.partnerParticipantChips.setNames(c.partner_participants);
+        if (c.partner_participant_count) card.querySelector('.item-partner-count').value = c.partner_participant_count;
+        const pSelect = participantSelects.get(itemId);
+        if (pSelect && c.our_participant_employee_codes) {
+          pSelect.setSelectedCodes(c.our_participant_employee_codes).then(() => {
+            card.querySelector('.item-our-count').textContent = pSelect.getCount();
+          });
+        }
       });
     });
   } else {
@@ -604,7 +648,6 @@ function enterExpenseScreen(category) {
   resetExpenseForm();
   hideError('expense-error');
   populateVendorList();
-  populatePurposeList();
   showScreen('expense');
 }
 
@@ -722,14 +765,17 @@ function addExpenseItem(initialFile) {
     if (cardEl) cardEl.querySelector('.item-new-site-name').focus();
   });
 
-  const purposeCategoryInput = clone.querySelector('.item-purpose-category');
+  const purposeCategorySelect = clone.querySelector('.item-purpose-category');
+  const purposeSearch = clone.querySelector('.item-purpose-search');
   const meetingBlock = clone.querySelector('.item-meeting-block');
   const entertainmentBlock = clone.querySelector('.item-entertainment-block');
   const partnerParticipantChips = wirePartnerParticipantChips(clone.querySelector('.item-meeting-block'));
+  populatePurposeSelect(purposeCategorySelect, '');
+  purposeSearch.addEventListener('input', () => populatePurposeSelect(purposeCategorySelect, purposeSearch.value.trim()));
   let lastEntertainmentSearchKey = '';
   function syncPurposeCategory() {
-    const cat = purposeCategoryInput.value.trim();
-    const needsMeeting = cat === '打ち合わせ' || cat === '接待交際費';
+    const cat = purposeCategorySelect.value;
+    const needsMeeting = cat === '取引先との打ち合わせ' || cat === '接待交際費';
     meetingBlock.style.display = needsMeeting ? 'block' : 'none';
     entertainmentBlock.style.display = cat === '接待交際費' ? 'block' : 'none';
     if (needsMeeting && !participantSelects.has(itemId)) {
@@ -746,8 +792,7 @@ function addExpenseItem(initialFile) {
       lastEntertainmentSearchKey = '';
     }
   }
-  purposeCategoryInput.addEventListener('input', syncPurposeCategory);
-  purposeCategoryInput.addEventListener('change', syncPurposeCategory);
+  purposeCategorySelect.addEventListener('change', syncPurposeCategory);
   expenseItemState.get(itemId).partnerParticipantChips = partnerParticipantChips;
 
   clone.querySelector('.remove-item-btn').addEventListener('click', () => {
@@ -868,7 +913,7 @@ async function doSubmitExpense() {
     if (!state.driveFileId) { showError('expense-error', `${label}: 領収書またはレシートの写真を添付してください。`); return; }
     if (!date || !store || !amount) { showError('expense-error', `${label}: 利用日・支払先・金額は必須です。`); return; }
     if (!purposeCategory) { showError('expense-error', `${label}: 使用目的のカテゴリを選択してください。`); return; }
-    if (['その他', '打ち合わせ', '接待交際費'].includes(purposeCategory) && !purpose) {
+    if (['その他', '取引先との打ち合わせ', '接待交際費'].includes(purposeCategory) && !purpose) {
       showError('expense-error', `${label}: 使用目的の詳細を入力してください。`); return;
     }
 
@@ -893,7 +938,7 @@ async function doSubmitExpense() {
     let partnerParticipants = null;
     let partnerCount = null;
     let ourCodes = null;
-    const needsMeeting = purposeCategory === '打ち合わせ' || purposeCategory === '接待交際費';
+    const needsMeeting = purposeCategory === '取引先との打ち合わせ' || purposeCategory === '接待交際費';
     if (needsMeeting) {
       if (!businessPartnerId && !newBusinessPartnerName) { showError('expense-error', `${label}: 取引先を選択または入力してください。`); return; }
       const chipNames = state.partnerParticipantChips ? state.partnerParticipantChips.getNames() : [];
@@ -2603,6 +2648,8 @@ async function doSubmitEntertainmentPreapproval() {
 
 const ENT_STATUS_LABEL = { pending: '確認待ち', approved: '承認済み', rejected: '却下' };
 
+const ENT_TIMING_TAG_CLASS = { '事前申請': 'info', '当日事後申請': 'warn', '後日申請': 'danger' };
+
 async function loadMyEntertainmentList() {
   const session = getSession();
   const listEl = document.getElementById('my-entertainment-list');
@@ -2611,14 +2658,103 @@ async function loadMyEntertainmentList() {
     const rows = await rpc('get_my_entertainment_preapprovals', { p_employee_code: session.employeeCode });
     if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">事前申請はまだありません。</div>'; return; }
     listEl.innerHTML = rows.map((r) => `
-      <div class="qual-item">
+      <div class="qual-item" data-id="${r.id}">
         <div class="row1"><span>${r.planned_store || '(店舗未記入)'}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${ENT_STATUS_LABEL[r.status]}</span></div>
         <div class="row2">${new Date(r.planned_datetime).toLocaleString('ja-JP')}・${r.partner_name_snapshot || ''}</div>
         <div class="row2">${r.purpose || ''}${r.planned_amount != null ? `・予定${Number(r.planned_amount).toLocaleString()}円` : ''}</div>
+        <div class="row2">実績: 取引先${r.actual_partner_participant_count ?? '-'}名/自社${r.actual_our_participant_count ?? '-'}名・紐付き領収書${r.linked_receipt_count}件</div>
+        <div class="employee-row-flags" style="margin-top:6px;">
+          <span class="mini-tag ${ENT_TIMING_TAG_CLASS[r.submission_timing] || 'muted'}">${r.submission_timing || ''}</span>
+          ${r.requires_special_review ? '<span class="mini-tag danger">事前申請なし(特別承認)</span>' : ''}
+        </div>
+        <div class="qual-verify-btns">
+          <button type="button" class="update-actuals-btn">実績を更新する</button>
+        </div>
       </div>
     `).join('');
+    listEl.querySelectorAll('.update-actuals-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => openEntertainmentUpdate(e.target.closest('.qual-item').dataset.id));
+    });
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+let entUpdateOurParticipantSelect = null;
+
+async function openEntertainmentUpdate(id) {
+  const session = getSession();
+  document.getElementById('ent-update-id').value = id;
+  hideError('ent-update-error');
+  document.getElementById('ent-update-partner-participants').value = '';
+  document.getElementById('ent-update-partner-count').value = '';
+  document.getElementById('ent-update-note').value = '';
+  document.getElementById('ent-update-planned-summary').textContent = '読み込み中...';
+  document.getElementById('ent-update-history').innerHTML = '';
+  showScreen('entertainment-update');
+
+  const rows = await rpc('get_my_entertainment_preapprovals', { p_employee_code: session.employeeCode });
+  const r = rows.find((x) => String(x.id) === String(id));
+  if (r) {
+    document.getElementById('ent-update-planned-summary').textContent =
+      `当初の予定: ${new Date(r.planned_datetime).toLocaleString('ja-JP')}・${r.partner_name_snapshot || ''}・取引先${r.partner_participant_count ?? '-'}名/自社${r.our_participant_count ?? '-'}名`;
+    document.getElementById('ent-update-partner-count').value = r.actual_partner_participant_count || '';
+  }
+
+  entUpdateOurParticipantSelect = createParticipantSelect(document.getElementById('ent-update-our-participants'));
+  entUpdateOurParticipantSelect.setOnChange(() => {
+    document.getElementById('ent-update-our-count').textContent = entUpdateOurParticipantSelect.getCount();
+  });
+
+  try {
+    const changes = await rpc('get_entertainment_preapproval_changes', { p_employee_code: session.employeeCode, p_id: Number(id) });
+    const historyEl = document.getElementById('ent-update-history');
+    if (!changes || changes.length === 0) { historyEl.innerHTML = '<div class="hint">変更履歴はありません。</div>'; return; }
+    historyEl.innerHTML = changes.map((c) => {
+      const d = c.detail || {};
+      let body = '';
+      if (c.action === 'entertainment_preapproval_submitted') {
+        body = `事前申請を提出(${d.submission_timing || ''})`;
+      } else if (c.action === 'entertainment_preapproval_actuals_updated') {
+        const parts = [];
+        if (d.added && d.added.length) parts.push(`追加: ${d.added.join('、')}`);
+        if (d.removed && d.removed.length) parts.push(`削除: ${d.removed.join('、')}`);
+        if (d.old_partner_participants !== d.new_partner_participants) parts.push(`取引先参加者を変更`);
+        body = `実績を更新${parts.length ? '(' + parts.join('・') + ')' : ''}${d.note ? '・' + d.note : ''}`;
+      } else if (c.action === 'entertainment_preapproval_late_exception_approval') {
+        body = `管理者が例外承認(理由: ${d.reason || ''})`;
+      } else {
+        body = c.action;
+      }
+      return `<div class="change-request-item"><div class="row1"><span>${body}</span></div><div class="row2">${c.actor_name}・${new Date(c.created_at).toLocaleString('ja-JP')}</div></div>`;
+    }).join('');
+  } catch (e) { /* 履歴が取れなくても更新フォームは使える */ }
+}
+
+async function doUpdateEntertainmentActuals() {
+  const session = getSession();
+  const id = document.getElementById('ent-update-id').value;
+  const partnerParticipants = document.getElementById('ent-update-partner-participants').value.trim() || null;
+  const partnerCount = Number(document.getElementById('ent-update-partner-count').value || 0);
+  const note = document.getElementById('ent-update-note').value.trim() || null;
+  hideError('ent-update-error');
+  if (!partnerCount) { showError('ent-update-error', '取引先の参加人数を入力してください。'); return; }
+  const ourCodes = entUpdateOurParticipantSelect ? entUpdateOurParticipantSelect.getSelectedCodes() : [];
+  if (ourCodes.length === 0) { showError('ent-update-error', '自社参加者を選択してください。'); return; }
+
+  const btn = document.getElementById('ent-update-submit');
+  btn.disabled = true;
+  try {
+    await rpc('update_entertainment_preapproval_actuals', {
+      p_employee_code: session.employeeCode, p_id: Number(id),
+      p_actual_partner_participants: partnerParticipants, p_actual_partner_participant_count: partnerCount,
+      p_actual_our_participant_employee_codes: ourCodes, p_note: note,
+    });
+    showScreen('my-entertainment');
+  } catch (e) {
+    showError('ent-update-error', e.message || '保存に失敗しました。');
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -2637,31 +2773,47 @@ async function loadEntertainmentAdminList() {
         <div class="row1"><span>${r.employee_name}・${r.planned_store || '(店舗未記入)'}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${ENT_STATUS_LABEL[r.status]}</span></div>
         <div class="row2">${new Date(r.planned_datetime).toLocaleString('ja-JP')}・${r.partner_name_snapshot || ''}(取引先${r.partner_participant_count ?? '-'}名/自社${r.our_participant_count ?? '-'}名)</div>
         <div class="row2">${r.purpose || ''}${r.planned_amount != null ? `・予定${Number(r.planned_amount).toLocaleString()}円` : ''}</div>
+        <div class="row2">登録日時: ${new Date(r.created_at).toLocaleString('ja-JP')}</div>
+        <div class="employee-row-flags" style="margin-top:6px;">
+          <span class="mini-tag ${ENT_TIMING_TAG_CLASS[r.submission_timing] || 'muted'}">${r.submission_timing || ''}</span>
+        </div>
+        ${r.requires_special_review ? `<div class="preapproval-warning">${icon('alert-triangle')}この接待は事前申請されていません。内容を確認のうえ、例外承認または却下してください。</div>` : ''}
+        ${r.exception_reason ? `<div class="row2">例外承認理由: ${r.exception_reason}</div>` : ''}
         ${r.status === 'pending' ? `
+          ${r.requires_special_review ? `
+            <label>例外承認の理由<span class="required-mark">(必須)</span></label>
+            <textarea class="ent-exception-reason" placeholder="例: 先方都合で急遽実施、事前に把握はしていた"></textarea>
+          ` : ''}
           <div class="qual-verify-btns">
-            <button type="button" class="approve-btn">承認する</button>
+            <button type="button" class="approve-btn">${r.requires_special_review ? '例外承認する' : '承認する'}</button>
             <button type="button" class="reject-btn">却下する</button>
           </div>
         ` : ''}
       </div>
     `).join('');
     listEl.querySelectorAll('.approve-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => doDecideEntertainment(e.target.closest('.qual-item').dataset.id, 'approved'));
+      btn.addEventListener('click', (e) => {
+        const item = e.target.closest('.qual-item');
+        const reasonEl = item.querySelector('.ent-exception-reason');
+        doDecideEntertainment(item.dataset.id, 'approved', reasonEl ? reasonEl.value.trim() : null);
+      });
     });
     listEl.querySelectorAll('.reject-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => doDecideEntertainment(e.target.closest('.qual-item').dataset.id, 'rejected'));
+      btn.addEventListener('click', (e) => doDecideEntertainment(e.target.closest('.qual-item').dataset.id, 'rejected', null));
     });
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }
 }
 
-async function doDecideEntertainment(id, action) {
+async function doDecideEntertainment(id, action, exceptionReason) {
   const session = getSession();
   try {
-    await rpc('admin_decide_entertainment_preapproval', { p_admin_employee_code: session.employeeCode, p_id: Number(id), p_action: action });
+    await rpc('admin_decide_entertainment_preapproval', { p_admin_employee_code: session.employeeCode, p_id: Number(id), p_action: action, p_exception_reason: exceptionReason || null });
     await loadEntertainmentAdminList();
-  } catch (e) { /* 失敗時は一覧が更新されないだけ */ }
+  } catch (e) {
+    window.alert(e.message || '操作に失敗しました。');
+  }
 }
 
 // ---------- 新規現場の確認(管理者) ----------
@@ -3015,6 +3167,68 @@ async function loadDailyReportAdminList() {
   }
 }
 
+// ---------- 使用目的マスター管理(管理者) ----------
+
+function resetPurposeForm() {
+  document.getElementById('purpose-edit-id').value = '';
+  document.getElementById('purpose-name').value = '';
+  hideError('purpose-error');
+}
+
+async function loadPurposeAdminList() {
+  const session = getSession();
+  const listEl = document.getElementById('purpose-admin-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  resetPurposeForm();
+  try {
+    const rows = await rpc('admin_list_expense_purposes', { p_admin_employee_code: session.employeeCode });
+    listEl.innerHTML = rows.map((p) => `
+      <div class="supply-item" data-id="${p.id}" style="${p.is_active ? '' : 'opacity:.5;'}">
+        <div class="row1"><span>${p.name}</span><span>${p.is_active ? '有効' : '無効'}</span></div>
+        <div class="qual-verify-btns">
+          <button type="button" class="edit-purpose-btn" data-name="${p.name}">編集</button>
+          <button type="button" class="reject-btn toggle-purpose-btn" data-active="${p.is_active}">${p.is_active ? '無効化する' : '再開する'}</button>
+        </div>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.edit-purpose-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const item = btn.closest('.supply-item');
+        document.getElementById('purpose-edit-id').value = item.dataset.id;
+        document.getElementById('purpose-name').value = btn.dataset.name;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+    listEl.querySelectorAll('.toggle-purpose-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const item = btn.closest('.supply-item');
+        await rpc('admin_set_expense_purpose_active', { p_admin_employee_code: session.employeeCode, p_id: Number(item.dataset.id), p_is_active: btn.dataset.active !== 'true' });
+        loadPurposeAdminList();
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doSavePurpose() {
+  const session = getSession();
+  const id = document.getElementById('purpose-edit-id').value;
+  const name = document.getElementById('purpose-name').value.trim();
+  hideError('purpose-error');
+  if (!name) { showError('purpose-error', '使用目的名を入力してください。'); return; }
+  const btn = document.getElementById('purpose-submit');
+  btn.disabled = true;
+  try {
+    await rpc('admin_upsert_expense_purpose', { p_admin_employee_code: session.employeeCode, p_id: id ? Number(id) : null, p_name: name });
+    await loadPurposeAdminList();
+  } catch (e) {
+    showError('purpose-error', e.message || '保存に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---------- 初期化 ----------
 
 function init() {
@@ -3104,9 +3318,11 @@ function init() {
   });
 
   document.getElementById('ent-submit').addEventListener('click', doSubmitEntertainmentPreapproval);
+  document.getElementById('ent-update-submit').addEventListener('click', doUpdateEntertainmentActuals);
   document.getElementById('entertainment-admin-filter').addEventListener('change', loadEntertainmentAdminList);
 
   document.getElementById('license-type-submit').addEventListener('click', doSaveLicenseType);
+  document.getElementById('purpose-submit').addEventListener('click', doSavePurpose);
 
   document.getElementById('daily-report-date').addEventListener('change', (e) => loadDailyReportForDate(e.target.value));
   document.getElementById('daily-report-add-entry').addEventListener('click', () => addDailyReportEntry());
@@ -3241,6 +3457,10 @@ function init() {
   SCREEN_ENTER_HOOKS['daily-report-admin'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadDailyReportAdminList();
+  };
+  SCREEN_ENTER_HOOKS['purpose-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadPurposeAdminList();
   };
 
   const session = getSession();

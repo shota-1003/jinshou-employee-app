@@ -2,8 +2,8 @@
 
 // アプリの見た目(HTML/CSS/JS)だけをキャッシュするapp-shell方式。申請データ自体は
 // 常にオンラインでSupabaseへ直接送るため、APIレスポンスはキャッシュしない。
-const CACHE_NAME = 'jinshou-employee-app-v4';
-const SHELL_FILES = ['./', './index.html', './style.css', './app.js', './manifest.json', './icons/icon.svg'];
+const CACHE_NAME = 'jinshou-employee-app-v5';
+const SHELL_FILES = ['./', './index.html', './style.css', './app.js', './icons.js', './manifest.json', './icons/icon.svg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_FILES)));

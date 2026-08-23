@@ -76,7 +76,33 @@ function setRememberedCode(code) { localStorage.setItem(REMEMBERED_CODE_KEY, cod
 
 const SCREEN_ENTER_HOOKS = {};
 
-const BOTTOM_NAV_MAP = { menu: 'menu', expense: 'expense-advance', history: 'history', myinfo: 'myinfo' };
+// 下部ナビは5つ(ホーム/申請/お知らせ/履歴/自分)。そこから遷移するサブ画面にいる間も、
+// 元のタブが点灯したままになるようにマッピングする。
+const BOTTOM_NAV_MAP = {
+  menu: 'menu',
+  'menu-apply': 'menu-apply', leave: 'menu-apply', 'expense-advance': 'menu-apply', 'expense-company': 'menu-apply',
+  meeting: 'menu-apply', 'supply-request': 'menu-apply', 'qual-submit': 'menu-apply',
+  announcements: 'announcements',
+  history: 'history',
+  myinfo: 'myinfo', 'leave-history': 'myinfo', 'my-supply': 'myinfo', 'my-qual': 'myinfo',
+  'my-change-requests': 'myinfo', 'profile-edit': 'myinfo', 'anon-consult': 'myinfo', 'anon-submit': 'myinfo',
+  'anon-done': 'myinfo', 'anon-thread': 'myinfo',
+};
+
+// 絵文字を廃止し線画SVG(icons.js)へ統一するための一括反映。静的HTML内の
+// <span class="icon-slot" data-icon="name">を実際のSVGへ差し替える。back-linkは
+// 個別にdata-iconを書かなくても済むよう、ここでまとめて先頭にアイコンを付ける。
+function hydrateIcons(root) {
+  const scope = root || document;
+  scope.querySelectorAll('[data-icon]').forEach((el) => {
+    el.innerHTML = icon(el.dataset.icon);
+    el.removeAttribute('data-icon');
+  });
+  scope.querySelectorAll('.back-link:not([data-hydrated])').forEach((el) => {
+    el.setAttribute('data-hydrated', '1');
+    el.insertAdjacentHTML('afterbegin', icon('chevron-left'));
+  });
+}
 
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach((el) => el.classList.remove('active'));
@@ -228,14 +254,65 @@ async function loadHomeLeaveStats(balanceElId, usedElId) {
   } catch (e) { /* 表示できなくても致命的ではないため無視 */ }
 }
 
+function greetingWord() {
+  const h = new Date().getHours();
+  if (h < 11) return 'おはようございます';
+  if (h < 18) return 'こんにちは';
+  return 'お疲れさまです';
+}
+
 function enterMenu() {
   const session = getSession();
-  document.getElementById('menu-greeting').textContent = `こんにちは、${session.employeeName}さん`;
+  document.getElementById('menu-greeting-hi').textContent = greetingWord();
+  document.getElementById('menu-greeting-name').textContent = `${session.employeeName}さん`;
   const showAdmin = session.requestRole === 'executive';
-  document.getElementById('main-menu-admin').style.display = showAdmin ? '' : 'none';
+  const bannerArea = document.getElementById('admin-banner-area');
+  bannerArea.innerHTML = showAdmin ? `
+    <button type="button" class="main-menu-card" data-nav="admin-dashboard" style="width:100%; flex-direction:row; align-items:center; gap:14px; margin-top:8px;">
+      <span class="main-menu-card-icon">${icon('shield')}</span>
+      <span style="text-align:left;">
+        <span class="main-menu-label" style="display:block;">管理者ダッシュボード</span>
+        <span class="main-menu-desc">承認待ち・社員管理をまとめて確認</span>
+      </span>
+      <span style="margin-left:auto; color:var(--text-faint);">${icon('chevron-right')}</span>
+    </button>
+  ` : '';
+  bannerArea.querySelectorAll('[data-nav]').forEach((el) => {
+    el.addEventListener('click', () => showScreen(el.getAttribute('data-nav')));
+  });
   checkAnonUnreadBadge().then(loadTodayList);
   loadAnnounceBanner();
+  loadHomeAnnouncePreview();
   showScreen('menu');
+}
+
+// ホーム画面「会社からのお知らせ」の最新2〜3件ミニプレビュー。
+async function loadHomeAnnouncePreview() {
+  const session = getSession();
+  const area = document.getElementById('home-announce-block');
+  area.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_announcements', { p_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { area.innerHTML = '<div class="hint">お知らせはありません。</div>'; return; }
+    const top = rows.slice(0, 3);
+    area.innerHTML = top.map((a) => `
+      <div class="home-announce-item" data-id="${a.id}">
+        <span class="home-announce-dot ${a.importance === 'important' ? 'important' : (!a.is_read ? 'unread normal-imp' : '')}"></span>
+        <div class="home-announce-body2">
+          <div class="home-announce-title-row">
+            ${a.importance === 'important' ? '<span class="home-announce-tag important">重要</span>' : '<span class="home-announce-tag normal">お知らせ</span>'}
+            <span class="home-announce-title">${a.title}</span>
+          </div>
+          <div class="home-announce-date">${new Date(a.created_at).toLocaleDateString('ja-JP')}</div>
+        </div>
+      </div>
+    `).join('');
+    area.querySelectorAll('.home-announce-item').forEach((el) => {
+      el.addEventListener('click', () => showScreen('announcements'));
+    });
+  } catch (e) {
+    area.innerHTML = '';
+  }
 }
 
 // ---------- 有給休暇申請 ----------
@@ -409,7 +486,7 @@ async function showExpenseSuggestion(card, storeName) {
     if (!s || !s.site_id) return;
     area.innerHTML = `
       <div class="item-suggest-label">前回の入力から候補(タップで入力欄へ反映、必ず内容を確認してください)</div>
-      <button type="button" class="item-suggest-chip">現場候補: ${s.site_name}／用途候補: ${s.purpose}${s.vendor_name ? `／取引先候補: ${s.vendor_name}` : ''}</button>
+      <button type="button" class="item-suggest-chip">${icon('info')}<span>現場候補: ${s.site_name}／用途候補: ${s.purpose}${s.vendor_name ? `／取引先候補: ${s.vendor_name}` : ''}</span></button>
     `;
     area.style.display = 'block';
     area.querySelector('.item-suggest-chip').addEventListener('click', async () => {
@@ -465,6 +542,7 @@ async function runOcrForItem(card, file) {
 function addExpenseItem(initialFile) {
   const template = document.getElementById('expense-item-template');
   const clone = template.content.cloneNode(true);
+  hydrateIcons(clone);
   const itemId = `item-${++expenseItemSeq}`;
   const card = clone.querySelector('.expense-item-card');
   card.dataset.itemId = itemId;
@@ -704,34 +782,84 @@ async function loadHistory() {
   }
 }
 
-// ---------- 支給品申請(社員) ----------
+// ---------- 支給品申請(社員): 選択式。一覧にタップで選び、「その他」だけ自由入力欄を出す ----------
+
+const SUPPLY_ICON_BY_NAME = {
+  '制服ジャケット': 'briefcase', '制服ズボン': 'briefcase', 'ヘルメット': 'shield', '安全帯': 'shield',
+  'フルハーネス': 'shield', '安全靴': 'package', '手袋': 'package', '空調服': 'package', '空調服バッテリー': 'package',
+};
+
+let selectedSupplyMasterId = null;
+let selectedSupplyMasterItem = null;
+
+async function loadSupplySelectGrid() {
+  const grid = document.getElementById('supply-select-grid');
+  grid.innerHTML = '<div class="hint">読み込み中...</div>';
+  document.getElementById('supply-req-detail').style.display = 'none';
+  selectedSupplyMasterId = null;
+  selectedSupplyMasterItem = null;
+  try {
+    const rows = await rpc('list_supply_master', {});
+    const cards = rows.map((m) => ({ id: m.id, name: m.item_name, requiresSize: m.requires_size, icon: SUPPLY_ICON_BY_NAME[m.item_name] || 'package' }));
+    cards.push({ id: 'other', name: 'その他', requiresSize: false, icon: 'plus' });
+    grid.innerHTML = cards.map((c) => `
+      <button type="button" class="supply-select-card" data-id="${c.id}" data-name="${c.name}" data-requires-size="${c.requiresSize}">
+        ${icon(c.icon)}
+        <span class="supply-select-card-label">${c.name}</span>
+      </button>
+    `).join('');
+    grid.querySelectorAll('.supply-select-card').forEach((el) => {
+      el.addEventListener('click', () => selectSupplyMasterCard(el));
+    });
+  } catch (e) {
+    grid.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+function selectSupplyMasterCard(el) {
+  document.querySelectorAll('.supply-select-card').forEach((c) => c.classList.remove('selected'));
+  el.classList.add('selected');
+  const isOther = el.dataset.id === 'other';
+  selectedSupplyMasterId = isOther ? null : Number(el.dataset.id);
+  selectedSupplyMasterItem = el.dataset.name;
+
+  document.getElementById('supply-req-detail').style.display = 'block';
+  document.getElementById('supply-req-selected-title').textContent = isOther ? 'その他の支給品' : el.dataset.name;
+  document.getElementById('supply-req-other-wrap').style.display = isOther ? 'block' : 'none';
+  document.getElementById('supply-req-size-wrap').style.display = (el.dataset.requiresSize === 'true') ? 'block' : 'none';
+  document.getElementById('supply-req-master-id').value = selectedSupplyMasterId || '';
+}
 
 async function doSubmitSupplyRequest() {
   const session = getSession();
-  const item = document.getElementById('supply-req-item').value.trim();
+  const isOther = selectedSupplyMasterId == null;
+  const otherName = document.getElementById('supply-req-other-name').value.trim();
   const qty = document.getElementById('supply-req-qty').value;
   const size = document.getElementById('supply-req-size').value.trim();
-  const reason = document.getElementById('supply-req-reason').value.trim();
+  const kind = document.getElementById('supply-req-kind').value;
+  const reasonInput = document.getElementById('supply-req-reason').value.trim();
+  const reason = [kind, reasonInput].filter(Boolean).join(' / ');
   hideError('supply-req-error');
 
-  if (!item || !reason) {
-    showError('supply-req-error', '支給品名・申請理由は必須です。');
-    return;
-  }
+  if (!selectedSupplyMasterItem) { showError('supply-req-error', '支給品を選択してください。'); return; }
+  if (isOther && !otherName) { showError('supply-req-error', '上記以外の支給品名を入力してください。'); return; }
+  if (!reasonInput) { showError('supply-req-error', '申請理由を入力してください。'); return; }
 
   const btn = document.getElementById('supply-req-submit');
   btn.disabled = true;
   try {
     await rpc('submit_supply_request', {
-      p_employee_code: session.employeeCode, p_item_name: item, p_quantity: qty ? Number(qty) : 1,
-      p_size: size || null, p_reason: reason,
+      p_employee_code: session.employeeCode,
+      p_item_name: isOther ? otherName : null,
+      p_quantity: qty ? Number(qty) : 1,
+      p_size: size || null,
+      p_reason: reason,
+      p_master_item_id: selectedSupplyMasterId,
     });
     document.getElementById('done-message').textContent = '支給品申請を受け付けました。承認をお待ちください。';
     showScreen('done');
-    ['supply-req-item', 'supply-req-size', 'supply-req-reason'].forEach((id) => { document.getElementById(id).value = ''; });
-    document.getElementById('supply-req-qty').value = '1';
   } catch (e) {
-    showError('supply-req-error', '送信に失敗しました。もう一度お試しください。');
+    showError('supply-req-error', e.message || '送信に失敗しました。もう一度お試しください。');
   } finally {
     btn.disabled = false;
   }
@@ -785,6 +913,24 @@ async function loadAdminEmployeeSelects() {
   const options = rows.map((e) => `<option value="${e.employee_code}">${e.employee_code} ${e.employee_name}</option>`).join('');
   document.getElementById('admin-employee-select').innerHTML = options;
   document.getElementById('admin-issue-employee').innerHTML = options;
+  await loadAdminIssueMasterSelect();
+}
+
+async function loadAdminIssueMasterSelect() {
+  const session = getSession();
+  const select = document.getElementById('admin-issue-master');
+  try {
+    const rows = await rpc('admin_list_supply_master', { p_admin_employee_code: session.employeeCode });
+    const active = rows.filter((m) => m.active);
+    select.innerHTML = active.map((m) => `<option value="${m.id}" data-requires-size="${m.requires_size}">${m.item_name}</option>`).join('') + '<option value="">その他(自由入力)</option>';
+    toggleAdminIssueOtherWrap();
+  } catch (e) { /* 読み込めなくても記録フォーム自体は使える(その他扱いになる) */ }
+}
+
+function toggleAdminIssueOtherWrap() {
+  const select = document.getElementById('admin-issue-master');
+  const isOther = !select.value;
+  document.getElementById('admin-issue-other-wrap').style.display = isOther ? 'block' : 'none';
 }
 
 async function loadAdminEmployeeDetail() {
@@ -829,7 +975,9 @@ async function doAdminRecordIssuance() {
   const session = getSession();
   const targetCode = document.getElementById('admin-issue-employee').value;
   const date = document.getElementById('admin-issue-date').value;
-  const item = document.getElementById('admin-issue-item').value.trim();
+  const masterSelect = document.getElementById('admin-issue-master');
+  const masterId = masterSelect.value ? Number(masterSelect.value) : null;
+  const otherItem = document.getElementById('admin-issue-item').value.trim();
   const qty = document.getElementById('admin-issue-qty').value;
   const size = document.getElementById('admin-issue-size').value.trim();
   const condition = document.getElementById('admin-issue-condition').value;
@@ -838,8 +986,8 @@ async function doAdminRecordIssuance() {
   const note = document.getElementById('admin-issue-note').value.trim();
   hideError('admin-issue-error');
 
-  if (!targetCode || !date || !item) {
-    showError('admin-issue-error', '対象社員・支給日・支給品名は必須です。');
+  if (!targetCode || !date || (!masterId && !otherItem)) {
+    showError('admin-issue-error', '対象社員・支給日・支給品は必須です。');
     return;
   }
 
@@ -848,8 +996,8 @@ async function doAdminRecordIssuance() {
   try {
     await rpc('record_supply_issuance', {
       p_admin_employee_code: session.employeeCode, p_target_employee_code: targetCode, p_issued_date: date,
-      p_item_name: item, p_quantity: qty ? Number(qty) : 1, p_size: size || null, p_condition: condition,
-      p_reason: reason || null, p_needs_return: needsReturn, p_note: note || null,
+      p_item_name: masterId ? null : otherItem, p_quantity: qty ? Number(qty) : 1, p_size: size || null, p_condition: condition,
+      p_reason: reason || null, p_needs_return: needsReturn, p_note: note || null, p_master_item_id: masterId,
     });
     ['admin-issue-date', 'admin-issue-item', 'admin-issue-size', 'admin-issue-reason', 'admin-issue-note'].forEach((id) => { document.getElementById(id).value = ''; });
     document.getElementById('admin-issue-qty').value = '1';
@@ -1120,25 +1268,25 @@ async function loadTodayList() {
     const d = rows && rows[0];
     const items = [];
     if (d) {
-      if (d.unread_announcements > 0) items.push({ icon: '📢', label: '未読のお知らせがあります', count: `${d.unread_announcements}件`, nav: 'announcements' });
-      if (d.needs_info_count > 0) items.push({ icon: '✏️', label: '確認・修正が必要な申請があります', count: `${d.needs_info_count}件`, nav: 'history', urgent: true });
-      if (d.waiting_approval_count > 0) items.push({ icon: '⏳', label: '承認待ちの申請があります', count: `${d.waiting_approval_count}件`, nav: 'history' });
-      if (d.qualification_expiring_count > 0) items.push({ icon: '🎓', label: '期限が近い資格があります', count: `${d.qualification_expiring_count}件`, nav: 'my-qual', urgent: true });
+      if (d.unread_announcements > 0) items.push({ icon: 'bell', label: '未読のお知らせがあります', count: `${d.unread_announcements}件`, nav: 'announcements' });
+      if (d.needs_info_count > 0) items.push({ icon: 'edit', label: '確認・修正が必要な申請があります', count: `${d.needs_info_count}件`, nav: 'history', urgent: true });
+      if (d.waiting_approval_count > 0) items.push({ icon: 'clock', label: '承認待ちの申請があります', count: `${d.waiting_approval_count}件`, nav: 'history' });
+      if (d.qualification_expiring_count > 0) items.push({ icon: 'graduation-cap', label: '期限が近い資格があります', count: `${d.qualification_expiring_count}件`, nav: 'my-qual', urgent: true });
     }
-    const anonUnread = document.getElementById('home-anon-badge').style.display !== 'none';
+    const anonBadgeEl = document.getElementById('home-anon-badge');
+    const anonUnread = anonBadgeEl && anonBadgeEl.style.display !== 'none';
     if (anonUnread) {
-      items.push({ icon: '🤫', label: '匿名相談に会社から返信があります', count: '', nav: 'anon-consult' });
+      items.push({ icon: 'message-circle', label: '匿名相談に会社から返信があります', count: '', nav: 'anon-consult' });
     }
-    document.getElementById('home-company-badge').style.display = (anonUnread || (d && d.unread_announcements > 0)) ? 'block' : 'none';
     if (items.length === 0) {
       listEl.innerHTML = '<div class="today-empty">今日確認が必要なことはありません。</div>';
       return;
     }
     listEl.innerHTML = items.map((it, i) => `
       <button type="button" class="today-item ${it.urgent ? 'urgent' : ''}" data-idx="${i}">
-        <span class="today-item-icon">${it.icon}</span>
+        <span class="today-item-icon">${icon(it.icon)}</span>
         <span class="today-item-body"><span class="today-item-label">${it.label}</span><span class="today-item-count">${it.count}</span></span>
-        <span class="today-item-arrow">›</span>
+        <span class="today-item-arrow">${icon('chevron-right')}</span>
       </button>
     `).join('');
     listEl.querySelectorAll('.today-item').forEach((el) => {
@@ -1201,15 +1349,16 @@ async function loadAnnouncements() {
 // ---------- 管理者ダッシュボード ----------
 
 const DASH_CARDS = [
-  { key: 'pending_expense_approvals', filter: 'expense', label: '経費立替 承認待ち', icon: '🧾' },
-  { key: 'pending_leave_approvals', filter: 'leave', label: '有給申請 承認待ち', icon: '🏖' },
-  { key: 'pending_meeting_approvals', filter: 'meeting', label: '会議申請 承認待ち', icon: '👥' },
-  { key: 'pending_supply_requests', filter: 'supply', label: '支給品申請 確認待ち', icon: '📦' },
-  { key: 'needs_correction_count', filter: 'needs_correction', label: '確認・修正が必要な申請', icon: '✏️' },
-  { key: 'unanswered_consultations', filter: null, label: '未対応の匿名相談', icon: '🤫', nav: 'anon-admin' },
-  { key: 'pending_qualifications', filter: null, label: '資格の確認待ち', icon: '🎓', nav: 'qual-admin' },
-  { key: 'qualification_expiring_count', filter: null, label: '期限が近い資格', icon: '⏰', nav: 'qual-admin' },
-  { key: 'category_review_needed_count', filter: null, label: '勘定科目の確認待ち', icon: '📊', nav: 'category-review' },
+  { key: 'pending_expense_approvals', filter: 'expense', label: '経費立替 承認待ち', icon: 'receipt' },
+  { key: 'pending_leave_approvals', filter: 'leave', label: '有給申請 承認待ち', icon: 'calendar' },
+  { key: 'pending_meeting_approvals', filter: 'meeting', label: '会議申請 承認待ち', icon: 'users-round' },
+  { key: 'pending_supply_requests', filter: 'supply', label: '支給品申請 確認待ち', icon: 'package' },
+  { key: 'needs_correction_count', filter: 'needs_correction', label: '確認・修正が必要な申請', icon: 'edit' },
+  { key: 'unanswered_consultations', filter: null, label: '未対応の匿名相談', icon: 'message-circle', nav: 'anon-admin' },
+  { key: 'pending_qualifications', filter: null, label: '資格の確認待ち', icon: 'graduation-cap', nav: 'qual-admin' },
+  { key: 'qualification_expiring_count', filter: null, label: '期限が近い資格', icon: 'clock', nav: 'qual-admin' },
+  { key: 'category_review_needed_count', filter: null, label: '勘定科目の確認待ち', icon: 'hash', nav: 'category-review' },
+  { key: 'pending_info_change_requests', filter: null, label: '個人情報の変更申請', icon: 'user', nav: 'info-change-admin' },
 ];
 
 async function loadAdminDashboard() {
@@ -1223,8 +1372,8 @@ async function loadAdminDashboard() {
       const count = d ? d[c.key] : 0;
       return `
         <button type="button" class="dash-card" data-filter="${c.filter || ''}" data-nav="${c.nav || ''}">
-          <span class="dash-card-count ${count === 0 ? 'zero' : 'alert'}">${count}</span>
-          <span class="dash-card-label">${c.icon} ${c.label}</span>
+          <span class="dash-card-top">${icon(c.icon)}<span class="dash-card-count ${count === 0 ? 'zero' : 'alert'}">${count}</span></span>
+          <span class="dash-card-label">${c.label}</span>
         </button>
       `;
     }).join('');
@@ -1574,9 +1723,429 @@ async function doConfirmCategory(documentId, category) {
   } catch (e) { /* 失敗時は一覧が更新されないだけ */ }
 }
 
+// ---------- 自分の情報(プロフィール) ----------
+
+// 会社管理項目(社員番号・入社日等)は鍵アイコンつきで編集不可を明示。住所・電話番号等は
+// 「変更申請」ボタンを付け、タップすると本人が変更申請を出せる(即時反映はしない)。
+function fieldRow(label, value, editField) {
+  const displayValue = value ? String(value) : '未登録';
+  const editBtn = editField ? `<button type="button" class="field-edit-btn" data-edit-field="${editField}" data-current="${(value || '').replace(/"/g, '&quot;')}">変更申請</button>` : '';
+  return `
+    <div class="field-row">
+      <span class="field-label">${label}</span>
+      <span style="display:flex; align-items:center; gap:8px;">
+        <span class="field-value ${value ? '' : 'empty'}">${displayValue}</span>
+        ${editBtn}
+      </span>
+    </div>
+  `;
+}
+
+function lockedFieldRow(label, value) {
+  const displayValue = value ? String(value) : '未登録';
+  return `
+    <div class="field-row">
+      <span class="field-label">${label}<span class="field-locked">${icon('lock')}管理者のみ変更可</span></span>
+      <span class="field-value ${value ? '' : 'empty'}">${displayValue}</span>
+    </div>
+  `;
+}
+
+const CHANGE_FIELD_LABEL = {
+  phone: '電話番号', postal_code: '郵便番号', address: '住所', email: 'メールアドレス',
+  emergency_contact_name: '緊急連絡先(氏名)', emergency_contact_relation: '緊急連絡先(続柄)', emergency_contact_phone: '緊急連絡先(電話番号)',
+};
+
+async function loadMyInfo() {
+  const session = getSession();
+  document.getElementById('myinfo-avatar').textContent = (session.employeeName || '?').charAt(0);
+  document.getElementById('myinfo-name').textContent = session.employeeName;
+  document.getElementById('myinfo-code').textContent = `社員番号: ${session.employeeCode}`;
+  loadHomeLeaveStats('myinfo-leave-balance', 'myinfo-leave-used');
+
+  try {
+    const rows = await rpc('get_my_profile', { p_employee_code: session.employeeCode });
+    const p = rows && rows[0];
+    if (!p) return;
+    document.getElementById('myinfo-basic-fields').innerHTML =
+      lockedFieldRow('社員番号', p.employee_code) +
+      lockedFieldRow('氏名', p.employee_name) +
+      lockedFieldRow('フリガナ', p.furigana) +
+      lockedFieldRow('生年月日', p.birth_date ? new Date(p.birth_date).toLocaleDateString('ja-JP') : null) +
+      lockedFieldRow('入社日', p.hire_date ? new Date(p.hire_date).toLocaleDateString('ja-JP') : null) +
+      lockedFieldRow('所属/役割', p.department);
+    document.getElementById('myinfo-contact-fields').innerHTML =
+      fieldRow('メールアドレス', p.email, 'email') +
+      fieldRow('電話番号', p.phone, 'phone') +
+      fieldRow('郵便番号', p.postal_code, 'postal_code') +
+      fieldRow('住所', p.address, 'address');
+    document.getElementById('myinfo-emergency-fields').innerHTML =
+      fieldRow('氏名', p.emergency_contact_name, 'emergency_contact_name') +
+      fieldRow('続柄', p.emergency_contact_relation, 'emergency_contact_relation') +
+      fieldRow('電話番号', p.emergency_contact_phone, 'emergency_contact_phone');
+
+    document.querySelectorAll('.field-edit-btn').forEach((btn) => {
+      btn.addEventListener('click', () => openProfileEdit(btn.dataset.editField, btn.dataset.current));
+    });
+  } catch (e) { /* プロフィールが読めなくても他の情報は表示され続ける */ }
+}
+
+function openProfileEdit(field, currentValue) {
+  document.getElementById('profile-edit-field').value = field;
+  document.getElementById('profile-edit-title').textContent = `${CHANGE_FIELD_LABEL[field] || field}の変更申請`;
+  document.getElementById('profile-edit-label').textContent = `新しい${CHANGE_FIELD_LABEL[field] || ''}`;
+  const input = document.getElementById('profile-edit-value');
+  input.value = currentValue || '';
+  hideError('profile-edit-error');
+  showScreen('profile-edit');
+}
+
+async function doSubmitProfileEdit() {
+  const session = getSession();
+  const field = document.getElementById('profile-edit-field').value;
+  const value = document.getElementById('profile-edit-value').value.trim();
+  hideError('profile-edit-error');
+  if (!value) { showError('profile-edit-error', '内容を入力してください。'); return; }
+
+  const btn = document.getElementById('profile-edit-submit');
+  btn.disabled = true;
+  try {
+    await rpc('submit_info_change_request', { p_employee_code: session.employeeCode, p_field_name: field, p_new_value: value });
+    document.getElementById('done-message').textContent = '変更を申請しました。管理者が確認したうえで反映されます。';
+    showScreen('done');
+  } catch (e) {
+    showError('profile-edit-error', e.message || '送信に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+const CHANGE_STATUS_LABEL = { pending: '確認待ち', approved: '承認済み', rejected: '却下' };
+
+async function loadMyChangeRequests() {
+  const session = getSession();
+  const listEl = document.getElementById('my-change-requests-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_change_requests', { p_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">変更申請はまだありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="change-request-item">
+        <div class="row1"><span>${CHANGE_FIELD_LABEL[r.field_name] || r.field_name}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${CHANGE_STATUS_LABEL[r.status]}</span></div>
+        <div class="row2">${r.old_value || '(未登録)'} → ${r.new_value}</div>
+        <div class="row2">${new Date(r.created_at).toLocaleString('ja-JP')}${r.review_note ? `・${r.review_note}` : ''}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+// ---------- 個人情報の変更申請確認(管理者) ----------
+
+async function loadInfoChangeAdmin() {
+  const session = getSession();
+  const status = document.getElementById('info-change-filter').value || null;
+  const listEl = document.getElementById('info-change-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_info_change_requests', { p_admin_employee_code: session.employeeCode, p_status: status });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する変更申請はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="change-request-item" data-id="${r.id}">
+        <div class="row1"><span>${r.employee_name}・${CHANGE_FIELD_LABEL[r.field_name] || r.field_name}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${CHANGE_STATUS_LABEL[r.status]}</span></div>
+        <div class="row2">${r.old_value || '(未登録)'} → ${r.new_value}</div>
+        <div class="row2">${new Date(r.created_at).toLocaleString('ja-JP')}</div>
+        ${r.status === 'pending' ? `
+          <div class="qual-verify-btns">
+            <button type="button" class="approve-btn">承認する</button>
+            <button type="button" class="reject-btn">却下する</button>
+          </div>
+        ` : ''}
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.approve-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => doDecideInfoChange(e.target.closest('.change-request-item').dataset.id, 'approved'));
+    });
+    listEl.querySelectorAll('.reject-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => doDecideInfoChange(e.target.closest('.change-request-item').dataset.id, 'rejected'));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doDecideInfoChange(id, action) {
+  const session = getSession();
+  try {
+    await rpc('admin_decide_info_change_request', { p_admin_employee_code: session.employeeCode, p_request_id: Number(id), p_action: action, p_note: null });
+    await loadInfoChangeAdmin();
+  } catch (e) { /* 失敗時は一覧が更新されないだけ */ }
+}
+
+// ---------- 社員名簿・社員管理(管理者) ----------
+
+let employeeSearchTimer = null;
+let employeeStatusFilter = 'active';
+let currentEmployeeDetailCode = null;
+let currentEmployeeDetailTab = 'basic';
+
+async function loadEmployeeDirectory() {
+  const session = getSession();
+  const search = document.getElementById('employee-search-input').value.trim();
+  const listEl = document.getElementById('employee-directory-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_employees', { p_admin_employee_code: session.employeeCode, p_search: search || null, p_status_filter: employeeStatusFilter || null, p_sort: 'code' });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する社員はいません。</div>'; return; }
+    listEl.innerHTML = rows.map((e) => `
+      <div class="employee-row" data-code="${e.employee_code}">
+        <div class="employee-avatar">${(e.employee_name || '?').charAt(0)}</div>
+        <div class="employee-row-body">
+          <div class="employee-row-name">${e.employee_name}<span style="color:var(--text-faint); font-weight:500; font-size:11.5px;">${e.employee_code}</span></div>
+          <div class="employee-row-meta">${e.department || ''}${e.status !== 'active' ? '・在籍外' : ''}</div>
+          <div class="employee-row-flags">
+            ${e.qualification_warning_count > 0 ? `<span class="mini-tag warn">資格期限 ${e.qualification_warning_count}件</span>` : ''}
+            ${e.pending_request_count > 0 ? `<span class="mini-tag info">未処理申請 ${e.pending_request_count}件</span>` : ''}
+          </div>
+        </div>
+        <span style="color:var(--text-faint);">${icon('chevron-right')}</span>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.employee-row').forEach((el) => {
+      el.addEventListener('click', () => openEmployeeDetail(el.dataset.code));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function openEmployeeDetail(code) {
+  currentEmployeeDetailCode = code;
+  currentEmployeeDetailTab = 'basic';
+  document.querySelectorAll('#employee-detail-tabs .tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === 'basic'));
+  document.querySelectorAll('#screen-employee-detail .tab-panel').forEach((p) => p.classList.toggle('active', p.id === 'employee-detail-panel-basic'));
+  showScreen('employee-detail');
+  await loadEmployeeDetailBasic();
+}
+
+async function switchEmployeeDetailTab(tab) {
+  currentEmployeeDetailTab = tab;
+  document.querySelectorAll('#employee-detail-tabs .tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('#screen-employee-detail .tab-panel').forEach((p) => p.classList.toggle('active', p.id === `employee-detail-panel-${tab}`));
+  if (tab === 'basic') await loadEmployeeDetailBasic();
+  else if (tab === 'leave') await loadEmployeeDetailLeave();
+  else if (tab === 'qual') await loadEmployeeDetailQual();
+  else if (tab === 'supply') await loadEmployeeDetailSupply();
+  else if (tab === 'requests') await loadEmployeeDetailRequests();
+}
+
+async function loadEmployeeDetailBasic() {
+  const session = getSession();
+  const code = currentEmployeeDetailCode;
+  try {
+    const rows = await rpc('admin_get_employee_profile', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
+    const p = rows && rows[0];
+    if (!p) return;
+    document.getElementById('employee-detail-avatar').textContent = (p.employee_name || '?').charAt(0);
+    document.getElementById('employee-detail-name').textContent = p.employee_name;
+    document.getElementById('employee-detail-code').textContent = `社員番号: ${p.employee_code}・${p.status === 'active' ? '在籍中' : '在籍外'}`;
+    document.getElementById('employee-detail-basic-fields').innerHTML =
+      fieldRow('フリガナ', p.furigana) + fieldRow('生年月日', p.birth_date ? new Date(p.birth_date).toLocaleDateString('ja-JP') : null) +
+      fieldRow('入社日', p.hire_date ? new Date(p.hire_date).toLocaleDateString('ja-JP') : null) + fieldRow('所属/役割', p.department) +
+      fieldRow('権限', p.request_role === 'executive' ? '管理者' : '一般社員') +
+      fieldRow('メールアドレス', p.email) + fieldRow('電話番号', p.phone) + fieldRow('郵便番号', p.postal_code) + fieldRow('住所', p.address) +
+      fieldRow('緊急連絡先(氏名)', p.emergency_contact_name) + fieldRow('緊急連絡先(続柄)', p.emergency_contact_relation) + fieldRow('緊急連絡先(電話番号)', p.emergency_contact_phone);
+  } catch (e) { /* 無視 */ }
+}
+
+async function loadEmployeeDetailLeave() {
+  const session = getSession();
+  const code = currentEmployeeDetailCode;
+  const listEl = document.getElementById('employee-detail-leave-history');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_employee_admin_summary', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
+    const s = rows && rows[0];
+    document.getElementById('employee-detail-leave-balance').textContent = s && s.leave_balance != null ? `${s.leave_balance}日` : '未登録';
+    document.getElementById('employee-detail-leave-used').textContent = s ? `${s.leave_used_this_year}日` : '-';
+    listEl.innerHTML = '<div class="hint">支給品履歴・詳しい取得履歴は各タブ/画面をご確認ください。</div>';
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function loadEmployeeDetailQual() {
+  const session = getSession();
+  const listEl = document.getElementById('employee-detail-qual-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const nameRows = await rpc('admin_get_employee_profile', { p_admin_employee_code: session.employeeCode, p_target_employee_code: currentEmployeeDetailCode });
+    const targetName = nameRows && nameRows[0] && nameRows[0].employee_name;
+    const rows = await rpc('admin_list_qualifications', { p_admin_employee_code: session.employeeCode, p_filter: null });
+    const mine = (rows || []).filter((q) => q.employee_name === targetName);
+    if (mine.length === 0) { listEl.innerHTML = '<div class="hint">登録された資格はありません。</div>'; return; }
+    listEl.innerHTML = mine.map((q) => `
+      <div class="qual-item">
+        <div class="row1"><span>${q.qualification_name}</span><span class="status-badge ${q.status === 'active' ? 'done' : (q.status === 'rejected' ? 'rejected' : '')}">${QUAL_STATUS_LABEL[q.status] || q.status}</span></div>
+        <div class="row2">${q.expiry_date ? `有効期限: ${new Date(q.expiry_date).toLocaleDateString('ja-JP')}` : ''}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function loadEmployeeDetailSupply() {
+  const session = getSession();
+  const listEl = document.getElementById('employee-detail-supply-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_supply_admin_list', { p_admin_employee_code: session.employeeCode, p_employee_code: currentEmployeeDetailCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">支給履歴はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="supply-item">
+        <div class="row1"><span>${r.item_name}</span><span>${r.quantity}個</span></div>
+        <div class="row2">支給日: ${r.issued_date}${r.size ? `・サイズ${r.size}` : ''}${r.condition === 'used' ? '・中古' : '・新品'}</div>
+        <div class="elapsed">経過${formatElapsed(r.elapsed_days)}${r.needs_return ? (r.returned_date ? `・返却済(${r.returned_date})` : '・未返却') : ''}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function loadEmployeeDetailRequests() {
+  const session = getSession();
+  const listEl = document.getElementById('employee-detail-requests-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_get_employee_requests', { p_admin_employee_code: session.employeeCode, p_target_employee_code: currentEmployeeDetailCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">申請履歴はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => {
+      const amountStr = r.amount != null ? `${Number(r.amount).toLocaleString()}円` : '';
+      const statusClass = ['approved', 'paid'].includes(r.status) ? 'done' : (['rejected', 'cancelled'].includes(r.status) ? 'rejected' : '');
+      return `
+        <div class="history-item">
+          <div class="row1"><span>${REQUEST_TYPE_LABEL[r.request_type] || r.request_type}</span><span>${amountStr}</span></div>
+          <div class="row2">${new Date(r.requested_at).toLocaleDateString('ja-JP')}　${r.summary || ''}</div>
+          <span class="status-badge ${statusClass}">${STATUS_LABEL[r.status] || r.status}</span>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+function openEmployeeEditBasic() {
+  document.getElementById('employee-edit-furigana').value = '';
+  document.getElementById('employee-edit-birth').value = '';
+  document.getElementById('employee-edit-department').value = '';
+  hideError('employee-edit-error');
+  showScreen('employee-edit-basic');
+}
+
+async function doSaveEmployeeBasic() {
+  const session = getSession();
+  const furigana = document.getElementById('employee-edit-furigana').value.trim();
+  const birth = document.getElementById('employee-edit-birth').value;
+  const department = document.getElementById('employee-edit-department').value.trim();
+  hideError('employee-edit-error');
+  const btn = document.getElementById('employee-edit-submit');
+  btn.disabled = true;
+  try {
+    await rpc('admin_update_employee_basic', {
+      p_admin_employee_code: session.employeeCode, p_target_employee_code: currentEmployeeDetailCode,
+      p_furigana: furigana || null, p_birth_date: birth || null, p_department: department || null,
+    });
+    showScreen('employee-detail');
+    await loadEmployeeDetailBasic();
+  } catch (e) {
+    showError('employee-edit-error', e.message || '保存に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- 支給品マスター管理(管理者) ----------
+
+async function loadSupplyMasterAdmin() {
+  const session = getSession();
+  const listEl = document.getElementById('supply-master-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  resetSupplyMasterForm();
+  try {
+    const rows = await rpc('admin_list_supply_master', { p_admin_employee_code: session.employeeCode });
+    listEl.innerHTML = rows.map((m) => `
+      <div class="supply-item" data-id="${m.id}" style="${m.active ? '' : 'opacity:.5;'}">
+        <div class="row1"><span>${m.item_name}</span><span>${m.active ? '有効' : '停止中'}</span></div>
+        <div class="row2">${m.requires_size ? 'サイズ入力あり' : 'サイズ入力なし'}・表示順${m.sort_order}</div>
+        <div class="qual-verify-btns">
+          <button type="button" class="edit-master-btn" data-name="${m.item_name}" data-requires-size="${m.requires_size}" data-sort="${m.sort_order}">編集</button>
+          <button type="button" class="reject-btn toggle-active-btn" data-active="${m.active}">${m.active ? '停止する' : '再開する'}</button>
+        </div>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.edit-master-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const item = btn.closest('.supply-item');
+        document.getElementById('supply-master-edit-id').value = item.dataset.id;
+        document.getElementById('supply-master-name').value = btn.dataset.name;
+        document.getElementById('supply-master-requires-size').checked = btn.dataset.requiresSize === 'true';
+        document.getElementById('supply-master-sort').value = btn.dataset.sort;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+    listEl.querySelectorAll('.toggle-active-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const item = btn.closest('.supply-item');
+        await rpc('admin_set_supply_master_active', { p_admin_employee_code: session.employeeCode, p_id: Number(item.dataset.id), p_active: btn.dataset.active !== 'true' });
+        loadSupplyMasterAdmin();
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+function resetSupplyMasterForm() {
+  document.getElementById('supply-master-edit-id').value = '';
+  document.getElementById('supply-master-name').value = '';
+  document.getElementById('supply-master-requires-size').checked = false;
+  document.getElementById('supply-master-sort').value = '100';
+  hideError('supply-master-error');
+}
+
+async function doSaveSupplyMasterItem() {
+  const session = getSession();
+  const id = document.getElementById('supply-master-edit-id').value;
+  const name = document.getElementById('supply-master-name').value.trim();
+  const requiresSize = document.getElementById('supply-master-requires-size').checked;
+  const sortOrder = Number(document.getElementById('supply-master-sort').value || 100);
+  hideError('supply-master-error');
+  if (!name) { showError('supply-master-error', '品目名を入力してください。'); return; }
+
+  const btn = document.getElementById('supply-master-submit');
+  btn.disabled = true;
+  try {
+    await rpc('admin_upsert_supply_master_item', {
+      p_admin_employee_code: session.employeeCode, p_id: id ? Number(id) : null, p_item_name: name,
+      p_requires_size: requiresSize, p_sort_order: sortOrder,
+    });
+    await loadSupplyMasterAdmin();
+  } catch (e) {
+    showError('supply-master-error', e.message || '保存に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---------- 初期化 ----------
 
 function init() {
+  hydrateIcons(document);
+
   document.getElementById('login-btn').addEventListener('click', doSubmitEmployeeCode);
   document.getElementById('login-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSubmitEmployeeCode(); });
 
@@ -1631,6 +2200,30 @@ function init() {
   document.getElementById('qual-pdf-input').addEventListener('change', (e) => handleQualFile(e.target.files[0], 'pdf'));
   document.getElementById('qual-admin-filter').addEventListener('change', loadQualAdminList);
 
+  document.getElementById('profile-edit-submit').addEventListener('click', doSubmitProfileEdit);
+  document.getElementById('info-change-filter').addEventListener('change', loadInfoChangeAdmin);
+  document.getElementById('supply-master-submit').addEventListener('click', doSaveSupplyMasterItem);
+  document.getElementById('employee-detail-edit-basic-btn').addEventListener('click', openEmployeeEditBasic);
+  document.getElementById('employee-edit-submit').addEventListener('click', doSaveEmployeeBasic);
+  document.getElementById('admin-issue-master').addEventListener('change', toggleAdminIssueOtherWrap);
+
+  document.querySelectorAll('#employee-detail-tabs .tab-btn').forEach((btn) => {
+    btn.addEventListener('click', () => switchEmployeeDetailTab(btn.dataset.tab));
+  });
+
+  document.querySelectorAll('#employee-status-filter .filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#employee-status-filter .filter-chip').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      employeeStatusFilter = btn.dataset.status;
+      loadEmployeeDirectory();
+    });
+  });
+  document.getElementById('employee-search-input').addEventListener('input', () => {
+    clearTimeout(employeeSearchTimer);
+    employeeSearchTimer = setTimeout(loadEmployeeDirectory, 300);
+  });
+
   document.querySelectorAll('[data-nav]').forEach((el) => {
     el.addEventListener('click', () => {
       const target = el.getAttribute('data-nav');
@@ -1645,9 +2238,10 @@ function init() {
   SCREEN_ENTER_HOOKS.leave = () => { updateLeaveDaysDisplay(); loadLeaveBalance(); };
   SCREEN_ENTER_HOOKS['leave-history'] = loadLeaveHistory;
   SCREEN_ENTER_HOOKS.history = loadHistory;
-  SCREEN_ENTER_HOOKS['supply-request'] = () => { hideError('supply-req-error'); };
+  SCREEN_ENTER_HOOKS['supply-request'] = () => { hideError('supply-req-error'); loadSupplySelectGrid(); };
   SCREEN_ENTER_HOOKS['my-supply'] = loadMySupply;
-  SCREEN_ENTER_HOOKS.myinfo = () => loadHomeLeaveStats('myinfo-leave-balance', 'myinfo-leave-used');
+  SCREEN_ENTER_HOOKS.myinfo = loadMyInfo;
+  SCREEN_ENTER_HOOKS['my-change-requests'] = loadMyChangeRequests;
   SCREEN_ENTER_HOOKS.admin = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadAdminEmployeeSelects();
@@ -1675,7 +2269,6 @@ function init() {
     loadAnnounceAdminList();
   };
   SCREEN_ENTER_HOOKS['menu-apply'] = () => loadHomeLeaveStats('home-leave-balance', 'home-leave-used');
-  SCREEN_ENTER_HOOKS['menu-admin'] = () => { if (!isAdmin()) enterMenu(); };
   SCREEN_ENTER_HOOKS['qual-submit'] = resetQualForm;
   SCREEN_ENTER_HOOKS['my-qual'] = loadMyQualifications;
   SCREEN_ENTER_HOOKS['qual-admin'] = () => {
@@ -1685,6 +2278,21 @@ function init() {
   SCREEN_ENTER_HOOKS['category-review'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadCategoryReview();
+  };
+  SCREEN_ENTER_HOOKS['employee-directory'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    document.getElementById('employee-search-input').value = '';
+    employeeStatusFilter = 'active';
+    document.querySelectorAll('#employee-status-filter .filter-chip').forEach((b) => b.classList.toggle('active', b.dataset.status === 'active'));
+    loadEmployeeDirectory();
+  };
+  SCREEN_ENTER_HOOKS['info-change-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadInfoChangeAdmin();
+  };
+  SCREEN_ENTER_HOOKS['supply-master-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadSupplyMasterAdmin();
   };
 
   const session = getSession();

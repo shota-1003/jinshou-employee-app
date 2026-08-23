@@ -720,3 +720,78 @@ button.link {
 /* ===== モーダル風の簡易オーバーレイ(必要に応じて) ===== */
 .modal-overlay { position: fixed; inset: 0; background: rgba(23,26,36,.45); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
 .modal-sheet { width: 100%; max-width: 480px; background: var(--card-bg); border-radius: 22px 22px 0 0; padding: 22px 18px calc(22px + env(safe-area-inset-bottom, 0)); max-height: 82vh; overflow-y: auto; }
+
+/* ===================================================================
+   タブレット/PC向けレイアウト(768px以上): v0が作成したPC版デザイン
+   (左サイドバー+複数列ダッシュボード)を、既存のDOM構造・JS・データ取得
+   ロジックは一切変更せず、見た目(CSS)だけで再現する。768px未満(スマホ)は
+   このブロックの影響を受けず、これまでと完全に同じ見た目・操作性のまま。
+   bottom-nav(スマホの下部タブ)をそのまま左サイドバーへ転用しており、
+   ナビゲーションの新規実装・イベント重複は発生しない。
+   =================================================================== */
+@media (min-width: 768px) {
+  body { display: block; overflow-x: hidden; }
+
+  .bottom-nav {
+    position: fixed; top: 64px; left: 0; right: auto; bottom: 0;
+    width: 236px; max-width: none; margin: 0;
+    flex-direction: column; align-items: stretch; justify-content: flex-start;
+    gap: 3px; padding: 18px 10px; border-top: none; border-right: 1px solid var(--border);
+    overflow-y: auto;
+  }
+  .bottom-nav-item {
+    flex: none; flex-direction: row; justify-content: flex-start; align-items: center;
+    gap: 12px; padding: 11px 14px; border-radius: var(--radius-md); font-size: 13.5px;
+    box-shadow: none;
+  }
+  .bottom-nav-item:hover { background: oklch(1 0 0 / 5%); }
+  .bottom-nav-item .icon { width: 20px; height: 20px; padding: 0; border-radius: 10px; }
+  .bottom-nav-item.active { background: linear-gradient(90deg, oklch(0.66 0.16 264 / 22%), transparent); }
+
+  main { width: auto; margin-left: 236px; max-width: 1040px; padding: 28px 32px 48px; }
+
+  /* 2列固定だったカードグリッドを画面幅に応じた可変列数へ。管理メニューの
+     縦一列(.menu-list)も横並びにして情報密度を上げる。 */
+  .home-card-grid, .main-menu-grid, .dash-card-grid, .supply-select-grid, .menu-list {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px;
+  }
+  .menu-list { align-items: stretch; }
+  /* グリッド化した子要素はmin-width:autoのままだと中身のテキスト分だけ
+     トラック幅をはみ出して横スクロールが出てしまうため、明示的に許可する */
+  .home-card-grid > *, .main-menu-grid > *, .dash-card-grid > *, .supply-select-grid > *, .menu-list > * {
+    min-width: 0;
+  }
+
+  /* ログイン・単票フォーム系のカードは間延びしないよう最大幅を持たせる */
+  .card, .login-wrap { max-width: 640px; }
+  .login-wrap { margin: 0 auto; padding-top: 6vh; }
+  input[type="text"], input[type="number"], input[type="date"], input[type="password"], input[type="tel"], input[type="email"], select {
+    max-width: 480px;
+  }
+  textarea { max-width: 640px; }
+
+  /* 申請一覧・日報一覧・社員一覧・検索結果などの縦一列カードリストは、
+     2列のタイル状に並べて一覧性を上げる(生成元のJS/データは変更なし)。
+     フォーム入力中の一覧(現場入力・経費明細)は対象外。 */
+  [id$="-list"], [id$="-results"] { column-count: 2; column-gap: 16px; }
+  [id$="-list"] > *, [id$="-results"] > * { break-inside: avoid; }
+  #today-list, #daily-report-entry-list, #expense-item-list,
+  .home-card-grid, .main-menu-grid, .dash-card-grid, .supply-select-grid, .menu-list {
+    column-count: initial;
+  }
+
+  .modal-overlay { align-items: center; }
+  .modal-sheet { max-width: 480px; border-radius: var(--radius-lg); max-height: 86vh; }
+}
+
+@media (min-width: 1280px) {
+  main { max-width: 1280px; }
+  [id$="-list"], [id$="-results"] { column-count: 3; }
+  #today-list, #daily-report-entry-list, #expense-item-list,
+  .home-card-grid, .main-menu-grid, .dash-card-grid, .supply-select-grid, .menu-list {
+    column-count: initial;
+  }
+  .home-card-grid, .main-menu-grid, .dash-card-grid, .supply-select-grid, .menu-list {
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  }
+}

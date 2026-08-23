@@ -81,12 +81,13 @@ const SCREEN_ENTER_HOOKS = {};
 const BOTTOM_NAV_MAP = {
   menu: 'menu',
   'menu-apply': 'menu-apply', leave: 'menu-apply', 'expense-advance': 'menu-apply', 'expense-company': 'menu-apply',
-  meeting: 'menu-apply', 'supply-request': 'menu-apply', 'qual-submit': 'menu-apply',
+  meeting: 'menu-apply', 'supply-request': 'menu-apply', 'qual-submit': 'menu-apply', 'health-submit': 'menu-apply',
+  'entertainment-submit': 'menu-apply',
   announcements: 'announcements',
   history: 'history',
-  myinfo: 'myinfo', 'leave-history': 'myinfo', 'my-supply': 'myinfo', 'my-qual': 'myinfo',
+  myinfo: 'myinfo', 'leave-history': 'myinfo', 'my-supply': 'myinfo', 'my-qual': 'myinfo', 'my-health': 'myinfo',
   'my-change-requests': 'myinfo', 'profile-edit': 'myinfo', 'anon-consult': 'myinfo', 'anon-submit': 'myinfo',
-  'anon-done': 'myinfo', 'anon-thread': 'myinfo',
+  'anon-done': 'myinfo', 'anon-thread': 'myinfo', 'my-entertainment': 'myinfo',
 };
 
 // 絵文字を廃止し線画SVG(icons.js)へ統一するための一括反映。静的HTML内の
@@ -439,11 +440,115 @@ let currentExpenseCategory = 'employee_advance';
 let expenseItemSeq = 0;
 const expenseItemState = new Map(); // itemId -> { driveFileId, driveFileUrl, uploading, siteId }
 
+// 取引先マスター(business_partners)から候補を読み込み、datalistで検索型選択を実現する。
+// 入力値がマスターの名称と完全一致すればbusiness_partner_id、一致しなければ新規取引先名として
+// 送信する(vendorNameToIdは送信時の解決に使う)。
+let vendorNameToId = new Map();
 async function populateVendorList() {
   try {
-    const rows = await rpc('search_vendors', { p_query: null });
-    document.getElementById('vendor-list').innerHTML = rows.map((v) => `<option value="${v.company_name}">`).join('');
+    const rows = await rpc('search_business_partners', { p_query: null });
+    vendorNameToId = new Map(rows.map((v) => [v.partner_name, v.id]));
+    document.getElementById('vendor-list').innerHTML = rows.map((v) => `<option value="${v.partner_name}">`).join('');
   } catch (e) { /* 取引先候補が引けなくても自由入力は継続できる */ }
+}
+
+// 打ち合わせ・接待交際費の「自社参加者」複数選択(検索→タップで選択、チップで表示)。
+function createParticipantSelect(container) {
+  const selected = new Map();
+  container.innerHTML = `
+    <input type="text" class="participant-search-input" placeholder="氏名・社員番号で検索...">
+    <div class="participant-results"></div>
+    <div class="participant-chips"></div>
+  `;
+  const input = container.querySelector('.participant-search-input');
+  const results = container.querySelector('.participant-results');
+  const chips = container.querySelector('.participant-chips');
+  let allEmployees = [];
+  let onChange = null;
+
+  (async () => {
+    const session = getSession();
+    try { allEmployees = await rpc('list_employees_for_participant_select', { p_employee_code: session.employeeCode }); } catch (e) { /* 無視 */ }
+  })();
+
+  function renderChips() {
+    chips.innerHTML = Array.from(selected.entries()).map(([code, name]) => `
+      <span class="participant-chip" data-code="${code}">${name}<button type="button">${icon('x-circle')}</button></span>
+    `).join('');
+    chips.querySelectorAll('.participant-chip button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        selected.delete(btn.closest('.participant-chip').dataset.code);
+        renderChips();
+        if (onChange) onChange();
+      });
+    });
+  }
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    const matches = allEmployees.filter((e) => !selected.has(e.employee_code) && (q === '' || e.employee_name.includes(q) || e.employee_code.includes(q))).slice(0, 8);
+    results.innerHTML = matches.map((e, i) => `<button type="button" class="participant-result-item" data-idx="${i}">${e.employee_name}(${e.employee_code})</button>`).join('');
+    results.querySelectorAll('.participant-result-item').forEach((el, i) => {
+      el.addEventListener('click', () => {
+        selected.set(matches[i].employee_code, matches[i].employee_name);
+        input.value = '';
+        results.innerHTML = '';
+        renderChips();
+        if (onChange) onChange();
+      });
+    });
+  });
+
+  return {
+    setOnChange(cb) { onChange = cb; },
+    getSelectedCodes() { return Array.from(selected.keys()); },
+    getCount() { return selected.size; },
+  };
+}
+
+const participantSelects = new Map(); // itemId -> インスタンス(経費明細ごとの自社参加者選択)
+
+// 領収書の日付・店舗・金額から、承認済みの接待事前申請を検索して紐付け候補を出す。
+async function searchAndShowPreapprovals(card, itemId) {
+  const area = card.querySelector('.preapproval-search-area');
+  const session = getSession();
+  const date = card.querySelector('.item-date').value || null;
+  const store = card.querySelector('.item-store').value.trim() || null;
+  const amount = card.querySelector('.item-amount').value || null;
+  const state = expenseItemState.get(itemId);
+  area.innerHTML = '<div class="hint">承認済みの事前申請を確認しています...</div>';
+  let candidates = [];
+  try {
+    candidates = await rpc('search_my_entertainment_preapprovals', {
+      p_employee_code: session.employeeCode, p_near_date: date, p_near_store: store, p_near_amount: amount ? Number(amount) : null,
+    });
+  } catch (e) { /* 検索できなくても手動での判断に委ねる */ }
+
+  if (candidates.length > 0) {
+    area.innerHTML = '<div class="item-suggest-label">この接待の事前申請を選んでタップしてください</div>' + candidates.map((c, i) => `
+      <div class="preapproval-candidate" data-idx="${i}">
+        <div class="row1"><span>${c.planned_store || '(店舗未記入)'}</span><span>${c.planned_amount != null ? Number(c.planned_amount).toLocaleString() + '円' : ''}</span></div>
+        <div class="row2">${new Date(c.planned_datetime).toLocaleString('ja-JP')}・${c.partner_name_snapshot || ''}</div>
+      </div>
+    `).join('');
+    area.querySelectorAll('.preapproval-candidate').forEach((el, i) => {
+      el.addEventListener('click', () => {
+        area.querySelectorAll('.preapproval-candidate').forEach((x) => x.classList.remove('linked'));
+        el.classList.add('linked');
+        state.entertainmentPreapprovalId = candidates[i].id;
+      });
+    });
+  } else {
+    state.entertainmentPreapprovalId = null;
+    const admin = session.requestRole === 'executive';
+    area.innerHTML = `<div class="preapproval-warning">${icon('alert-triangle')}承認済みの事前申請が見つかりません。接待交際費は事前申請が必要です。「接待・会食」から先に事前申請してください。</div>`
+      + (admin ? `
+        <div class="preapproval-override-box">
+          <label>例外理由(管理者のみ入力可)<span class="required-mark">(必須)</span></label>
+          <textarea class="item-override-reason" placeholder="例: 先方都合で急遽実施、事前申請の時間が取れなかった"></textarea>
+        </div>
+      ` : '');
+  }
 }
 
 function enterExpenseScreen(category) {
@@ -468,8 +573,9 @@ async function populateSiteSelect(selectEl, query) {
     let html = '<option value="">選択してください</option>';
     if (recent.length > 0) html += `<optgroup label="最近使った現場">${recent.map(opt).join('')}</optgroup>`;
     html += (recent.length > 0 ? '<optgroup label="現場一覧">' : '') + others.map(opt).join('') + (recent.length > 0 ? '</optgroup>' : '');
+    html += '<option value="__new__">該当する現場がない/新しい現場を入力</option>';
     selectEl.innerHTML = html;
-    if (current && rows.some((s) => String(s.id) === current)) selectEl.value = current;
+    if (current && (rows.some((s) => String(s.id) === current) || current === '__new__')) selectEl.value = current;
   } catch (e) { /* 現場マスターが引けない場合は空のまま(自由入力は不可、要確認扱い) */ }
 }
 
@@ -554,12 +660,37 @@ function addExpenseItem(initialFile) {
 
   const siteSelect = clone.querySelector('.item-site-select');
   const siteSearch = clone.querySelector('.item-site-search');
+  const newSiteWrap = clone.querySelector('.item-new-site-wrap');
   populateSiteSelect(siteSelect, '');
   siteSearch.addEventListener('input', () => populateSiteSelect(siteSelect, siteSearch.value.trim()));
+  siteSelect.addEventListener('change', () => {
+    newSiteWrap.style.display = siteSelect.value === '__new__' ? 'block' : 'none';
+  });
+
+  const purposeCategorySelect = clone.querySelector('.item-purpose-category');
+  const meetingBlock = clone.querySelector('.item-meeting-block');
+  const entertainmentBlock = clone.querySelector('.item-entertainment-block');
+  purposeCategorySelect.addEventListener('change', () => {
+    const cat = purposeCategorySelect.value;
+    const needsMeeting = cat === '打ち合わせ' || cat === '接待交際費';
+    meetingBlock.style.display = needsMeeting ? 'block' : 'none';
+    entertainmentBlock.style.display = cat === '接待交際費' ? 'block' : 'none';
+    if (needsMeeting && !participantSelects.has(itemId)) {
+      const cardEl = document.querySelector(`[data-item-id="${itemId}"]`);
+      const inst = createParticipantSelect(cardEl.querySelector('.participant-select'));
+      inst.setOnChange(() => { cardEl.querySelector('.item-our-count').textContent = inst.getCount(); });
+      participantSelects.set(itemId, inst);
+    }
+    if (cat === '接待交際費') {
+      const cardEl = document.querySelector(`[data-item-id="${itemId}"]`);
+      searchAndShowPreapprovals(cardEl, itemId);
+    }
+  });
 
   clone.querySelector('.remove-item-btn').addEventListener('click', () => {
     document.querySelector(`[data-item-id="${itemId}"]`).remove();
     expenseItemState.delete(itemId);
+    participantSelects.delete(itemId);
     updateExpenseTotal();
   });
 
@@ -641,6 +772,7 @@ function updateExpenseTotal() {
 function resetExpenseForm() {
   document.getElementById('expense-item-list').innerHTML = '';
   expenseItemState.clear();
+  participantSelects.clear();
   expenseItemSeq = 0;
   addExpenseItem();
 }
@@ -663,24 +795,75 @@ async function doSubmitExpense() {
     const store = card.querySelector('.item-store').value.trim();
     const amount = Number(card.querySelector('.item-amount').value || 0);
     const tax = card.querySelector('.item-tax').value;
-    const siteSelect = card.querySelector('.item-site-select');
-    const siteId = siteSelect.value || null;
-    const siteName = siteId ? siteSelect.options[siteSelect.selectedIndex].dataset.name : null;
-    const vendor = card.querySelector('.item-vendor').value.trim();
-    const purpose = card.querySelector('.item-purpose').value.trim();
     const payment = card.querySelector('.item-payment').value;
     const note = card.querySelector('.item-note').value.trim();
     const label = card.querySelector('.item-label').textContent;
+    const purposeCategory = card.querySelector('.item-purpose-category').value;
+    const purpose = card.querySelector('.item-purpose').value.trim();
 
     if (state.uploading) { showError('expense-error', `${label}: 写真のアップロード中です。少しお待ちください。`); return; }
     if (!state.driveFileId) { showError('expense-error', `${label}: 領収書またはレシートの写真を添付してください。`); return; }
     if (!date || !store || !amount) { showError('expense-error', `${label}: 利用日・支払先・金額は必須です。`); return; }
-    if (!purpose) { showError('expense-error', `${label}: 使用目的を入力してください。`); return; }
-    if (!siteId) { showError('expense-error', `${label}: 現場を選択してください。`); return; }
+    if (!purposeCategory) { showError('expense-error', `${label}: 使用目的のカテゴリを選択してください。`); return; }
+    if (['その他', '打ち合わせ', '接待交際費'].includes(purposeCategory) && !purpose) {
+      showError('expense-error', `${label}: 使用目的の詳細を入力してください。`); return;
+    }
+
+    const siteSelect = card.querySelector('.item-site-select');
+    let siteId = siteSelect.value || null;
+    let newSiteName = null;
+    let siteName = null;
+    if (siteId === '__new__') {
+      newSiteName = card.querySelector('.item-new-site-name').value.trim();
+      if (!newSiteName) { showError('expense-error', `${label}: 新しい現場名を入力してください。`); return; }
+      siteId = null;
+    } else if (!siteId) {
+      showError('expense-error', `${label}: 現場を選択してください。`); return;
+    } else {
+      siteName = siteSelect.options[siteSelect.selectedIndex].dataset.name;
+    }
+
+    const vendorText = card.querySelector('.item-vendor').value.trim();
+    const businessPartnerId = vendorNameToId.get(vendorText) || null;
+    const newBusinessPartnerName = (!businessPartnerId && vendorText) ? vendorText : null;
+
+    let partnerParticipants = null;
+    let partnerCount = null;
+    let ourCodes = null;
+    const needsMeeting = purposeCategory === '打ち合わせ' || purposeCategory === '接待交際費';
+    if (needsMeeting) {
+      if (!businessPartnerId && !newBusinessPartnerName) { showError('expense-error', `${label}: 取引先を選択または入力してください。`); return; }
+      partnerParticipants = card.querySelector('.item-partner-participants').value.trim() || null;
+      partnerCount = Number(card.querySelector('.item-partner-count').value || 0);
+      if (!partnerCount) { showError('expense-error', `${label}: 取引先の参加人数を入力してください。`); return; }
+      const pSelect = participantSelects.get(itemId);
+      ourCodes = pSelect ? pSelect.getSelectedCodes() : [];
+      if (ourCodes.length === 0) { showError('expense-error', `${label}: 自社参加者を選択してください。`); return; }
+    }
+
+    let entertainmentPreapprovalId = null;
+    let overrideReason = null;
+    if (purposeCategory === '接待交際費') {
+      entertainmentPreapprovalId = state.entertainmentPreapprovalId || null;
+      if (!entertainmentPreapprovalId) {
+        if (session.requestRole === 'executive') {
+          const reasonEl = card.querySelector('.item-override-reason');
+          overrideReason = reasonEl ? reasonEl.value.trim() : '';
+          if (!overrideReason) { showError('expense-error', `${label}: 接待交際費は事前申請が必要です。管理者の場合は例外理由を入力してください。`); return; }
+        } else {
+          showError('expense-error', `${label}: 接待交際費は事前申請が必要です。「接待・会食」から先に事前申請してください。`); return;
+        }
+      }
+    }
 
     items.push({
       document_date: date, store, amount, tax_amount: tax ? Number(tax) : null,
-      site_id: siteId, site_name: siteName, vendor_name: vendor || null, purpose,
+      site_id: siteId, site_name: siteName, new_site_name: newSiteName,
+      business_partner_id: businessPartnerId, new_business_partner_name: newBusinessPartnerName, vendor_name: vendorText || null,
+      purpose_category: purposeCategory, purpose,
+      partner_participants: partnerParticipants, partner_participant_count: partnerCount,
+      our_participant_employee_codes: ourCodes,
+      entertainment_preapproval_id: entertainmentPreapprovalId, admin_override_reason: overrideReason,
       payment_method: payment, content_description: note || null,
       drive_file_id: state.driveFileId, drive_file_url: state.driveFileUrl,
     });
@@ -801,7 +984,7 @@ async function loadSupplySelectGrid() {
   try {
     const rows = await rpc('list_supply_master', {});
     const cards = rows.map((m) => ({ id: m.id, name: m.item_name, requiresSize: m.requires_size, icon: SUPPLY_ICON_BY_NAME[m.item_name] || 'package' }));
-    cards.push({ id: 'other', name: 'その他', requiresSize: false, icon: 'plus' });
+    cards.push({ id: 'other', name: '上記以外', requiresSize: false, icon: 'plus' });
     grid.innerHTML = cards.map((c) => `
       <button type="button" class="supply-select-card" data-id="${c.id}" data-name="${c.name}" data-requires-size="${c.requiresSize}">
         ${icon(c.icon)}
@@ -824,7 +1007,7 @@ function selectSupplyMasterCard(el) {
   selectedSupplyMasterItem = el.dataset.name;
 
   document.getElementById('supply-req-detail').style.display = 'block';
-  document.getElementById('supply-req-selected-title').textContent = isOther ? 'その他の支給品' : el.dataset.name;
+  document.getElementById('supply-req-selected-title').textContent = isOther ? '上記以外の支給品' : el.dataset.name;
   document.getElementById('supply-req-other-wrap').style.display = isOther ? 'block' : 'none';
   document.getElementById('supply-req-size-wrap').style.display = (el.dataset.requiresSize === 'true') ? 'block' : 'none';
   document.getElementById('supply-req-master-id').value = selectedSupplyMasterId || '';
@@ -922,7 +1105,7 @@ async function loadAdminIssueMasterSelect() {
   try {
     const rows = await rpc('admin_list_supply_master', { p_admin_employee_code: session.employeeCode });
     const active = rows.filter((m) => m.active);
-    select.innerHTML = active.map((m) => `<option value="${m.id}" data-requires-size="${m.requires_size}">${m.item_name}</option>`).join('') + '<option value="">その他(自由入力)</option>';
+    select.innerHTML = active.map((m) => `<option value="${m.id}" data-requires-size="${m.requires_size}">${m.item_name}</option>`).join('') + '<option value="">上記以外(自由入力)</option>';
     toggleAdminIssueOtherWrap();
   } catch (e) { /* 読み込めなくても記録フォーム自体は使える(その他扱いになる) */ }
 }
@@ -1359,6 +1542,11 @@ const DASH_CARDS = [
   { key: 'qualification_expiring_count', filter: null, label: '期限が近い資格', icon: 'clock', nav: 'qual-admin' },
   { key: 'category_review_needed_count', filter: null, label: '勘定科目の確認待ち', icon: 'hash', nav: 'category-review' },
   { key: 'pending_info_change_requests', filter: null, label: '個人情報の変更申請', icon: 'user', nav: 'info-change-admin' },
+  { key: 'pending_sites', filter: null, label: '新規現場の確認待ち', icon: 'map-pin', nav: 'site-admin' },
+  { key: 'pending_entertainment_preapprovals', filter: null, label: '接待事前申請 承認待ち', icon: 'users-round', nav: 'entertainment-admin' },
+  { key: 'health_checkup_overdue_count', filter: null, label: '健診 期限超過', icon: 'check-circle', nav: 'health-admin', healthFilter: 'overdue' },
+  { key: 'health_checkup_due_soon_count', filter: null, label: '健診 期限間近', icon: 'clock', nav: 'health-admin', healthFilter: 'due_soon' },
+  { key: 'health_checkup_retest_pending_count', filter: null, label: '再検査確認待ち', icon: 'alert-triangle', nav: 'health-admin', healthFilter: 'retest' },
 ];
 
 async function loadAdminDashboard() {
@@ -1368,10 +1556,10 @@ async function loadAdminDashboard() {
   try {
     const rows = await rpc('get_admin_dashboard', { p_admin_employee_code: session.employeeCode });
     const d = rows && rows[0];
-    grid.innerHTML = DASH_CARDS.map((c) => {
+    grid.innerHTML = DASH_CARDS.map((c, i) => {
       const count = d ? d[c.key] : 0;
       return `
-        <button type="button" class="dash-card" data-filter="${c.filter || ''}" data-nav="${c.nav || ''}">
+        <button type="button" class="dash-card" data-idx="${i}">
           <span class="dash-card-top">${icon(c.icon)}<span class="dash-card-count ${count === 0 ? 'zero' : 'alert'}">${count}</span></span>
           <span class="dash-card-label">${c.label}</span>
         </button>
@@ -1379,9 +1567,13 @@ async function loadAdminDashboard() {
     }).join('');
     grid.querySelectorAll('.dash-card').forEach((el) => {
       el.addEventListener('click', () => {
-        const nav = el.dataset.nav;
-        if (nav) { showScreen(nav); return; }
-        openAdminRequestList(el.dataset.filter);
+        const c = DASH_CARDS[Number(el.dataset.idx)];
+        if (c.healthFilter) {
+          healthAdminFilter = c.healthFilter;
+          document.querySelectorAll('#screen-health-admin .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.healthFilter === c.healthFilter));
+        }
+        if (c.nav) { showScreen(c.nav); return; }
+        openAdminRequestList(c.filter);
       });
     });
   } catch (e) {
@@ -1561,6 +1753,23 @@ async function handleQualFile(file, kind) {
   }
 }
 
+function setQualCategory(category) {
+  document.getElementById('qual-category').value = category;
+  const isLicense = category === 'license';
+  document.getElementById('qual-category-qualification').classList.toggle('secondary-off', isLicense);
+  document.getElementById('qual-category-license').classList.toggle('secondary-off', !isLicense);
+  document.getElementById('qual-name-wrap').style.display = isLicense ? 'none' : 'block';
+  document.getElementById('qual-license-type-wrap').style.display = isLicense ? 'block' : 'none';
+  if (isLicense) loadLicenseTypeSelect();
+}
+
+async function loadLicenseTypeSelect() {
+  try {
+    const rows = await rpc('list_license_types', {});
+    document.getElementById('qual-license-type').innerHTML = rows.map((t) => `<option value="${t.id}">${t.type_name}</option>`).join('');
+  } catch (e) { /* 無視 */ }
+}
+
 function resetQualForm() {
   ['qual-name', 'qual-number', 'qual-obtained', 'qual-expiry', 'qual-renewal', 'qual-note'].forEach((id) => { document.getElementById(id).value = ''; });
   document.getElementById('qual-photo-input').value = '';
@@ -1572,19 +1781,23 @@ function resetQualForm() {
   qualPhotoUpload = null;
   qualPdfUpload = null;
   hideError('qual-error');
+  setQualCategory('qualification');
 }
 
 async function doSubmitQualification() {
   const session = getSession();
+  const category = document.getElementById('qual-category').value;
   const name = document.getElementById('qual-name').value.trim();
+  const licenseTypeId = document.getElementById('qual-license-type').value || null;
   hideError('qual-error');
-  if (!name) { showError('qual-error', '資格名を入力してください。'); return; }
+  if (category === 'qualification' && !name) { showError('qual-error', '資格名を入力してください。'); return; }
+  if (category === 'license' && !licenseTypeId) { showError('qual-error', '免許種別を選択してください。'); return; }
   const btn = document.getElementById('qual-submit');
   btn.disabled = true;
   try {
     await rpc('submit_qualification', {
       p_employee_code: session.employeeCode,
-      p_qualification_name: name,
+      p_qualification_name: category === 'qualification' ? name : null,
       p_qualification_number: document.getElementById('qual-number').value.trim() || null,
       p_obtained_date: document.getElementById('qual-obtained').value || null,
       p_expiry_date: document.getElementById('qual-expiry').value || null,
@@ -1594,9 +1807,11 @@ async function doSubmitQualification() {
       p_photo_drive_file_url: qualPhotoUpload ? qualPhotoUpload.driveFileUrl : null,
       p_pdf_drive_file_id: qualPdfUpload ? qualPdfUpload.driveFileId : null,
       p_pdf_drive_file_url: qualPdfUpload ? qualPdfUpload.driveFileUrl : null,
+      p_category: category,
+      p_license_type_id: category === 'license' ? Number(licenseTypeId) : null,
     });
     resetQualForm();
-    document.getElementById('done-message').textContent = '資格を登録しました。管理者の確認をお待ちください。';
+    document.getElementById('done-message').textContent = `${category === 'license' ? '免許' : '資格'}を登録しました。管理者の確認をお待ちください。`;
     showScreen('done');
   } catch (e) {
     showError('qual-error', e.message || '送信に失敗しました。');
@@ -1620,7 +1835,7 @@ async function loadMyQualifications() {
       const expiryText = q.expiry_date ? `有効期限: ${new Date(q.expiry_date).toLocaleDateString('ja-JP')}${expiring ? `(残り${q.days_until_expiry}日)` : ''}${expired ? '(期限切れ)' : ''}` : '';
       return `
         <div class="qual-item ${expiring ? 'expiring' : ''} ${expired ? 'expired' : ''}">
-          <div class="row1"><span>${q.qualification_name}</span><span class="status-badge ${q.status === 'active' ? 'done' : (q.status === 'rejected' ? 'rejected' : '')}">${QUAL_STATUS_LABEL[q.status] || q.status}</span></div>
+          <div class="row1"><span>${q.category === 'license' ? '<span class="mini-tag info">免許</span> ' : ''}${q.qualification_name}</span><span class="status-badge ${q.status === 'active' ? 'done' : (q.status === 'rejected' ? 'rejected' : '')}">${QUAL_STATUS_LABEL[q.status] || q.status}</span></div>
           <div class="row2">${expiryText}</div>
           <div class="row2">${q.qualification_number ? `番号: ${q.qualification_number}` : ''}</div>
           <div style="margin-top:8px;">
@@ -1637,20 +1852,22 @@ async function loadMyQualifications() {
 
 // ---------- 資格管理(管理者) ----------
 
+let qualAdminCategoryFilter = '';
+
 async function loadQualAdminList() {
   const session = getSession();
   const filter = document.getElementById('qual-admin-filter').value || null;
   const listEl = document.getElementById('qual-admin-list');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
-    const rows = await rpc('admin_list_qualifications', { p_admin_employee_code: session.employeeCode, p_filter: filter });
-    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する資格はありません。</div>'; return; }
+    const rows = await rpc('admin_list_qualifications', { p_admin_employee_code: session.employeeCode, p_filter: filter, p_category: qualAdminCategoryFilter || null });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する資格・免許はありません。</div>'; return; }
     listEl.innerHTML = rows.map((q) => {
       const expiring = q.status === 'active' && q.days_until_expiry != null && q.days_until_expiry <= 60;
       const expiryText = q.expiry_date ? `有効期限: ${new Date(q.expiry_date).toLocaleDateString('ja-JP')}${q.days_until_expiry != null ? `(残り${q.days_until_expiry}日)` : ''}` : '期限未登録';
       return `
         <div class="qual-item ${expiring ? 'expiring' : ''}" data-id="${q.id}">
-          <div class="row1"><span>${q.employee_name}・${q.qualification_name}</span><span class="status-badge ${q.status === 'active' ? 'done' : (q.status === 'rejected' ? 'rejected' : '')}">${QUAL_STATUS_LABEL[q.status] || q.status}</span></div>
+          <div class="row1"><span>${q.category === 'license' ? '<span class="mini-tag info">免許</span> ' : ''}${q.employee_name}・${q.qualification_name}</span><span class="status-badge ${q.status === 'active' ? 'done' : (q.status === 'rejected' ? 'rejected' : '')}">${QUAL_STATUS_LABEL[q.status] || q.status}</span></div>
           <div class="row2">${expiryText}</div>
           <div class="row2">${q.qualification_number ? `番号: ${q.qualification_number}` : ''}</div>
           <div style="margin-top:8px;">
@@ -1920,13 +2137,14 @@ async function loadEmployeeDirectory() {
   }
 }
 
-async function openEmployeeDetail(code) {
+async function openEmployeeDetail(code, initialTab) {
   currentEmployeeDetailCode = code;
-  currentEmployeeDetailTab = 'basic';
-  document.querySelectorAll('#employee-detail-tabs .tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === 'basic'));
-  document.querySelectorAll('#screen-employee-detail .tab-panel').forEach((p) => p.classList.toggle('active', p.id === 'employee-detail-panel-basic'));
+  const tab = initialTab || 'basic';
+  currentEmployeeDetailTab = tab;
+  document.querySelectorAll('#employee-detail-tabs .tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('#screen-employee-detail .tab-panel').forEach((p) => p.classList.toggle('active', p.id === `employee-detail-panel-${tab}`));
   showScreen('employee-detail');
-  await loadEmployeeDetailBasic();
+  await switchEmployeeDetailTab(tab);
 }
 
 async function switchEmployeeDetailTab(tab) {
@@ -1978,16 +2196,29 @@ async function loadEmployeeDetailLeave() {
 async function loadEmployeeDetailQual() {
   const session = getSession();
   const listEl = document.getElementById('employee-detail-qual-list');
+  const healthArea = document.getElementById('employee-detail-health-summary');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  healthArea.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
+    const healthRows = await rpc('admin_get_employee_health_summary', { p_admin_employee_code: session.employeeCode, p_target_employee_code: currentEmployeeDetailCode });
+    const h = healthRows && healthRows[0];
+    healthArea.innerHTML = `
+      <div class="health-summary-card">
+        <div class="row"><span class="label">最終受診日</span><span>${h && h.last_checkup_date ? new Date(h.last_checkup_date).toLocaleDateString('ja-JP') : '未登録'}</span></div>
+        <div class="row"><span class="label">次回予定</span><span>${h && h.next_due_date ? new Date(h.next_due_date).toLocaleDateString('ja-JP') : '未登録'}</span></div>
+        ${h && h.is_overdue ? '<div class="row"><span class="label">状態</span><span style="color:var(--danger); font-weight:700;">期限超過</span></div>' : ''}
+        ${h && h.needs_retest ? '<div class="row"><span class="label">状態</span><span style="color:var(--warn); font-weight:700;">再検査確認待ち</span></div>' : ''}
+      </div>
+    `;
+
     const nameRows = await rpc('admin_get_employee_profile', { p_admin_employee_code: session.employeeCode, p_target_employee_code: currentEmployeeDetailCode });
     const targetName = nameRows && nameRows[0] && nameRows[0].employee_name;
-    const rows = await rpc('admin_list_qualifications', { p_admin_employee_code: session.employeeCode, p_filter: null });
+    const rows = await rpc('admin_list_qualifications', { p_admin_employee_code: session.employeeCode, p_filter: null, p_category: null });
     const mine = (rows || []).filter((q) => q.employee_name === targetName);
-    if (mine.length === 0) { listEl.innerHTML = '<div class="hint">登録された資格はありません。</div>'; return; }
+    if (mine.length === 0) { listEl.innerHTML = '<div class="hint">登録された資格・免許はありません。</div>'; return; }
     listEl.innerHTML = mine.map((q) => `
       <div class="qual-item">
-        <div class="row1"><span>${q.qualification_name}</span><span class="status-badge ${q.status === 'active' ? 'done' : (q.status === 'rejected' ? 'rejected' : '')}">${QUAL_STATUS_LABEL[q.status] || q.status}</span></div>
+        <div class="row1"><span>${q.category === 'license' ? '<span class="mini-tag info">免許</span> ' : ''}${q.qualification_name}</span><span class="status-badge ${q.status === 'active' ? 'done' : (q.status === 'rejected' ? 'rejected' : '')}">${QUAL_STATUS_LABEL[q.status] || q.status}</span></div>
         <div class="row2">${q.expiry_date ? `有効期限: ${new Date(q.expiry_date).toLocaleDateString('ja-JP')}` : ''}</div>
       </div>
     `).join('');
@@ -2141,6 +2372,397 @@ async function doSaveSupplyMasterItem() {
   }
 }
 
+// ---------- 健康診断(社員本人) ----------
+
+let healthFileUpload = null;
+
+async function handleHealthFile(file) {
+  if (!file) return;
+  const status = document.getElementById('health-file-status');
+  const label = document.getElementById('health-file-label');
+  status.textContent = 'アップロード中...';
+  try {
+    const session = getSession();
+    const result = await uploadReceiptPhoto(session.employeeCode, file);
+    healthFileUpload = result;
+    status.textContent = 'アップロード完了';
+    label.textContent = file.name;
+  } catch (e) {
+    status.textContent = 'アップロードに失敗しました。';
+  }
+}
+
+function resetHealthForm() {
+  ['health-date', 'health-type', 'health-institution', 'health-next', 'health-note'].forEach((id) => { document.getElementById(id).value = ''; });
+  document.getElementById('health-retest').checked = false;
+  document.getElementById('health-file-input').value = '';
+  document.getElementById('health-file-label').textContent = '写真/PDFを選ぶ';
+  document.getElementById('health-file-status').textContent = '';
+  healthFileUpload = null;
+  hideError('health-error');
+}
+
+async function doSubmitHealthCheckup() {
+  const session = getSession();
+  const date = document.getElementById('health-date').value;
+  hideError('health-error');
+  if (!date) { showError('health-error', '受診日を入力してください。'); return; }
+  const btn = document.getElementById('health-submit');
+  btn.disabled = true;
+  try {
+    await rpc('submit_health_checkup', {
+      p_employee_code: session.employeeCode,
+      p_checkup_date: date,
+      p_checkup_type: document.getElementById('health-type').value.trim() || null,
+      p_institution: document.getElementById('health-institution').value.trim() || null,
+      p_next_due_date: document.getElementById('health-next').value || null,
+      p_needs_retest: document.getElementById('health-retest').checked,
+      p_note: document.getElementById('health-note').value.trim() || null,
+      p_result_drive_file_id: healthFileUpload ? healthFileUpload.driveFileId : null,
+      p_result_drive_file_url: healthFileUpload ? healthFileUpload.driveFileUrl : null,
+    });
+    resetHealthForm();
+    document.getElementById('done-message').textContent = '健康診断の記録を登録しました。';
+    showScreen('done');
+  } catch (e) {
+    showError('health-error', e.message || '送信に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function healthStatusText(s) {
+  if (!s || !s.last_checkup_date) return '未登録です';
+  const last = new Date(s.last_checkup_date).toLocaleDateString('ja-JP');
+  const next = s.next_due_date ? new Date(s.next_due_date).toLocaleDateString('ja-JP') : '未登録';
+  let status = '';
+  if (s.is_overdue) status = '(期限を超えています)';
+  else if (s.days_until_due != null && s.days_until_due <= 60) status = `(残り${s.days_until_due}日)`;
+  return `最終受診日: ${last} ／ 次回予定: ${next}${status}`;
+}
+
+async function loadMyHealthSummary() {
+  const session = getSession();
+  const area = document.getElementById('my-health-summary');
+  area.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_health_summary', { p_employee_code: session.employeeCode });
+    const s = rows && rows[0];
+    area.innerHTML = `
+      <div class="health-summary-card">
+        <div class="row"><span class="label">最終受診日</span><span>${s && s.last_checkup_date ? new Date(s.last_checkup_date).toLocaleDateString('ja-JP') : '未登録'}</span></div>
+        <div class="row"><span class="label">次回予定</span><span>${s && s.next_due_date ? new Date(s.next_due_date).toLocaleDateString('ja-JP') : '未登録'}</span></div>
+        ${s && s.is_overdue ? '<div class="row"><span class="label">状態</span><span style="color:var(--danger); font-weight:700;">期限超過</span></div>' : ''}
+        ${s && s.needs_retest ? '<div class="row"><span class="label">状態</span><span style="color:var(--warn); font-weight:700;">再検査確認待ち</span></div>' : ''}
+      </div>
+    `;
+  } catch (e) {
+    area.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function loadMyHealthList() {
+  const session = getSession();
+  const listEl = document.getElementById('my-health-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_health_checkups', { p_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">登録された健診記録はまだありません。</div>'; return; }
+    listEl.innerHTML = rows.map((h) => `
+      <div class="qual-item">
+        <div class="row1"><span>${new Date(h.checkup_date).toLocaleDateString('ja-JP')}${h.checkup_type ? `・${h.checkup_type}` : ''}</span><span class="status-badge ${h.result_confirmed ? 'done' : ''}">${h.result_confirmed ? '確認済み' : '未確認'}</span></div>
+        <div class="row2">${h.institution || ''}</div>
+        <div class="row2">${h.next_due_date ? `次回予定: ${new Date(h.next_due_date).toLocaleDateString('ja-JP')}` : ''}${h.needs_retest ? '・再検査あり' : ''}</div>
+        <div class="row2">${h.note || ''}</div>
+        ${h.result_file_url ? `<a class="file-link" href="${h.result_file_url}" target="_blank" rel="noopener">結果を見る</a>` : ''}
+      </div>
+    `).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+// ---------- 接待・会食 事前申請(社員) ----------
+
+let entOurParticipantSelect = null;
+
+function resetEntertainmentForm() {
+  ['ent-datetime', 'ent-store', 'ent-amount', 'ent-purpose', 'ent-partner', 'ent-partner-participants', 'ent-partner-count', 'ent-note'].forEach((id) => { document.getElementById(id).value = ''; });
+  document.getElementById('ent-partner-id').value = '';
+  hideError('ent-error');
+  entOurParticipantSelect = createParticipantSelect(document.getElementById('ent-our-participants'));
+  entOurParticipantSelect.setOnChange(() => { document.getElementById('ent-our-count').textContent = entOurParticipantSelect.getCount(); });
+  document.getElementById('ent-our-count').textContent = '0';
+}
+
+async function doSubmitEntertainmentPreapproval() {
+  const session = getSession();
+  const datetime = document.getElementById('ent-datetime').value;
+  const purpose = document.getElementById('ent-purpose').value.trim();
+  const partnerText = document.getElementById('ent-partner').value.trim();
+  const partnerCount = Number(document.getElementById('ent-partner-count').value || 0);
+  hideError('ent-error');
+
+  if (!datetime) { showError('ent-error', '予定日時を入力してください。'); return; }
+  if (!purpose) { showError('ent-error', '目的を入力してください。'); return; }
+  if (!partnerText) { showError('ent-error', '取引先を選択または入力してください。'); return; }
+  if (!partnerCount) { showError('ent-error', '取引先の参加人数を入力してください。'); return; }
+  const ourCodes = entOurParticipantSelect ? entOurParticipantSelect.getSelectedCodes() : [];
+  if (ourCodes.length === 0) { showError('ent-error', '自社参加者を選択してください。'); return; }
+
+  const partnerId = vendorNameToId.get(partnerText) || null;
+
+  const btn = document.getElementById('ent-submit');
+  btn.disabled = true;
+  try {
+    await rpc('submit_entertainment_preapproval', {
+      p_employee_code: session.employeeCode,
+      p_planned_datetime: new Date(datetime).toISOString(),
+      p_planned_store: document.getElementById('ent-store').value.trim() || null,
+      p_planned_amount: document.getElementById('ent-amount').value ? Number(document.getElementById('ent-amount').value) : null,
+      p_purpose: purpose,
+      p_business_partner_id: partnerId,
+      p_new_partner_name: partnerId ? null : partnerText,
+      p_partner_participants: document.getElementById('ent-partner-participants').value.trim() || null,
+      p_partner_participant_count: partnerCount,
+      p_our_participant_employee_codes: ourCodes,
+      p_note: document.getElementById('ent-note').value.trim() || null,
+    });
+    document.getElementById('done-message').textContent = '接待・会食の事前申請を送信しました。管理者の承認をお待ちください。';
+    showScreen('done');
+  } catch (e) {
+    showError('ent-error', e.message || '送信に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+const ENT_STATUS_LABEL = { pending: '確認待ち', approved: '承認済み', rejected: '却下' };
+
+async function loadMyEntertainmentList() {
+  const session = getSession();
+  const listEl = document.getElementById('my-entertainment-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_entertainment_preapprovals', { p_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">事前申請はまだありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="qual-item">
+        <div class="row1"><span>${r.planned_store || '(店舗未記入)'}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${ENT_STATUS_LABEL[r.status]}</span></div>
+        <div class="row2">${new Date(r.planned_datetime).toLocaleString('ja-JP')}・${r.partner_name_snapshot || ''}</div>
+        <div class="row2">${r.purpose || ''}${r.planned_amount != null ? `・予定${Number(r.planned_amount).toLocaleString()}円` : ''}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+// ---------- 接待事前申請の承認(管理者) ----------
+
+async function loadEntertainmentAdminList() {
+  const session = getSession();
+  const status = document.getElementById('entertainment-admin-filter').value || null;
+  const listEl = document.getElementById('entertainment-admin-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_entertainment_preapprovals', { p_admin_employee_code: session.employeeCode, p_status: status });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する事前申請はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="qual-item" data-id="${r.id}">
+        <div class="row1"><span>${r.employee_name}・${r.planned_store || '(店舗未記入)'}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${ENT_STATUS_LABEL[r.status]}</span></div>
+        <div class="row2">${new Date(r.planned_datetime).toLocaleString('ja-JP')}・${r.partner_name_snapshot || ''}(取引先${r.partner_participant_count ?? '-'}名/自社${r.our_participant_count ?? '-'}名)</div>
+        <div class="row2">${r.purpose || ''}${r.planned_amount != null ? `・予定${Number(r.planned_amount).toLocaleString()}円` : ''}</div>
+        ${r.status === 'pending' ? `
+          <div class="qual-verify-btns">
+            <button type="button" class="approve-btn">承認する</button>
+            <button type="button" class="reject-btn">却下する</button>
+          </div>
+        ` : ''}
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.approve-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => doDecideEntertainment(e.target.closest('.qual-item').dataset.id, 'approved'));
+    });
+    listEl.querySelectorAll('.reject-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => doDecideEntertainment(e.target.closest('.qual-item').dataset.id, 'rejected'));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doDecideEntertainment(id, action) {
+  const session = getSession();
+  try {
+    await rpc('admin_decide_entertainment_preapproval', { p_admin_employee_code: session.employeeCode, p_id: Number(id), p_action: action });
+    await loadEntertainmentAdminList();
+  } catch (e) { /* 失敗時は一覧が更新されないだけ */ }
+}
+
+// ---------- 新規現場の確認(管理者) ----------
+
+async function loadSiteAdminList() {
+  const session = getSession();
+  const listEl = document.getElementById('site-admin-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_pending_sites', { p_admin_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">確認待ちの新規現場はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((s) => `
+      <div class="qual-item" data-id="${s.id}">
+        <div class="row1"><span>${s.site_name}</span></div>
+        <div class="row2">${new Date(s.created_at).toLocaleString('ja-JP')}</div>
+        <div class="qual-verify-btns">
+          <button type="button" class="approve-btn">承認する</button>
+          <button type="button" class="reject-btn">却下する</button>
+        </div>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.approve-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => doDecideSite(e.target.closest('.qual-item').dataset.id, 'active'));
+    });
+    listEl.querySelectorAll('.reject-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => doDecideSite(e.target.closest('.qual-item').dataset.id, 'inactive'));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doDecideSite(id, action) {
+  const session = getSession();
+  try {
+    await rpc('admin_decide_pending_site', { p_admin_employee_code: session.employeeCode, p_site_id: Number(id), p_action: action });
+    await loadSiteAdminList();
+  } catch (e) { /* 失敗時は一覧が更新されないだけ */ }
+}
+
+// ---------- 免許種別マスター管理(管理者) ----------
+
+function resetLicenseTypeForm() {
+  document.getElementById('license-type-edit-id').value = '';
+  document.getElementById('license-type-name').value = '';
+  document.getElementById('license-type-sort').value = '100';
+  hideError('license-type-error');
+}
+
+async function loadLicenseTypeAdminList() {
+  const session = getSession();
+  const listEl = document.getElementById('license-type-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  resetLicenseTypeForm();
+  try {
+    const rows = await rpc('admin_list_license_types', { p_admin_employee_code: session.employeeCode });
+    listEl.innerHTML = rows.map((t) => `
+      <div class="supply-item" data-id="${t.id}" style="${t.active ? '' : 'opacity:.5;'}">
+        <div class="row1"><span>${t.type_name}</span><span>${t.active ? '有効' : '停止中'}</span></div>
+        <div class="row2">表示順${t.sort_order}</div>
+        <div class="qual-verify-btns">
+          <button type="button" class="edit-license-btn" data-name="${t.type_name}" data-sort="${t.sort_order}">編集</button>
+          <button type="button" class="reject-btn toggle-license-btn" data-active="${t.active}">${t.active ? '停止する' : '再開する'}</button>
+        </div>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.edit-license-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const item = btn.closest('.supply-item');
+        document.getElementById('license-type-edit-id').value = item.dataset.id;
+        document.getElementById('license-type-name').value = btn.dataset.name;
+        document.getElementById('license-type-sort').value = btn.dataset.sort;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+    listEl.querySelectorAll('.toggle-license-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const item = btn.closest('.supply-item');
+        await rpc('admin_set_license_type_active', { p_admin_employee_code: session.employeeCode, p_id: Number(item.dataset.id), p_active: btn.dataset.active !== 'true' });
+        loadLicenseTypeAdminList();
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doSaveLicenseType() {
+  const session = getSession();
+  const id = document.getElementById('license-type-edit-id').value;
+  const name = document.getElementById('license-type-name').value.trim();
+  const sort = Number(document.getElementById('license-type-sort').value || 100);
+  hideError('license-type-error');
+  if (!name) { showError('license-type-error', '種別名を入力してください。'); return; }
+  const btn = document.getElementById('license-type-submit');
+  btn.disabled = true;
+  try {
+    await rpc('admin_upsert_license_type', { p_admin_employee_code: session.employeeCode, p_id: id ? Number(id) : null, p_type_name: name, p_sort_order: sort });
+    await loadLicenseTypeAdminList();
+  } catch (e) {
+    showError('license-type-error', e.message || '保存に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- 健康診断管理(管理者) ----------
+
+let healthAdminFilter = '';
+
+async function loadHealthAdminList() {
+  const session = getSession();
+  const listEl = document.getElementById('health-admin-warning-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_health_warnings', { p_admin_employee_code: session.employeeCode, p_filter: healthAdminFilter || null });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する社員はいません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="employee-row" data-code="${r.employee_code}">
+        <div class="employee-avatar">${(r.employee_name || '?').charAt(0)}</div>
+        <div class="employee-row-body">
+          <div class="employee-row-name">${r.employee_name}</div>
+          <div class="employee-row-meta">${r.last_checkup_date ? `最終受診: ${new Date(r.last_checkup_date).toLocaleDateString('ja-JP')}` : '未受診'}${r.next_due_date ? `・次回: ${new Date(r.next_due_date).toLocaleDateString('ja-JP')}` : ''}</div>
+          <div class="employee-row-flags">
+            ${r.is_overdue ? '<span class="mini-tag danger">期限超過</span>' : ''}
+            ${r.needs_retest ? '<span class="mini-tag warn">再検査確認待ち</span>' : ''}
+          </div>
+        </div>
+        <span style="color:var(--text-faint);">${icon('chevron-right')}</span>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.employee-row').forEach((el) => {
+      el.addEventListener('click', () => openEmployeeDetail(el.dataset.code, 'qual'));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doSaveAdminHealthRecord() {
+  const session = getSession();
+  const date = document.getElementById('health-admin-date').value;
+  hideError('health-admin-error');
+  if (!date) { showError('health-admin-error', '受診日を入力してください。'); return; }
+  const btn = document.getElementById('health-admin-submit');
+  btn.disabled = true;
+  try {
+    await rpc('admin_record_health_checkup', {
+      p_admin_employee_code: session.employeeCode, p_target_employee_code: currentEmployeeDetailCode,
+      p_checkup_date: date, p_checkup_type: document.getElementById('health-admin-type').value.trim() || null,
+      p_institution: document.getElementById('health-admin-institution').value.trim() || null,
+      p_next_due_date: document.getElementById('health-admin-next').value || null,
+      p_result_confirmed: document.getElementById('health-admin-confirmed').checked,
+      p_needs_retest: document.getElementById('health-admin-retest').checked,
+      p_note: document.getElementById('health-admin-note').value.trim() || null,
+    });
+    showScreen('employee-detail');
+    await loadEmployeeDetailQual();
+  } catch (e) {
+    showError('health-admin-error', e.message || '保存に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---------- 初期化 ----------
 
 function init() {
@@ -2199,6 +2821,40 @@ function init() {
   document.getElementById('qual-photo-input').addEventListener('change', (e) => handleQualFile(e.target.files[0], 'photo'));
   document.getElementById('qual-pdf-input').addEventListener('change', (e) => handleQualFile(e.target.files[0], 'pdf'));
   document.getElementById('qual-admin-filter').addEventListener('change', loadQualAdminList);
+  document.getElementById('qual-category-qualification').addEventListener('click', () => setQualCategory('qualification'));
+  document.getElementById('qual-category-license').addEventListener('click', () => setQualCategory('license'));
+  document.querySelectorAll('#screen-qual-admin .filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#screen-qual-admin .filter-chip').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      qualAdminCategoryFilter = btn.dataset.cat;
+      loadQualAdminList();
+    });
+  });
+
+  document.getElementById('health-submit').addEventListener('click', doSubmitHealthCheckup);
+  document.getElementById('health-file-input').addEventListener('change', (e) => handleHealthFile(e.target.files[0]));
+  document.getElementById('health-admin-submit').addEventListener('click', doSaveAdminHealthRecord);
+  document.getElementById('employee-detail-record-health-btn').addEventListener('click', () => {
+    ['health-admin-date', 'health-admin-type', 'health-admin-institution', 'health-admin-next', 'health-admin-note'].forEach((id) => { document.getElementById(id).value = ''; });
+    document.getElementById('health-admin-confirmed').checked = false;
+    document.getElementById('health-admin-retest').checked = false;
+    hideError('health-admin-error');
+    showScreen('health-admin-record');
+  });
+  document.querySelectorAll('#screen-health-admin .filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#screen-health-admin .filter-chip').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      healthAdminFilter = btn.dataset.healthFilter;
+      loadHealthAdminList();
+    });
+  });
+
+  document.getElementById('ent-submit').addEventListener('click', doSubmitEntertainmentPreapproval);
+  document.getElementById('entertainment-admin-filter').addEventListener('change', loadEntertainmentAdminList);
+
+  document.getElementById('license-type-submit').addEventListener('click', doSaveLicenseType);
 
   document.getElementById('profile-edit-submit').addEventListener('click', doSubmitProfileEdit);
   document.getElementById('info-change-filter').addEventListener('change', loadInfoChangeAdmin);
@@ -2293,6 +2949,27 @@ function init() {
   SCREEN_ENTER_HOOKS['supply-master-admin'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadSupplyMasterAdmin();
+  };
+  SCREEN_ENTER_HOOKS['health-submit'] = resetHealthForm;
+  SCREEN_ENTER_HOOKS['my-qual'] = () => { loadMyQualifications(); loadMyHealthSummary(); };
+  SCREEN_ENTER_HOOKS['my-health'] = loadMyHealthList;
+  SCREEN_ENTER_HOOKS['entertainment-submit'] = resetEntertainmentForm;
+  SCREEN_ENTER_HOOKS['my-entertainment'] = loadMyEntertainmentList;
+  SCREEN_ENTER_HOOKS['entertainment-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadEntertainmentAdminList();
+  };
+  SCREEN_ENTER_HOOKS['site-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadSiteAdminList();
+  };
+  SCREEN_ENTER_HOOKS['license-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadLicenseTypeAdminList();
+  };
+  SCREEN_ENTER_HOOKS['health-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadHealthAdminList();
   };
 
   const session = getSession();

@@ -593,6 +593,54 @@ button.link {
 }
 .plain-list-row:last-child { border-bottom: none; }
 
+/* ===== 現場の新規入力・打ち合わせ/接待交際費の参加者ブロック ===== */
+.item-new-site-wrap, .item-meeting-block, .item-entertainment-block {
+  margin-top: 6px; padding: 12px 14px; background: var(--bg); border-radius: var(--radius-sm); border: 1px dashed var(--border-strong);
+}
+.participant-select { margin-top: 6px; }
+.participant-search-input { margin-bottom: 6px; }
+.participant-results { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; max-height: 160px; overflow-y: auto; }
+.participant-result-item {
+  width: 100%; margin: 0; padding: 9px 12px; font-size: 13px; text-align: left; background: var(--card-bg);
+  border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); font-weight: 600;
+}
+.participant-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.participant-chip {
+  display: inline-flex; align-items: center; gap: 5px; background: var(--info-bg); color: var(--primary);
+  border-radius: var(--radius-pill); padding: 5px 6px 5px 12px; font-size: 12.5px; font-weight: 700;
+}
+.participant-chip button { width: auto; margin: 0; padding: 2px; background: none; color: var(--primary); border-radius: 50%; display: flex; }
+.participant-chip button .icon { width: 14px; height: 14px; }
+
+/* 取引先/現場の候補一覧(検索型セレクト) */
+.candidate-results { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.candidate-item {
+  width: 100%; margin: 0; padding: 10px 13px; text-align: left; font-size: 13.5px; font-weight: 600;
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text);
+}
+
+/* 接待交際費: 事前申請の紐付け候補 */
+.preapproval-candidate {
+  padding: 12px 14px; border-radius: var(--radius-sm); border: 1.5px solid var(--border-strong); background: var(--card-bg);
+  margin-bottom: 8px; cursor: pointer;
+}
+.preapproval-candidate.linked { border-color: var(--success); background: var(--success-bg); }
+.preapproval-candidate .row1 { display: flex; justify-content: space-between; font-weight: 700; font-size: 13.5px; }
+.preapproval-candidate .row2 { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+.preapproval-warning {
+  background: var(--danger-bg); color: var(--danger); border-radius: var(--radius-sm); padding: 12px 14px;
+  font-size: 13px; font-weight: 700; margin-top: 8px; line-height: 1.6;
+}
+.preapproval-override-box { margin-top: 10px; }
+
+/* 資格・免許・健診 */
+.qual-category-toggle { display: flex; gap: 8px; margin-bottom: 10px; }
+.qual-category-toggle button { width: auto; flex: 1; margin: 0; padding: 10px; font-size: 13px; }
+.qual-category-toggle button.secondary-off { background: var(--bg); color: var(--text-muted); }
+.health-summary-card { background: var(--info-bg); border-radius: var(--radius-md); padding: 16px; margin-bottom: 8px; }
+.health-summary-card .row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13.5px; color: var(--text); }
+.health-summary-card .row .label { color: var(--text-muted); }
+
 /* ===== モーダル風の簡易オーバーレイ(必要に応じて) ===== */
 .modal-overlay { position: fixed; inset: 0; background: rgba(23,26,36,.45); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
 .modal-sheet { width: 100%; max-width: 480px; background: var(--card-bg); border-radius: 22px 22px 0 0; padding: 22px 18px calc(22px + env(safe-area-inset-bottom, 0)); max-height: 82vh; overflow-y: auto; }

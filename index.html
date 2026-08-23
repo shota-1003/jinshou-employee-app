@@ -147,22 +147,46 @@
         <span class="home-card-label">支給品</span>
         <span class="home-card-desc">制服・安全用品</span>
       </button>
+      <button type="button" class="home-card" data-nav="entertainment-submit">
+        <span class="icon-slot" data-icon="users-round"></span>
+        <span class="home-card-label">接待・会食</span>
+        <span class="home-card-desc">事前申請(接待前に)</span>
+      </button>
       <button type="button" class="home-card" data-nav="qual-submit">
         <span class="icon-slot" data-icon="graduation-cap"></span>
-        <span class="home-card-label">資格</span>
-        <span class="home-card-desc">資格を登録する</span>
+        <span class="home-card-label">資格・免許</span>
+        <span class="home-card-desc">資格・免許を登録する</span>
+      </button>
+      <button type="button" class="home-card" data-nav="health-submit">
+        <span class="icon-slot" data-icon="check-circle"></span>
+        <span class="home-card-label">健康診断</span>
+        <span class="home-card-desc">受診結果を登録する</span>
       </button>
     </div>
   </section>
 
-  <!-- 資格申請フォーム -->
+  <!-- 資格・免許申請フォーム -->
   <section id="screen-qual-submit" class="screen">
     <button type="button" class="back-link" data-nav="menu-apply">申請一覧に戻る</button>
     <div class="card">
-      <div class="form-title">資格を登録する</div>
-      <div class="hint" style="margin-bottom:10px;">資格証の写真またはPDFを添付できます(任意)。登録後、管理者が内容を確認して有効化します。</div>
-      <label for="qual-name">資格名<span class="required-mark">(必須)</span></label>
-      <input type="text" id="qual-name" placeholder="例: フォークリフト運転技能講習">
+      <div class="form-title">資格・免許を登録する</div>
+      <div class="hint" style="margin-bottom:10px;">証明書の写真またはPDFを添付できます(任意)。登録後、管理者が内容を確認して有効化します。</div>
+
+      <div class="qual-category-toggle">
+        <button type="button" class="secondary" id="qual-category-qualification">資格</button>
+        <button type="button" class="secondary secondary-off" id="qual-category-license">免許</button>
+      </div>
+      <input type="hidden" id="qual-category" value="qualification">
+
+      <div id="qual-name-wrap">
+        <label for="qual-name">資格名<span class="required-mark">(必須)</span></label>
+        <input type="text" id="qual-name" placeholder="例: フォークリフト運転技能講習">
+      </div>
+      <div id="qual-license-type-wrap" style="display:none;">
+        <label for="qual-license-type">免許種別<span class="required-mark">(必須)</span></label>
+        <select id="qual-license-type"></select>
+      </div>
+
       <label for="qual-number">資格番号</label>
       <div class="hint-inline">任意</div>
       <input type="text" id="qual-number">
@@ -174,7 +198,7 @@
       <div class="hint-inline">更新手続きが必要な期限(分かる場合のみ)</div>
       <input type="date" id="qual-renewal">
 
-      <label>資格証の写真</label>
+      <label>証明書の写真</label>
       <label class="photo-capture-btn">
         <span class="icon-slot" data-icon="camera"></span>
         <span id="qual-photo-label">写真を選ぶ</span>
@@ -182,7 +206,7 @@
       </label>
       <div class="ocr-status" id="qual-photo-status"></div>
 
-      <label>資格証のPDF</label>
+      <label>証明書のPDF</label>
       <label class="photo-capture-btn">
         <span class="icon-slot" data-icon="file"></span>
         <span id="qual-pdf-label">PDFを選ぶ</span>
@@ -198,18 +222,70 @@
     </div>
   </section>
 
-  <!-- 自分の資格情報 -->
+  <!-- 健康診断 登録フォーム -->
+  <section id="screen-health-submit" class="screen">
+    <button type="button" class="back-link" data-nav="menu-apply">申請一覧に戻る</button>
+    <div class="card">
+      <div class="form-title">健康診断を登録する</div>
+      <div class="hint" style="margin-bottom:10px;">受診票の写真・PDFを添付できます(任意)。内容は本人と管理者のみ確認できます。</div>
+      <label for="health-date">受診日<span class="required-mark">(必須)</span></label>
+      <input type="date" id="health-date">
+      <label for="health-type">健診種別</label>
+      <input type="text" id="health-type" placeholder="例: 定期健康診断">
+      <label for="health-institution">受診機関</label>
+      <input type="text" id="health-institution" placeholder="例: 〇〇クリニック">
+      <label for="health-next">次回予定日</label>
+      <input type="date" id="health-next">
+      <div class="checkbox-row">
+        <input type="checkbox" id="health-retest">
+        <label for="health-retest">再検査の指示がある</label>
+      </div>
+      <label>受診票・結果の写真/PDF</label>
+      <label class="photo-capture-btn">
+        <span class="icon-slot" data-icon="camera"></span>
+        <span id="health-file-label">写真/PDFを選ぶ</span>
+        <input type="file" accept="image/*,application/pdf" id="health-file-input">
+      </label>
+      <div class="ocr-status" id="health-file-status"></div>
+      <label for="health-note">備考</label>
+      <div class="hint-inline">任意</div>
+      <textarea id="health-note"></textarea>
+      <div class="error" id="health-error"></div>
+      <button id="health-submit">登録する</button>
+    </div>
+  </section>
+
+  <!-- 自分の資格・免許・健診情報 -->
   <section id="screen-my-qual" class="screen">
-    <button type="button" class="back-link" data-nav="myinfo">戻る</button>
-    <div class="form-title">資格情報</div>
-    <button type="button" data-nav="qual-submit">＋ 資格を登録する</button>
+    <button type="button" class="back-link" data-nav="myinfo">自分の情報に戻る</button>
+    <div class="form-title">資格・免許・健診</div>
+
+    <div class="section-title">健康診断</div>
+    <div id="my-health-summary"></div>
+    <button type="button" class="secondary" data-nav="health-submit">健康診断を登録する</button>
+    <button type="button" class="secondary" data-nav="my-health">受診履歴を見る</button>
+
+    <div class="section-title">資格・免許</div>
+    <button type="button" data-nav="qual-submit">＋ 資格・免許を登録する</button>
     <div id="my-qual-list"></div>
+  </section>
+
+  <!-- 自分の健康診断 受診履歴 -->
+  <section id="screen-my-health" class="screen">
+    <button type="button" class="back-link" data-nav="my-qual">戻る</button>
+    <div class="form-title">健康診断 受診履歴</div>
+    <div id="my-health-list"></div>
   </section>
 
   <!-- 資格管理(管理者) -->
   <section id="screen-qual-admin" class="screen">
     <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
-    <div class="form-title">資格管理</div>
+    <div class="form-title">資格・免許管理</div>
+    <div class="filter-row">
+      <button type="button" class="filter-chip active" data-cat="">すべて</button>
+      <button type="button" class="filter-chip" data-cat="qualification">資格</button>
+      <button type="button" class="filter-chip" data-cat="license">免許</button>
+    </div>
     <select id="qual-admin-filter">
       <option value="">すべて</option>
       <option value="pending">確認待ち</option>
@@ -345,14 +421,56 @@
           <div class="hint-inline">どの現場に関係する経費か選択してください。該当が無ければ「会社共通」「現場外」を選べます</div>
           <input type="text" class="item-site-search" placeholder="現場名で検索...">
           <select class="item-site-select"></select>
+          <div class="item-new-site-wrap" style="display:none;">
+            <label>現場名を入力<span class="required-mark">(必須)</span></label>
+            <div class="hint-inline">新しい現場として保存されます。管理者が確認後、次回から候補に表示されます</div>
+            <input type="text" class="item-new-site-name" placeholder="例: 〇〇マンション新築工事">
+          </div>
+
+          <label>使用目的(カテゴリ)<span class="required-mark">(必須)</span></label>
+          <select class="item-purpose-category">
+            <option value="">選択してください</option>
+            <option value="現場消耗品">現場消耗品</option>
+            <option value="資材購入">資材購入</option>
+            <option value="工具購入">工具購入</option>
+            <option value="駐車場代">駐車場代</option>
+            <option value="高速代">高速代</option>
+            <option value="交通費">交通費</option>
+            <option value="出張">出張</option>
+            <option value="宿泊">宿泊</option>
+            <option value="飲食">飲食</option>
+            <option value="打ち合わせ">打ち合わせ</option>
+            <option value="接待交際費">接待交際費</option>
+            <option value="社員用飲料">社員用飲料</option>
+            <option value="会社備品">会社備品</option>
+            <option value="事務用品">事務用品</option>
+            <option value="その他">その他</option>
+          </select>
+          <label class="item-purpose-detail-label">詳細・具体的な使用目的</label>
+          <div class="hint-inline">例: 現場用消耗品購入・駐車料金・出張宿泊・資材購入。「その他」「打ち合わせ」「接待交際費」を選んだ場合は必須です</div>
+          <input type="text" class="item-purpose">
 
           <label>取引先</label>
-          <div class="hint-inline">現場の元請け・関係先など(任意、支払先とは別項目)</div>
+          <div class="hint-inline">現場の元請け・関係先など(「打ち合わせ」「接待交際費」の場合は必須、検索して選ぶか新しい取引先名を入力)</div>
           <input type="text" class="item-vendor" list="vendor-list">
+          <input type="hidden" class="item-business-partner-id">
 
-          <label>使用目的<span class="required-mark">(必須)</span></label>
-          <div class="hint-inline">例: 現場用消耗品購入・駐車料金・社員用飲料・取引先との打合せ・出張宿泊・資材購入</div>
-          <input type="text" class="item-purpose">
+          <!-- 打ち合わせ・接待交際費の追加項目 -->
+          <div class="item-meeting-block" style="display:none;">
+            <label>取引先参加者</label>
+            <div class="hint-inline">氏名が分かれば入力(任意)</div>
+            <input type="text" class="item-partner-participants" placeholder="例: 山田様">
+            <label>取引先の参加人数<span class="required-mark">(必須)</span></label>
+            <input type="number" class="item-partner-count" min="1">
+            <label>自社参加者<span class="required-mark">(必須)</span></label>
+            <div class="participant-select" data-target="our"></div>
+            <div class="hint-inline">自社人数: <span class="item-our-count">0</span>名(自動計算)</div>
+          </div>
+
+          <!-- 接待交際費: 承認済み事前申請の検索・紐付け -->
+          <div class="item-entertainment-block" style="display:none;">
+            <div class="preapproval-search-area"></div>
+          </div>
 
           <label>支払方法</label>
           <select class="item-payment"></select>
@@ -448,6 +566,11 @@
         <div class="menu-item-body">変更申請の状況<span class="desc">住所・電話番号等の変更申請を確認</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
+      <button type="button" class="menu-item" data-nav="my-entertainment">
+        <span class="icon-slot" data-icon="users-round"></span>
+        <div class="menu-item-body">接待・会食 事前申請<span class="desc">接待前に申請、承認済みなら領収書と紐付け</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
       <button type="button" class="menu-item" data-nav="anon-consult" style="position:relative;">
         <span class="icon-slot" data-icon="message-circle"></span>
         <div class="menu-item-body">匿名相談<span class="desc">悩み・意見を匿名で送る</span></div>
@@ -502,7 +625,7 @@
   <section id="screen-supply-request" class="screen">
     <button type="button" class="back-link" data-nav="menu-apply">申請一覧に戻る</button>
     <div class="form-title">支給品申請</div>
-    <div class="hint" style="margin-bottom:12px;">支給品を選んでください。一覧に無い物は「その他」を選んで品名を入力できます。</div>
+    <div class="hint" style="margin-bottom:12px;">支給品を選んでください。一覧に無い物は「上記以外」を選んで品名を入力できます。</div>
     <div class="supply-select-grid" id="supply-select-grid"></div>
 
     <div class="card" id="supply-req-detail" style="display:none;">
@@ -632,7 +755,27 @@
       </button>
       <button type="button" class="menu-item" data-nav="qual-admin">
         <span class="icon-slot" data-icon="graduation-cap"></span>
-        <div class="menu-item-body">資格管理<span class="desc">確認待ち・期限が近い資格を確認</span></div>
+        <div class="menu-item-body">資格・免許管理<span class="desc">確認待ち・期限が近い資格/免許を確認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item" data-nav="health-admin">
+        <span class="icon-slot" data-icon="check-circle"></span>
+        <div class="menu-item-body">健康診断管理<span class="desc">未受診・期限間近・再検査を確認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item" data-nav="license-admin">
+        <span class="icon-slot" data-icon="filter"></span>
+        <div class="menu-item-body">免許種別マスター管理<span class="desc">選択肢の追加・編集・停止</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item" data-nav="site-admin">
+        <span class="icon-slot" data-icon="map-pin"></span>
+        <div class="menu-item-body">新規現場の確認<span class="desc">社員が入力した新しい現場を承認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item" data-nav="entertainment-admin">
+        <span class="icon-slot" data-icon="users-round"></span>
+        <div class="menu-item-body">接待交際費 事前申請<span class="desc">承認待ちの接待予定を確認</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
       <button type="button" class="menu-item" data-nav="category-review">
@@ -695,6 +838,90 @@
     <div id="supply-master-list"></div>
   </section>
 
+  <!-- 免許種別マスター管理(管理者) -->
+  <section id="screen-license-admin" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">免許種別マスター管理</div>
+    <div class="card">
+      <div class="form-title" style="font-size:15px;">種別を追加</div>
+      <input type="hidden" id="license-type-edit-id">
+      <label for="license-type-name">種別名</label>
+      <input type="text" id="license-type-name" placeholder="例: 中型8t限定">
+      <label for="license-type-sort">表示順</label>
+      <input type="number" id="license-type-sort" value="100">
+      <div class="error" id="license-type-error"></div>
+      <button id="license-type-submit">保存する</button>
+    </div>
+    <div class="section-title">登録済みの種別</div>
+    <div id="license-type-list"></div>
+  </section>
+
+  <!-- 新規現場の確認(管理者) -->
+  <section id="screen-site-admin" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">新規現場の確認</div>
+    <div class="hint" style="margin-bottom:12px;">社員が経費申請時に新しく入力した現場名です。承認すると次回から候補に表示されます。</div>
+    <div id="site-admin-list"></div>
+  </section>
+
+  <!-- 接待交際費 事前申請(管理者) -->
+  <section id="screen-entertainment-admin" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">接待交際費 事前申請</div>
+    <select id="entertainment-admin-filter">
+      <option value="pending">確認待ち</option>
+      <option value="approved">承認済み</option>
+      <option value="rejected">却下</option>
+      <option value="">すべて</option>
+    </select>
+    <div id="entertainment-admin-list"></div>
+  </section>
+
+  <!-- 接待・会食 事前申請フォーム(社員) -->
+  <section id="screen-entertainment-submit" class="screen">
+    <button type="button" class="back-link" data-nav="my-entertainment">戻る</button>
+    <div class="card">
+      <div class="form-title">接待・会食 事前申請</div>
+      <div class="hint" style="margin-bottom:10px;">接待・会食を行う前に申請してください。終了後の申請は原則できません。</div>
+      <label for="ent-datetime">予定日時<span class="required-mark">(必須)</span></label>
+      <input type="datetime-local" id="ent-datetime">
+      <label for="ent-store">予定店舗</label>
+      <input type="text" id="ent-store" placeholder="例: 〇〇割烹">
+      <label for="ent-amount">予定金額(円)</label>
+      <input type="number" id="ent-amount" min="0">
+      <label for="ent-purpose">目的<span class="required-mark">(必須)</span></label>
+      <input type="text" id="ent-purpose" placeholder="例: 新規案件の受注御礼">
+
+      <label>取引先<span class="required-mark">(必須)</span></label>
+      <input type="text" id="ent-partner" list="vendor-list">
+      <input type="hidden" id="ent-partner-id">
+
+      <label for="ent-partner-participants">取引先参加者</label>
+      <div class="hint-inline">氏名が分かれば入力(任意)</div>
+      <input type="text" id="ent-partner-participants" placeholder="例: 山田様、鈴木様">
+      <label for="ent-partner-count">取引先参加人数<span class="required-mark">(必須)</span></label>
+      <input type="number" id="ent-partner-count" min="1">
+
+      <label>自社参加者<span class="required-mark">(必須)</span></label>
+      <div class="participant-select" id="ent-our-participants"></div>
+      <div class="hint-inline">自社人数: <span id="ent-our-count">0</span>名(自動計算)</div>
+
+      <label for="ent-note">備考</label>
+      <div class="hint-inline">任意</div>
+      <textarea id="ent-note"></textarea>
+      <div class="error" id="ent-error"></div>
+      <button id="ent-submit">事前申請を送信する</button>
+    </div>
+  </section>
+
+  <!-- 自分の接待事前申請一覧 -->
+  <section id="screen-my-entertainment" class="screen">
+    <button type="button" class="back-link" data-nav="myinfo">自分の情報に戻る</button>
+    <div class="form-title">接待交際費 事前申請</div>
+    <button type="button" data-nav="entertainment-submit">＋ 新しく事前申請する</button>
+    <div id="my-entertainment-list"></div>
+  </section>
+
   <!-- 社員名簿(管理者) -->
   <section id="screen-employee-directory" class="screen">
     <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
@@ -724,7 +951,7 @@
     <div class="tab-bar" id="employee-detail-tabs">
       <button type="button" class="tab-btn active" data-tab="basic">基本情報</button>
       <button type="button" class="tab-btn" data-tab="leave">有給</button>
-      <button type="button" class="tab-btn" data-tab="qual">資格</button>
+      <button type="button" class="tab-btn" data-tab="qual">資格・免許・健診</button>
       <button type="button" class="tab-btn" data-tab="supply">支給品</button>
       <button type="button" class="tab-btn" data-tab="requests">申請履歴</button>
     </div>
@@ -742,6 +969,10 @@
       <div id="employee-detail-leave-history"></div>
     </div>
     <div class="tab-panel" id="employee-detail-panel-qual">
+      <div class="section-title">健康診断</div>
+      <div id="employee-detail-health-summary"></div>
+      <button type="button" class="secondary" id="employee-detail-record-health-btn">健診結果を記録する</button>
+      <div class="section-title">資格・免許</div>
       <div id="employee-detail-qual-list"></div>
     </div>
     <div class="tab-panel" id="employee-detail-panel-supply">
@@ -766,6 +997,48 @@
       <div class="error" id="employee-edit-error"></div>
       <button id="employee-edit-submit">保存する</button>
     </div>
+  </section>
+
+  <!-- 社員詳細: 健診結果の記録(管理者) -->
+  <section id="screen-health-admin-record" class="screen">
+    <button type="button" class="back-link" data-nav="employee-detail">社員詳細に戻る</button>
+    <div class="card">
+      <div class="form-title">健診結果を記録する</div>
+      <label for="health-admin-date">受診日<span class="required-mark">(必須)</span></label>
+      <input type="date" id="health-admin-date">
+      <label for="health-admin-type">健診種別</label>
+      <input type="text" id="health-admin-type">
+      <label for="health-admin-institution">受診機関</label>
+      <input type="text" id="health-admin-institution">
+      <label for="health-admin-next">次回予定日</label>
+      <input type="date" id="health-admin-next">
+      <div class="checkbox-row">
+        <input type="checkbox" id="health-admin-confirmed">
+        <label for="health-admin-confirmed">結果確認済み</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="health-admin-retest">
+        <label for="health-admin-retest">再検査の指示あり</label>
+      </div>
+      <label for="health-admin-note">備考</label>
+      <textarea id="health-admin-note"></textarea>
+      <div class="error" id="health-admin-error"></div>
+      <button id="health-admin-submit">記録する</button>
+    </div>
+  </section>
+
+  <!-- 健康診断 管理(ダッシュボードからのドリルダウン) -->
+  <section id="screen-health-admin" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">健康診断管理</div>
+    <div class="filter-row">
+      <button type="button" class="filter-chip active" data-health-filter="">すべて</button>
+      <button type="button" class="filter-chip" data-health-filter="unrecorded">未受診</button>
+      <button type="button" class="filter-chip" data-health-filter="overdue">期限超過</button>
+      <button type="button" class="filter-chip" data-health-filter="due_soon">期限間近</button>
+      <button type="button" class="filter-chip" data-health-filter="retest">再検査確認待ち</button>
+    </div>
+    <div id="health-admin-warning-list"></div>
   </section>
 
   <!-- お知らせ管理(作成・一覧・既読状況) -->

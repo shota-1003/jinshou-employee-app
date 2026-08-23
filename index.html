@@ -162,7 +162,81 @@
         <span class="home-card-label">健康診断</span>
         <span class="home-card-desc">受診結果を登録する</span>
       </button>
+      <button type="button" class="home-card" data-nav="daily-report">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <span class="home-card-label">日報</span>
+        <span class="home-card-desc">今日の現場・勤務区分</span>
+      </button>
     </div>
+  </section>
+
+  <!-- 日報入力 -->
+  <section id="screen-daily-report" class="screen">
+    <button type="button" class="back-link" data-nav="menu-apply">申請一覧に戻る</button>
+    <div class="card">
+      <div class="form-title">日報を入力する</div>
+      <div class="hint" style="margin-bottom:10px;">現場と勤務区分(終日・午前・午後)を選ぶと、人工は自動で計算されます。人工を直接入力することはありません。</div>
+
+      <label for="daily-report-date">日付<span class="required-mark">(必須)</span></label>
+      <input type="date" id="daily-report-date">
+      <div class="hint-inline" id="daily-report-existing-hint" style="display:none;"></div>
+
+      <div id="daily-report-entry-list"></div>
+
+      <button type="button" class="secondary" id="daily-report-add-entry">＋ もう1現場を追加(午前/午後で分ける場合)</button>
+      <button type="button" class="link" id="daily-report-add-special-entry">現場が3件以上ある場合はこちら(特殊日報)</button>
+      <div class="preapproval-warning" id="daily-report-special-warning" style="display:none;">
+        <span class="icon-slot" data-icon="alert-triangle"></span>
+        3現場以上の日報は「特殊日報」として登録され、通常のスプレッドシートには自動反映されません。管理者が内容を確認したうえで手動対応します。
+      </div>
+
+      <div class="stat-mini-row">
+        <div class="stat-mini"><span class="stat-mini-label">合計人工(自動計算)</span><span class="stat-mini-value" id="daily-report-total-headcount">0</span></div>
+      </div>
+
+      <div class="error" id="daily-report-error"></div>
+      <button id="daily-report-submit">日報を提出する</button>
+    </div>
+  </section>
+
+  <template id="daily-report-entry-template">
+    <div class="item-new-site-wrap daily-report-entry" style="display:block;">
+      <label>現場<span class="required-mark">(必須)</span></label>
+      <input type="text" class="dr-site-search" placeholder="現場名で検索...">
+      <select class="dr-site-select"></select>
+      <button type="button" class="item-new-site-toggle-btn dr-new-site-toggle-btn"><span class="icon-slot" data-icon="plus"></span>リストに無い現場を入力する</button>
+      <div class="dr-new-site-wrap" style="display:none;">
+        <label>現場名を入力<span class="required-mark">(必須)</span></label>
+        <input type="text" class="dr-new-site-name" placeholder="例: 〇〇マンション新築工事">
+      </div>
+      <label>勤務区分<span class="required-mark">(必須)</span></label>
+      <select class="dr-work-type">
+        <option value="終日">終日(1.0人工)</option>
+        <option value="午前">午前(0.5人工)</option>
+        <option value="午後">午後(0.5人工)</option>
+      </select>
+      <button type="button" class="dr-remove-entry-btn link">この現場を削除</button>
+    </div>
+  </template>
+
+  <!-- 日報 提出履歴 -->
+  <section id="screen-my-daily-reports" class="screen">
+    <button type="button" class="back-link" data-nav="myinfo">自分の情報に戻る</button>
+    <div class="form-title">日報 提出履歴</div>
+    <div id="my-daily-report-list"></div>
+  </section>
+
+  <!-- 日報 特殊ケース確認(管理者) -->
+  <section id="screen-daily-report-admin" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">日報の特殊ケース確認</div>
+    <div class="hint" style="margin-bottom:10px;">3現場以上の日報は自動でスプレッドシートへ反映されません。内容を確認し、手動で反映してから「対応済み」にしてください。</div>
+    <div class="filter-row">
+      <button type="button" class="filter-chip active" data-status="open">未対応</button>
+      <button type="button" class="filter-chip" data-status="resolved">対応済み</button>
+      <button type="button" class="filter-chip" data-status="">すべて</button>
+    </div>
+    <div id="daily-report-admin-list"></div>
   </section>
 
   <!-- 資格・免許申請フォーム -->
@@ -561,6 +635,11 @@
         <div class="menu-item-body">接待・会食 事前申請<span class="desc">接待前に申請、承認済みなら領収書と紐付け</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
+      <button type="button" class="menu-item" data-nav="my-daily-reports">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <div class="menu-item-body">日報 提出履歴<span class="desc">これまでの日報・人工を確認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
       <button type="button" class="menu-item" data-nav="anon-consult" style="position:relative;">
         <span class="icon-slot" data-icon="message-circle"></span>
         <div class="menu-item-body">匿名相談<span class="desc">悩み・意見を匿名で送る</span></div>
@@ -766,6 +845,11 @@
       <button type="button" class="menu-item" data-nav="entertainment-admin">
         <span class="icon-slot" data-icon="users-round"></span>
         <div class="menu-item-body">接待交際費 事前申請<span class="desc">承認待ちの接待予定を確認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item" data-nav="daily-report-admin">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <div class="menu-item-body">日報の特殊ケース確認<span class="desc">3現場以上の日報を確認・手動反映</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
       <button type="button" class="menu-item" data-nav="category-review">

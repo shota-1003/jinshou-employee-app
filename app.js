@@ -82,12 +82,12 @@ const BOTTOM_NAV_MAP = {
   menu: 'menu',
   'menu-apply': 'menu-apply', leave: 'menu-apply', 'expense-advance': 'menu-apply', 'expense-company': 'menu-apply',
   meeting: 'menu-apply', 'supply-request': 'menu-apply', 'qual-submit': 'menu-apply', 'health-submit': 'menu-apply',
-  'entertainment-submit': 'menu-apply',
+  'entertainment-submit': 'menu-apply', 'daily-report': 'menu-apply',
   announcements: 'announcements',
   history: 'history',
   myinfo: 'myinfo', 'leave-history': 'myinfo', 'my-supply': 'myinfo', 'my-qual': 'myinfo', 'my-health': 'myinfo',
   'my-change-requests': 'myinfo', 'profile-edit': 'myinfo', 'anon-consult': 'myinfo', 'anon-submit': 'myinfo',
-  'anon-done': 'myinfo', 'anon-thread': 'myinfo', 'my-entertainment': 'myinfo',
+  'anon-done': 'myinfo', 'anon-thread': 'myinfo', 'my-entertainment': 'myinfo', 'my-daily-reports': 'myinfo',
 };
 
 // 絵文字を廃止し線画SVG(icons.js)へ統一するための一括反映。静的HTML内の
@@ -2827,6 +2827,194 @@ async function doSaveAdminHealthRecord() {
   }
 }
 
+// ---------- 日報(社員) ----------
+// 社員が人工を直接入力することは一切ない。現場と勤務区分(終日/午前/午後)を選ぶと、
+// 人工(終日=1.0・午前後=各0.5)は画面表示・送信ともにJS側で自動計算する。
+// 通常は1〜2現場まで(2現場の場合は午前+午後の組み合わせのみ)。3現場以上は入力自体は
+// 止めず「特殊日報」として送信できるが、通常のスプレッドシート反映対象からは外れ、
+// 管理者確認キュー(daily-report-admin)へ回る。
+
+const DR_HEADCOUNT_BY_WORK_TYPE = { '終日': 1.0, '午前': 0.5, '午後': 0.5 };
+let dailyReportEntrySeq = 0;
+
+function addDailyReportEntry(prefill) {
+  const template = document.getElementById('daily-report-entry-template');
+  const clone = template.content.cloneNode(true);
+  hydrateIcons(clone);
+  const entryId = `dr-entry-${++dailyReportEntrySeq}`;
+  const wrap = clone.querySelector('.daily-report-entry');
+  wrap.dataset.entryId = entryId;
+
+  const siteSelect = clone.querySelector('.dr-site-select');
+  const siteSearch = clone.querySelector('.dr-site-search');
+  const newSiteWrap = clone.querySelector('.dr-new-site-wrap');
+  const newSiteToggleBtn = clone.querySelector('.dr-new-site-toggle-btn');
+  populateSiteSelect(siteSelect, '').then(() => {
+    if (prefill && prefill.site_id) siteSelect.value = String(prefill.site_id);
+  });
+  siteSearch.addEventListener('input', () => populateSiteSelect(siteSelect, siteSearch.value.trim()));
+  siteSelect.addEventListener('change', () => {
+    if (siteSelect.value === '__new__') newSiteWrap.style.display = 'block';
+  });
+  newSiteToggleBtn.addEventListener('click', () => {
+    siteSelect.value = '__new__';
+    newSiteWrap.style.display = 'block';
+    wrap.querySelector('.dr-new-site-name').focus();
+  });
+
+  const workTypeSelect = clone.querySelector('.dr-work-type');
+  if (prefill && prefill.work_type) workTypeSelect.value = prefill.work_type;
+  workTypeSelect.addEventListener('change', updateDailyReportTotal);
+
+  clone.querySelector('.dr-remove-entry-btn').addEventListener('click', () => {
+    document.querySelector(`[data-entry-id="${entryId}"]`).remove();
+    updateDailyReportTotal();
+  });
+
+  document.getElementById('daily-report-entry-list').appendChild(clone);
+  updateDailyReportTotal();
+}
+
+function updateDailyReportTotal() {
+  const entries = document.querySelectorAll('.daily-report-entry');
+  let total = 0;
+  entries.forEach((el) => { total += DR_HEADCOUNT_BY_WORK_TYPE[el.querySelector('.dr-work-type').value] || 0; });
+  document.getElementById('daily-report-total-headcount').textContent = total.toFixed(1);
+  document.getElementById('daily-report-special-warning').style.display = entries.length >= 3 ? 'block' : 'none';
+}
+
+async function loadDailyReportForDate(dateStr) {
+  const session = getSession();
+  const hint = document.getElementById('daily-report-existing-hint');
+  const submitBtn = document.getElementById('daily-report-submit');
+  const addBtn = document.getElementById('daily-report-add-entry');
+  hint.style.display = 'none';
+  submitBtn.disabled = false;
+  addBtn.disabled = false;
+  document.getElementById('daily-report-entry-list').innerHTML = '';
+  dailyReportEntrySeq = 0;
+
+  let existing = [];
+  try {
+    existing = await rpc('get_my_daily_report_for_date', { p_employee_code: session.employeeCode, p_report_date: dateStr });
+  } catch (e) { /* 取得できなくても新規入力は続けられる */ }
+
+  if (existing.length > 0) {
+    const reflected = existing[0].reflected;
+    hint.style.display = 'block';
+    if (reflected) {
+      hint.textContent = 'この日の日報は既にスプレッドシートへ反映済みのため、アプリからは修正できません。修正が必要な場合は管理者へ連絡してください。';
+      submitBtn.disabled = true;
+      addBtn.disabled = true;
+    } else {
+      hint.textContent = 'この日は入力済みです。内容を修正して「日報を提出する」を押すと上書きされます。';
+    }
+    existing.forEach((e) => addDailyReportEntry({ site_id: e.site_id, work_type: e.work_type }));
+  } else {
+    addDailyReportEntry();
+  }
+}
+
+function resetDailyReportForm() {
+  hideError('daily-report-error');
+  const dateInput = document.getElementById('daily-report-date');
+  const today = new Date().toISOString().slice(0, 10);
+  dateInput.value = today;
+  loadDailyReportForDate(today);
+}
+
+async function doSubmitDailyReport() {
+  const session = getSession();
+  hideError('daily-report-error');
+  const dateStr = document.getElementById('daily-report-date').value;
+  if (!dateStr) { showError('daily-report-error', '日付を選択してください。'); return; }
+
+  const entryEls = Array.from(document.querySelectorAll('.daily-report-entry'));
+  if (entryEls.length === 0) { showError('daily-report-error', '現場を1件以上入力してください。'); return; }
+
+  const entries = [];
+  for (const el of entryEls) {
+    const siteSelect = el.querySelector('.dr-site-select');
+    let siteId = siteSelect.value || null;
+    let newSiteName = null;
+    if (siteId === '__new__') {
+      newSiteName = el.querySelector('.dr-new-site-name').value.trim();
+      if (!newSiteName) { showError('daily-report-error', '新しい現場名を入力してください。'); return; }
+      siteId = null;
+    } else if (!siteId) {
+      showError('daily-report-error', '現場を選択してください。'); return;
+    }
+    entries.push({ site_id: siteId, new_site_name: newSiteName, work_type: el.querySelector('.dr-work-type').value });
+  }
+
+  const btn = document.getElementById('daily-report-submit');
+  btn.disabled = true;
+  try {
+    const result = await rpc('submit_daily_report', { p_employee_code: session.employeeCode, p_report_date: dateStr, p_entries: entries });
+    const r = result && result[0];
+    const msg = r && r.is_special
+      ? `日報を受け付けました(${dateStr}、${r.entry_count}現場)。3現場以上のため特殊日報として管理者が確認します。`
+      : `日報を受け付けました(${dateStr}、合計${r ? Number(r.total_headcount).toFixed(1) : ''}人工)。`;
+    document.getElementById('done-message').textContent = msg;
+    showScreen('done');
+  } catch (e) {
+    showError('daily-report-error', e.message || '送信に失敗しました。もう一度お試しください。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadMyDailyReports() {
+  const session = getSession();
+  const list = document.getElementById('my-daily-report-list');
+  list.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_daily_reports', { p_employee_code: session.employeeCode, p_limit: 30 });
+    if (rows.length === 0) { list.innerHTML = '<div class="empty-state">まだ日報がありません</div>'; return; }
+    list.innerHTML = rows.map((r) => `
+      <div class="history-item">
+        <div class="row1"><span>${r.report_date}</span><span>${Number(r.total_headcount).toFixed(1)}人工</span></div>
+        <div class="row2">${r.site_names.map((n, i) => `${n}(${r.work_types[i]})`).join('・')}</div>
+        ${r.is_special ? '<span class="mini-tag warn">特殊日報(管理者確認中)</span>' : ''}
+        ${r.reflected ? '<span class="mini-tag muted">シート反映済み</span>' : ''}
+      </div>
+    `).join('');
+  } catch (e) {
+    list.innerHTML = '<div class="empty-state">読み込みに失敗しました</div>';
+  }
+}
+
+// ---------- 日報の特殊ケース確認(管理者) ----------
+
+let dailyReportAdminStatus = 'open';
+async function loadDailyReportAdminList() {
+  const session = getSession();
+  const list = document.getElementById('daily-report-admin-list');
+  list.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_daily_report_exceptions', { p_status: dailyReportAdminStatus || null });
+    if (rows.length === 0) { list.innerHTML = '<div class="empty-state">該当する日報はありません</div>'; return; }
+    list.innerHTML = rows.map((r) => `
+      <div class="history-item">
+        <div class="row1"><span>${r.context.employee_name}</span><span>${r.context.report_date}</span></div>
+        <div class="row2">${r.message}</div>
+        ${r.status === 'open' ? `<button type="button" class="secondary" data-resolve-id="${r.id}">対応済みにする</button>` : `<span class="mini-tag muted">対応済み</span>`}
+      </div>
+    `).join('');
+    list.querySelectorAll('[data-resolve-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await rpc('resolve_error', { p_id: Number(btn.dataset.resolveId), p_status: 'resolved', p_resolution: `${session.employeeName}が確認しスプレッドシートへ手動反映` });
+          loadDailyReportAdminList();
+        } catch (e) { btn.disabled = false; }
+      });
+    });
+  } catch (e) {
+    list.innerHTML = '<div class="empty-state">読み込みに失敗しました</div>';
+  }
+}
+
 // ---------- 初期化 ----------
 
 function init() {
@@ -2919,6 +3107,19 @@ function init() {
   document.getElementById('entertainment-admin-filter').addEventListener('change', loadEntertainmentAdminList);
 
   document.getElementById('license-type-submit').addEventListener('click', doSaveLicenseType);
+
+  document.getElementById('daily-report-date').addEventListener('change', (e) => loadDailyReportForDate(e.target.value));
+  document.getElementById('daily-report-add-entry').addEventListener('click', () => addDailyReportEntry());
+  document.getElementById('daily-report-add-special-entry').addEventListener('click', () => addDailyReportEntry());
+  document.getElementById('daily-report-submit').addEventListener('click', doSubmitDailyReport);
+  document.querySelectorAll('#screen-daily-report-admin .filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#screen-daily-report-admin .filter-chip').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      dailyReportAdminStatus = btn.dataset.status;
+      loadDailyReportAdminList();
+    });
+  });
 
   document.getElementById('profile-edit-submit').addEventListener('click', doSubmitProfileEdit);
   document.getElementById('info-change-filter').addEventListener('change', loadInfoChangeAdmin);
@@ -3034,6 +3235,12 @@ function init() {
   SCREEN_ENTER_HOOKS['health-admin'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadHealthAdminList();
+  };
+  SCREEN_ENTER_HOOKS['daily-report'] = resetDailyReportForm;
+  SCREEN_ENTER_HOOKS['my-daily-reports'] = loadMyDailyReports;
+  SCREEN_ENTER_HOOKS['daily-report-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadDailyReportAdminList();
   };
 
   const session = getSession();

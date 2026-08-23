@@ -3425,6 +3425,168 @@ async function doRequestDetailDecide(action, reason) {
   }
 }
 
+// ---------- 管理者管理(追加・解除・変更履歴) ----------
+
+let armAllEmployees = [];
+
+async function loadAdminRoleManagement() {
+  const session = getSession();
+  await Promise.all([loadAdminRoleCurrentList(), loadAdminRoleHistory()]);
+  try {
+    armAllEmployees = await rpc('list_active_employees', { p_admin_employee_code: session.employeeCode });
+  } catch (e) { /* 無視 */ }
+  document.getElementById('arm-add-search').value = '';
+  document.getElementById('arm-add-candidates').innerHTML = '';
+  hideError('arm-error');
+}
+
+async function loadAdminRoleCurrentList() {
+  const session = getSession();
+  const listEl = document.getElementById('arm-current-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_admin_roles', { p_admin_employee_code: session.employeeCode });
+    const general = rows.filter((r) => r.role_type === 'general_admin');
+    if (general.length === 0) { listEl.innerHTML = '<div class="hint">管理者がいません。</div>'; return; }
+    listEl.innerHTML = general.map((r) => `
+      <div class="employee-row" data-code="${r.employee_code}" style="cursor:default;">
+        <span class="employee-avatar">${r.employee_name.slice(0, 1)}</span>
+        <div class="employee-row-body">
+          <div class="employee-row-name">${r.employee_name}(${r.employee_code})</div>
+          <div class="employee-row-meta">付与: ${r.granted_by}・${new Date(r.granted_at).toLocaleDateString('ja-JP')}</div>
+        </div>
+        <button type="button" class="reject-btn arm-revoke-btn" style="width:auto;margin:0;">解除</button>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.arm-revoke-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => doRevokeAdminRole(e.target.closest('.employee-row').dataset.code));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function loadAdminRoleHistory() {
+  const session = getSession();
+  const listEl = document.getElementById('arm-history-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_get_role_change_history', { p_admin_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">変更履歴はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => {
+      const d = r.detail || {};
+      const label = r.action === 'admin_role_granted' ? '追加' : '解除';
+      return `
+        <div class="change-request-item">
+          <div class="row1"><span>${d.target_employee_name || ''}を管理者${label}</span></div>
+          <div class="row2">${r.actor_name}・${new Date(r.created_at).toLocaleString('ja-JP')}</div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+function renderAdminRoleCandidates(query) {
+  const listEl = document.getElementById('arm-add-candidates');
+  const q = (query || '').trim();
+  if (!q) { listEl.innerHTML = ''; return; }
+  const matches = armAllEmployees.filter((e) => e.employee_name.includes(q) || e.employee_code.includes(q)).slice(0, 8);
+  listEl.innerHTML = matches.map((e) => `
+    <button type="button" class="candidate-item" data-code="${e.employee_code}" data-name="${e.employee_name}">${e.employee_name}(${e.employee_code})</button>
+  `).join('');
+  listEl.querySelectorAll('.candidate-item').forEach((btn) => {
+    btn.addEventListener('click', () => doGrantAdminRole(btn.dataset.code, btn.dataset.name));
+  });
+}
+
+async function doGrantAdminRole(employeeCode, employeeName) {
+  const session = getSession();
+  hideError('arm-error');
+  if (!window.confirm(`${employeeName}(${employeeCode})を管理者に追加しますか?`)) return;
+  try {
+    await rpc('admin_grant_admin_role', { p_admin_employee_code: session.employeeCode, p_target_employee_code: employeeCode, p_role_type: 'general_admin' });
+    document.getElementById('arm-add-search').value = '';
+    document.getElementById('arm-add-candidates').innerHTML = '';
+    await Promise.all([loadAdminRoleCurrentList(), loadAdminRoleHistory()]);
+  } catch (e) {
+    showError('arm-error', e.message || '追加に失敗しました。');
+  }
+}
+
+async function doRevokeAdminRole(employeeCode) {
+  const session = getSession();
+  hideError('arm-error');
+  if (!window.confirm(`社員番号${employeeCode}を管理者から解除しますか?`)) return;
+  try {
+    await rpc('admin_revoke_admin_role', { p_admin_employee_code: session.employeeCode, p_target_employee_code: employeeCode, p_role_type: 'general_admin' });
+    await Promise.all([loadAdminRoleCurrentList(), loadAdminRoleHistory()]);
+  } catch (e) {
+    showError('arm-error', e.message || '解除に失敗しました。');
+  }
+}
+
+// ---------- 日報管理(入口・基本画面) ----------
+
+let drmFilters = { site: null, employee: '', dateFrom: '', dateTo: '', status: '' };
+
+async function loadDailyReportManagement() {
+  const session = getSession();
+  drmFilters = { site: null, employee: '', dateFrom: '', dateTo: '', status: '' };
+  document.getElementById('drm-search-site').value = '';
+  document.getElementById('drm-selected-site-label').style.display = 'none';
+  document.getElementById('drm-site-candidates').innerHTML = '';
+  document.getElementById('drm-date-from').value = '';
+  document.getElementById('drm-date-to').value = '';
+  document.querySelectorAll('#screen-daily-report-management .filter-chip').forEach((c, i) => c.classList.toggle('active', i === 0));
+
+  const missingEl = document.getElementById('drm-missing-today-list');
+  missingEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const missing = await rpc('admin_get_daily_report_missing', { p_admin_employee_code: session.employeeCode, p_date: new Date().toISOString().slice(0, 10) });
+    missingEl.innerHTML = missing.length === 0
+      ? '<div class="hint">本日は全員提出済みです。</div>'
+      : missing.map((m) => `<span class="mini-tag danger" style="display:inline-block;margin:2px 4px 2px 0;">${m.employee_name}</span>`).join('');
+  } catch (e) {
+    missingEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+
+  try {
+    const employees = await rpc('list_active_employees', { p_admin_employee_code: session.employeeCode });
+    document.getElementById('drm-employee-select').innerHTML = '<option value="">すべての社員</option>' + employees.map((e) => `<option value="${e.employee_code}">${e.employee_name}(${e.employee_code})</option>`).join('');
+  } catch (e) { /* 無視 */ }
+
+  loadDailyReportManagementList();
+}
+
+async function loadDailyReportManagementList() {
+  const session = getSession();
+  const listEl = document.getElementById('drm-list');
+  const countEl = document.getElementById('drm-count');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_search_daily_reports', {
+      p_admin_employee_code: session.employeeCode,
+      p_date_from: drmFilters.dateFrom || null, p_date_to: drmFilters.dateTo || null,
+      p_employee_code: drmFilters.employee || null, p_site_id: drmFilters.site || null,
+      p_validation_status: drmFilters.status || null,
+    });
+    countEl.textContent = `${rows.length}件`;
+    if (rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する日報はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="history-item">
+        <div class="row1"><span>${r.employee_name || '(不明)'}・${r.site_name || '(現場不明)'}</span><span>${r.headcount != null ? Number(r.headcount).toFixed(1) + '人工' : ''}</span></div>
+        <div class="row2">${r.report_date}・${r.work_type || ''}</div>
+        ${r.validation_status === 'anomaly' ? '<span class="mini-tag danger">要確認</span>' : '<span class="mini-tag muted">通常提出</span>'}
+        ${r.reflected_to_sheet_at ? '<span class="mini-tag info">シート反映済み</span>' : ''}
+      </div>
+    `).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
 // ---------- 使用目的マスター管理(管理者) ----------
 
 function resetPurposeForm() {
@@ -3582,6 +3744,52 @@ function init() {
 
   document.getElementById('license-type-submit').addEventListener('click', doSaveLicenseType);
   document.getElementById('purpose-submit').addEventListener('click', doSavePurpose);
+
+  document.getElementById('arm-add-search').addEventListener('input', (e) => renderAdminRoleCandidates(e.target.value));
+
+  let drmSiteSearchTimer = null;
+  document.getElementById('drm-search-site').addEventListener('input', (e) => {
+    clearTimeout(drmSiteSearchTimer);
+    const q = e.target.value.trim();
+    drmSiteSearchTimer = setTimeout(async () => {
+      const session = getSession();
+      const candEl = document.getElementById('drm-site-candidates');
+      if (!q) { candEl.innerHTML = ''; return; }
+      try {
+        const rows = await rpc('admin_search_sites_simple', { p_admin_employee_code: session.employeeCode, p_query: q });
+        candEl.innerHTML = rows.map((s) => `<button type="button" class="candidate-item" data-id="${s.id}" data-name="${s.site_name}">${s.site_name}</button>`).join('');
+        candEl.querySelectorAll('.candidate-item').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            drmFilters.site = Number(btn.dataset.id);
+            document.getElementById('drm-selected-site-label').style.display = 'block';
+            document.getElementById('drm-selected-site-label').textContent = `絞り込み中: ${btn.dataset.name}(解除するには検索欄を空にして再検索)`;
+            candEl.innerHTML = '';
+            document.getElementById('drm-search-site').value = '';
+            loadDailyReportManagementList();
+          });
+        });
+      } catch (e2) { /* 無視 */ }
+    }, 250);
+  });
+  document.getElementById('drm-employee-select').addEventListener('change', (e) => {
+    drmFilters.employee = e.target.value;
+    loadDailyReportManagementList();
+  });
+  ['drm-date-from', 'drm-date-to'].forEach((id) => {
+    document.getElementById(id).addEventListener('change', () => {
+      drmFilters.dateFrom = document.getElementById('drm-date-from').value;
+      drmFilters.dateTo = document.getElementById('drm-date-to').value;
+      loadDailyReportManagementList();
+    });
+  });
+  document.querySelectorAll('#screen-daily-report-management .filter-row .filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#screen-daily-report-management .filter-row .filter-chip').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      drmFilters.status = btn.dataset.status;
+      loadDailyReportManagementList();
+    });
+  });
 
   let areqSearchTimer = null;
   document.getElementById('areq-search-name').addEventListener('input', (e) => {
@@ -3759,6 +3967,14 @@ function init() {
   SCREEN_ENTER_HOOKS['admin-all-requests'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadAdminAllRequests();
+  };
+  SCREEN_ENTER_HOOKS['admin-role-management'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadAdminRoleManagement();
+  };
+  SCREEN_ENTER_HOOKS['daily-report-management'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadDailyReportManagement();
   };
 
   const session = getSession();

@@ -231,7 +231,7 @@
 
   <!-- 日報 特殊ケース確認(管理者) -->
   <section id="screen-daily-report-admin" class="screen">
-    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <button type="button" class="back-link" data-nav="daily-report-management">日報管理に戻る</button>
     <div class="form-title">日報の特殊ケース確認</div>
     <div class="hint" style="margin-bottom:10px;">3現場以上の日報は自動でスプレッドシートへ反映されません。内容を確認し、手動で反映してから「対応済み」にしてください。</div>
     <div class="filter-row">
@@ -240,6 +240,61 @@
       <button type="button" class="filter-chip" data-status="">すべて</button>
     </div>
     <div id="daily-report-admin-list"></div>
+  </section>
+
+  <!-- 管理者管理: 追加・解除・変更履歴 -->
+  <section id="screen-admin-role-management" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">管理者管理</div>
+    <div class="hint" style="margin-bottom:12px;">管理者権限の変更は監査ログに記録されます。管理者が0人になる操作はできません。</div>
+
+    <div class="section-title">現在の管理者</div>
+    <div id="arm-current-list"></div>
+
+    <div class="card">
+      <div class="form-title" style="font-size:15px;">管理者を追加</div>
+      <label for="arm-add-search">社員名・社員番号で検索</label>
+      <input type="text" id="arm-add-search" placeholder="検索...">
+      <div id="arm-add-candidates" class="candidate-results"></div>
+      <div class="error" id="arm-error"></div>
+    </div>
+
+    <div class="section-title">権限の変更履歴</div>
+    <div id="arm-history-list"></div>
+  </section>
+
+  <!-- 日報管理(入口・基本画面): 日付・社員・現場・状態で検索、本日の未提出を確認 -->
+  <section id="screen-daily-report-management" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">日報管理</div>
+    <div class="hint" style="margin-bottom:12px;">サクミルからの移行に向けた準備画面です。入力ルール・スプレッドシート連携の最終仕様は今後決定します。</div>
+
+    <div class="section-title">本日、日報が未提出の社員</div>
+    <div id="drm-missing-today-list"></div>
+    <button type="button" class="secondary" data-nav="daily-report-admin">3現場以上の特殊ケースを確認する</button>
+
+    <div class="section-title">日報を検索</div>
+    <div class="search-bar">
+      <span class="icon-slot" data-icon="search"></span>
+      <input type="text" id="drm-search-site" placeholder="現場名で検索...">
+    </div>
+    <div id="drm-site-candidates" class="candidate-results"></div>
+    <input type="hidden" id="drm-selected-site-id">
+    <div class="hint-inline" id="drm-selected-site-label" style="display:none;"></div>
+
+    <label for="drm-employee-select">社員</label>
+    <select id="drm-employee-select"><option value="">すべての社員</option></select>
+    <label for="drm-date-from">日付(開始)</label>
+    <input type="date" id="drm-date-from">
+    <label for="drm-date-to">日付(終了)</label>
+    <input type="date" id="drm-date-to">
+    <div class="filter-row">
+      <button type="button" class="filter-chip active" data-status="">すべて</button>
+      <button type="button" class="filter-chip" data-status="normal">通常提出</button>
+      <button type="button" class="filter-chip" data-status="anomaly">要確認(特殊ケース)</button>
+    </div>
+    <div class="hint" id="drm-count" style="margin:10px 0;"></div>
+    <div id="drm-list"></div>
   </section>
 
   <!-- 資格・免許申請フォーム -->
@@ -797,6 +852,16 @@
     <button type="button" class="back-link" data-nav="menu">ホームに戻る</button>
     <div class="form-title">管理者ダッシュボード</div>
     <div class="hint" style="margin-bottom:12px;">今すぐ対応が必要なことをまとめて表示しています。件数をタップすると一覧に移動します。</div>
+
+    <div class="section-title">よく使う管理機能</div>
+    <div class="home-card-grid" style="margin-bottom:20px;">
+      <button type="button" class="home-card" data-nav="admin-announce">
+        <span class="icon-slot" data-icon="bell"></span>
+        <span class="home-card-label">会社からのお知らせ</span>
+        <span class="home-card-desc">作成・配信先選択・既読/確認状況</span>
+      </button>
+    </div>
+
     <div class="dash-card-grid" id="admin-dashboard-grid"></div>
 
     <div class="section-title">社員管理</div>
@@ -860,9 +925,9 @@
         <div class="menu-item-body">接待交際費 事前申請<span class="desc">承認待ちの接待予定を確認</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
-      <button type="button" class="menu-item" data-nav="daily-report-admin">
+      <button type="button" class="menu-item" data-nav="daily-report-management">
         <span class="icon-slot" data-icon="clipboard-list"></span>
-        <div class="menu-item-body">日報の特殊ケース確認<span class="desc">3現場以上の日報を確認・手動反映</span></div>
+        <div class="menu-item-body">日報管理<span class="desc">日付・社員・現場で検索、本日の未提出を確認</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
       <button type="button" class="menu-item" data-nav="category-review">
@@ -875,9 +940,9 @@
         <div class="menu-item-body">匿名相談管理<span class="desc">投稿者は表示されません</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
-      <button type="button" class="menu-item" data-nav="admin-announce">
-        <span class="icon-slot" data-icon="bell"></span>
-        <div class="menu-item-body">お知らせ管理<span class="desc">通知の作成・既読状況を確認</span></div>
+      <button type="button" class="menu-item" data-nav="admin-role-management">
+        <span class="icon-slot" data-icon="shield"></span>
+        <div class="menu-item-body">管理者管理<span class="desc">管理者の追加・解除、変更履歴を確認</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
     </div>

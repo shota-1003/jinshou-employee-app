@@ -6,13 +6,16 @@
 <title>迅翔興業 社員ポータル</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon.svg">
-<link rel="apple-touch-icon" href="icons/icon.svg">
-<meta name="theme-color" content="#1a3a6b">
+<link rel="apple-touch-icon" href="icons/app-icon-180.png">
+<meta name="theme-color" content="#12213f">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;800;900&family=Zen+Kaku+Gothic+New:wght@500;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="app-header">
-  <span class="app-header-logo">迅</span>
+  <img src="brand/logo-gold.png" alt="迅翔興業" class="app-header-logo">
   <span class="app-header-title">社員ポータル</span>
 </header>
 <main>
@@ -20,7 +23,7 @@
   <!-- ログイン画面(社員番号入力、初回またはログイン先切り替え時のみ) -->
   <section id="screen-login" class="screen">
     <div class="login-wrap">
-      <div class="login-logo">迅</div>
+      <img src="brand/logo-gold.png" alt="迅翔興業" class="login-logo">
       <div class="login-company">株式会社 迅翔興業</div>
       <div class="card">
         <label for="login-code">社員番号</label>
@@ -35,7 +38,7 @@
   <!-- 暗証番号入力画面(2回目以降、端末が社員番号を記憶している場合) -->
   <section id="screen-pin-entry" class="screen">
     <div class="login-wrap">
-      <div class="login-logo">迅</div>
+      <img src="brand/logo-gold.png" alt="迅翔興業" class="login-logo">
       <div class="login-company" id="pin-entry-name">読み込み中...</div>
       <div class="card">
         <label for="pin-entry-code">暗証番号を入力してください</label>
@@ -50,7 +53,7 @@
   <!-- 暗証番号登録画面(初回、または管理者リセット後) -->
   <section id="screen-pin-register" class="screen">
     <div class="login-wrap">
-      <div class="login-logo">迅</div>
+      <img src="brand/logo-gold.png" alt="迅翔興業" class="login-logo">
       <div class="login-company" id="pin-register-name">初めての方へ</div>
       <div class="card">
         <div class="hint" style="margin-bottom:14px;">今後ログインに使う暗証番号(4〜6桁の数字)を設定してください。次回からはこの暗証番号だけでログインできます。</div>

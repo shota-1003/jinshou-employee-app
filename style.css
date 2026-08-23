@@ -1,40 +1,51 @@
-/* ===== デザインシステム(2026-08-23刷新): 画面ごとにバラバラだったデザインをここへ集約する。
-   絵文字アイコンを廃止し線画SVG(icons.js)へ、カードは枠線をほぼ無くして薄い影で立体感を出す、
-   文字色は本文/補足の2階調に統一、というモダンなSaaSアプリの方向性に合わせた。 ===== */
+/* ===== デザインシステム(2026-08-23刷新→2026-08-23再刷新): 会社ブランド(ネイビー×ゴールド)に
+   合わせたダーク基調+フロストガラス質感へ全面刷新。カード等の見た目はほぼ全て下記のCSS変数
+   (トークン)経由で決まる設計のため、ここを書き換えるだけで全画面へ一貫して反映される。
+   絵文字は使わず線画SVG(icons.js、currentColor継承)のまま。 ===== */
 :root {
-  --primary: #1a3a6b;
-  --primary-light: #2c5aa0;
-  --accent: #2c5aa0;
-  --bg: #f7f8fa;
-  --card-bg: #ffffff;
-  --text: #171a24;
-  --text-muted: #8a8f9c;
-  --text-faint: #b4b8c2;
-  --border: #edeff3;
-  --border-strong: #e1e4ea;
-  --danger: #d93a3a;
-  --danger-bg: #fdeeee;
-  --success: #1e8a54;
-  --success-bg: #e8f7ef;
-  --warn: #b8791a;
-  --warn-bg: #fdf1de;
-  --info: #2c5aa0;
-  --info-bg: #eef3fb;
-  --shadow-sm: 0 1px 2px rgba(16,24,40,.04), 0 2px 6px rgba(16,24,40,.05);
-  --shadow-md: 0 4px 14px rgba(16,24,40,.08);
-  --radius-lg: 20px;
-  --radius-md: 16px;
-  --radius-sm: 12px;
+  --primary: oklch(0.66 0.16 264);
+  --primary-light: oklch(0.72 0.13 264);
+  --primary-deep: oklch(0.42 0.13 264);
+  --accent: oklch(0.66 0.16 264);
+  --gold: oklch(0.82 0.165 88);
+  --gold-foreground: oklch(0.28 0.05 70);
+  --bg: oklch(0.17 0.022 264);
+  --card-bg: oklch(0.24 0.03 264 / 72%);
+  --card-bg-solid: oklch(0.24 0.03 264);
+  --text: oklch(0.96 0.008 250);
+  --text-muted: oklch(0.72 0.025 258);
+  --text-faint: oklch(0.55 0.02 258);
+  --border: oklch(1 0 0 / 10%);
+  --border-strong: oklch(1 0 0 / 17%);
+  --danger: oklch(0.66 0.19 22);
+  --danger-bg: oklch(0.66 0.19 22 / 16%);
+  --success: oklch(0.74 0.15 155);
+  --success-bg: oklch(0.74 0.15 155 / 15%);
+  --warn: oklch(0.82 0.165 88);
+  --warn-bg: oklch(0.82 0.165 88 / 16%);
+  --info: oklch(0.66 0.16 264);
+  --info-bg: oklch(0.36 0.06 264 / 55%);
+  --shadow-sm: inset 0 1px 0 0 oklch(1 0 0 / 7%), 0 10px 26px -16px oklch(0 0 0 / 55%);
+  --shadow-md: inset 0 1px 0 0 oklch(1 0 0 / 8%), 0 22px 46px -22px oklch(0 0 0 / 62%);
+  --glow-brand: 0 0 0 1px oklch(0.66 0.16 264 / 32%), 0 18px 44px -16px oklch(0.5 0.18 264 / 62%);
+  --radius-lg: 26px;
+  --radius-md: 19px;
+  --radius-sm: 14px;
   --radius-pill: 999px;
+  --font-display: 'Zen Kaku Gothic New', 'Hiragino Sans', sans-serif;
 }
 
 * { box-sizing: border-box; }
-::selection { background: rgba(44,90,160,.18); }
+::selection { background: oklch(0.66 0.16 264 / 30%); }
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic', sans-serif;
-  background: var(--bg);
+  font-family: 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic', sans-serif;
+  background:
+    radial-gradient(560px circle at 28% -6%, oklch(0.5 0.18 264 / 0.32), transparent 60%),
+    radial-gradient(480px circle at 82% 8%, oklch(0.55 0.14 300 / 0.14), transparent 55%),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--text);
   min-height: 100vh;
   display: flex;
@@ -47,8 +58,10 @@ body {
 
 .app-header {
   width: 100%;
-  background: var(--primary);
-  color: #fff;
+  background: color-mix(in oklch, var(--card-bg-solid) 78%, transparent);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  color: var(--text);
   padding: 16px 20px;
   display: flex;
   align-items: center;
@@ -57,12 +70,13 @@ body {
   position: sticky;
   top: 0;
   z-index: 10;
+  border-bottom: 1px solid var(--border);
 }
 .app-header-logo {
-  width: 30px; height: 30px; border-radius: 9px; background: rgba(255,255,255,.16);
-  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;
+  width: 30px; height: 30px; object-fit: contain;
+  filter: drop-shadow(0 2px 8px oklch(0.6 0.18 264 / 0.5));
 }
-.app-header-title { font-size: 15px; font-weight: 700; letter-spacing: .02em; opacity: .96; }
+.app-header-title { font-family: var(--font-display); font-size: 15.5px; font-weight: 700; letter-spacing: .02em; opacity: .96; }
 
 main {
   width: 100%;
@@ -73,27 +87,34 @@ main {
 
 .bottom-nav {
   position: fixed; bottom: 0; left: 0; right: 0;
-  display: flex; background: rgba(255,255,255,.92); backdrop-filter: blur(14px);
+  display: flex;
+  background: color-mix(in oklch, var(--card-bg-solid) 78%, transparent);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
   border-top: 1px solid var(--border);
   max-width: 480px; margin: 0 auto; z-index: 20;
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 .bottom-nav-item {
   flex: 1; background: none; border: none; padding: 9px 4px 10px; margin: 0;
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
   font-size: 10.5px; color: var(--text-faint); font-weight: 600; border-radius: 0;
 }
-.bottom-nav-item .icon { width: 22px; height: 22px; color: var(--text-faint); }
-.bottom-nav-item.active { color: var(--primary); }
-.bottom-nav-item.active .icon { color: var(--primary); }
+.bottom-nav-item .icon {
+  width: 32px; height: 26px; padding: 3px 5px; border-radius: var(--radius-pill);
+  color: var(--text-faint); transition: all .25s;
+}
+.bottom-nav-item.active { color: var(--text); }
+.bottom-nav-item.active .icon {
+  color: #fff; background: linear-gradient(135deg, var(--primary), var(--primary-deep)); box-shadow: var(--glow-brand);
+}
 
 .login-wrap { text-align: center; padding-top: 8vh; }
 .login-logo {
-  width: 72px; height: 72px; border-radius: 22px; background: var(--primary); color: #fff;
-  font-size: 34px; font-weight: 700; display: flex; align-items: center; justify-content: center;
-  margin: 0 auto 14px; box-shadow: var(--shadow-md);
+  width: 72px; height: 72px; object-fit: contain;
+  margin: 0 auto 14px; filter: drop-shadow(0 8px 22px oklch(0.6 0.18 264 / 0.45));
 }
-.login-company { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 26px; }
+.login-company { font-family: var(--font-display); font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 26px; }
 .login-wrap .card { text-align: left; }
 
 .greeting-block { margin-bottom: 20px; }
@@ -115,7 +136,11 @@ main {
   box-shadow: var(--shadow-sm); display: flex; flex-direction: column; align-items: flex-start;
   gap: 8px; text-align: left; min-height: 92px;
 }
-.home-card .icon { width: 24px; height: 24px; color: var(--primary); }
+.home-card .icon {
+  width: 44px; height: 44px; padding: 11px; box-sizing: border-box;
+  background: var(--info-bg); color: var(--primary); border-radius: var(--radius-md);
+  display: inline-flex; align-items: center; justify-content: center;
+}
 .home-card-label { font-size: 14.5px; font-weight: 700; color: var(--text); }
 .home-card-desc { font-size: 11.5px; color: var(--text-muted); }
 .home-card.disabled { opacity: .45; }
@@ -130,6 +155,17 @@ main {
   padding: 20px;
   box-shadow: var(--shadow-sm);
   margin-bottom: 16px;
+}
+
+/* フロストガラス質感: カード状の要素すべてに一括適用(個別ルールを書き換えずに済むよう
+   backdrop-filterだけをここでまとめて追加する) */
+.card, .home-card, .stat-mini, .menu-item, .history-item, .supply-item, .admin-result-item,
+.employee-row, .qual-item, .dash-card, .change-request-item, .consult-list-item, .announce-item,
+.today-item, .home-announce-item, .category-review-item, .announce-admin-item, .main-menu-card,
+.supply-select-card, .candidate-item, .preapproval-candidate, .consult-code-box, .expense-item-card > .item-details,
+.field-group .card, .modal-sheet {
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
 }
 
 .menu-list { display: flex; flex-direction: column; gap: 10px; }
@@ -161,6 +197,13 @@ main {
 .menu-item.disabled { opacity: .45; cursor: default; }
 .menu-item .arrow { color: var(--text-faint); flex-shrink: 0; }
 
+/* 見出し・強調数値には見出し用書体(Zen Kaku Gothic New)を当てる */
+.greeting-name, .stat-mini-value, .home-card-label, .form-title, .dash-card-count,
+.profile-header-name, .item-label, .total-row.total-amount, .home-announce-title,
+.summary-row .summary-value, .employee-row-name, .today-item-label, .main-menu-label {
+  font-family: var(--font-display);
+}
+
 label {
   display: block;
   font-size: 12.5px;
@@ -175,11 +218,13 @@ input[type="text"], input[type="number"], input[type="date"], input[type="passwo
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   font-size: 15px;
-  background: #fff;
+  background: oklch(1 0 0 / 6%);
   color: var(--text);
   font-family: inherit;
+  color-scheme: dark;
 }
-input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(44,90,160,.12); }
+input::placeholder, textarea::placeholder { color: var(--text-faint); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px oklch(0.66 0.16 264 / 18%); }
 
 textarea { resize: vertical; min-height: 60px; }
 
@@ -192,32 +237,46 @@ button {
   padding: 14px;
   border: none;
   border-radius: var(--radius-sm);
-  background: var(--primary);
+  background: linear-gradient(135deg, var(--primary), var(--primary-deep));
   color: #fff;
+  font-family: var(--font-display);
   font-size: 15.5px;
   font-weight: 700;
   margin-top: 22px;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center; gap: 8px;
-  transition: opacity .15s, transform .05s;
+  box-shadow: var(--glow-brand);
+  transition: filter .15s, transform .05s;
 }
 button:active { transform: scale(.98); }
-button:disabled { opacity: .45; }
+button:disabled { opacity: .45; box-shadow: none; }
 
 button.secondary {
   background: var(--info-bg);
-  color: var(--primary);
+  color: var(--text);
   border: none;
+  box-shadow: none;
   margin-top: 10px;
 }
 
 button.link {
   background: transparent;
   color: var(--text-muted);
+  font-family: inherit;
   font-weight: 500;
   font-size: 13px;
   text-decoration: none;
+  box-shadow: none;
   margin-top: 24px;
+}
+
+/* 小さい丸ボタン・チップ・タブ・削除ボタン等は基本のbuttonルール(グラデ+発光)を継承しない */
+.remove-item-btn, .return-btn, .retake-btn, .home-announce-header .see-all, .qual-verify-btns button,
+.tab-btn, .filter-chip, .field-edit-btn, .participant-chip button, .item-new-site-toggle-btn,
+.item-partner-participant-add-btn, .qual-category-toggle button, .reject-confirm-btn,
+.photo-pick-link, .link, button.link {
+  box-shadow: none;
+  font-family: inherit;
 }
 
 .error {
@@ -318,8 +377,9 @@ button.link {
 
 .photo-capture-btn {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
-  background: var(--primary); color: #fff; border-radius: var(--radius-md); padding: 24px 16px;
-  font-size: 15px; font-weight: 700; cursor: pointer; text-align: center;
+  background: linear-gradient(135deg, var(--primary-deep), var(--primary)); color: #fff;
+  border-radius: var(--radius-md); padding: 24px 16px; box-shadow: var(--glow-brand);
+  font-family: var(--font-display); font-size: 15px; font-weight: 700; cursor: pointer; text-align: center;
 }
 .photo-capture-btn .icon { width: 30px; height: 30px; }
 .photo-capture-btn input[type="file"] { display: none; }
@@ -331,7 +391,7 @@ button.link {
 .item-photo-attached { text-align: center; }
 .item-photo-preview { width: 100%; max-height: 220px; object-fit: cover; border-radius: var(--radius-md); margin-bottom: 6px; }
 .retake-btn {
-  width: auto; background: var(--bg); border: none; color: var(--text-muted);
+  width: auto; background: oklch(1 0 0 / 8%); border: none; color: var(--text-muted);
   font-size: 12px; font-weight: 600; padding: 7px 14px; margin: 6px auto 0; border-radius: var(--radius-pill);
 }
 .item-details { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border-strong); }
@@ -379,13 +439,13 @@ button.link {
 .today-item-label { font-size: 13.5px; font-weight: 700; color: var(--text); }
 .today-item-count { font-size: 12px; color: var(--text-muted); margin-top: 2px; font-weight: 600; }
 .today-item-arrow { color: var(--text-faint); flex-shrink: 0; }
-.today-item.urgent { background: linear-gradient(135deg, #fff3ee, #fdeeee); border-color: #f6d9cf; }
-.today-item.urgent .today-item-icon { background: #fce0d6; color: var(--danger); }
+.today-item.urgent { background: var(--danger-bg); border-color: oklch(0.66 0.19 22 / 30%); }
+.today-item.urgent .today-item-icon { background: oklch(0.66 0.19 22 / 22%); color: var(--danger); }
 .today-empty { font-size: 13px; color: var(--text-muted); padding: 8px 4px 4px; }
 
 /* 重要なお知らせバナー */
 .announce-banner {
-  display: block; width: 100%; text-align: left; background: linear-gradient(135deg, #fdf1de, #fdeee0); border: 1px solid #f3ddb0;
+  display: block; width: 100%; text-align: left; background: var(--warn-bg); border: 1px solid oklch(0.82 0.165 88 / 30%);
   border-radius: var(--radius-md); padding: 14px 16px; margin-bottom: 16px; font-family: inherit; cursor: pointer;
 }
 .announce-banner-label { font-size: 11px; font-weight: 800; color: var(--warn); display: flex; align-items: center; gap: 5px; }
@@ -509,7 +569,7 @@ button.link {
 .item-suggest-chip .icon { width: 16px; height: 16px; flex-shrink: 0; }
 
 /* ===== タブ切り替え(社員詳細等) ===== */
-.tab-bar { display: flex; gap: 4px; background: var(--bg); border-radius: var(--radius-pill); padding: 4px; margin-bottom: 16px; overflow-x: auto; }
+.tab-bar { display: flex; gap: 4px; background: oklch(1 0 0 / 6%); border-radius: var(--radius-pill); padding: 4px; margin-bottom: 16px; overflow-x: auto; }
 .tab-btn {
   flex: 1; width: auto; margin: 0; padding: 8px 10px; font-size: 12.5px; font-weight: 700; white-space: nowrap;
   background: none; color: var(--text-muted); border-radius: var(--radius-pill);
@@ -546,7 +606,7 @@ button.link {
 .mini-tag.warn { background: var(--warn-bg); color: var(--warn); }
 .mini-tag.danger { background: var(--danger-bg); color: var(--danger); }
 .mini-tag.info { background: var(--info-bg); color: var(--primary); }
-.mini-tag.muted { background: var(--bg); color: var(--text-muted); }
+.mini-tag.muted { background: oklch(1 0 0 / 8%); color: var(--text-muted); }
 
 /* ===== 社員詳細(管理者)・自分の情報(社員) 共通の情報表示 ===== */
 .field-group { margin-bottom: 8px; }
@@ -562,7 +622,8 @@ button.link {
 }
 .profile-header { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
 .profile-avatar {
-  width: 56px; height: 56px; border-radius: 50%; background: var(--primary); color: #fff;
+  width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), var(--primary-deep)); color: #fff;
+  box-shadow: var(--glow-brand); font-family: var(--font-display);
   display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 19px; flex-shrink: 0;
 }
 .profile-header-name { font-size: 18px; font-weight: 800; color: var(--text); }
@@ -595,7 +656,7 @@ button.link {
 
 /* ===== 現場の新規入力・打ち合わせ/接待交際費の参加者ブロック ===== */
 .item-new-site-wrap, .item-meeting-block, .item-entertainment-block {
-  margin-top: 6px; padding: 12px 14px; background: var(--bg); border-radius: var(--radius-sm); border: 1px dashed var(--border-strong);
+  margin-top: 6px; padding: 12px 14px; background: oklch(1 0 0 / 5%); border-radius: var(--radius-sm); border: 1px dashed var(--border-strong);
 }
 .participant-select { margin-top: 6px; }
 .participant-search-input { margin-bottom: 6px; }
@@ -649,7 +710,7 @@ button.link {
 /* 資格・免許・健診 */
 .qual-category-toggle { display: flex; gap: 8px; margin-bottom: 10px; }
 .qual-category-toggle button { width: auto; flex: 1; margin: 0; padding: 10px; font-size: 13px; }
-.qual-category-toggle button.secondary-off { background: var(--bg); color: var(--text-muted); }
+.qual-category-toggle button.secondary-off { background: oklch(1 0 0 / 8%); color: var(--text-muted); }
 .health-summary-card { background: var(--info-bg); border-radius: var(--radius-md); padding: 16px; margin-bottom: 8px; }
 .health-summary-card .row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13.5px; color: var(--text); }
 .health-summary-card .row .label { color: var(--text-muted); }

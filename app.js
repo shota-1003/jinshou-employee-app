@@ -452,6 +452,51 @@ async function populateVendorList() {
   } catch (e) { /* 取引先候補が引けなくても自由入力は継続できる */ }
 }
 
+// 使用目的マスター(expense_purpose_master)から候補を読み込む。候補に無い値を入力した場合は
+// 送信時(submit_expense_claim側)に新しい候補として自動登録され、次回から検索・選択できるようになる。
+async function populatePurposeList() {
+  try {
+    const rows = await rpc('search_expense_purposes', { p_query: null });
+    document.getElementById('purpose-list').innerHTML = rows.map((p) => `<option value="${p.name}">`).join('');
+  } catch (e) { /* 候補が引けなくても自由入力は継続できる */ }
+}
+
+// 取引先参加者名を複数登録できる簡易チップ入力(検索は不要な自由記入の氏名リスト)。
+// HTML側(expense-item-template)に既にある入力欄・追加ボタン・チップ表示欄を配線するだけで、
+// マークアップの再生成はしない(打ち合わせ項目の他の要素を巻き込んで消さないため)。
+function wirePartnerParticipantChips(card) {
+  const names = [];
+  const input = card.querySelector('.item-partner-participant-input');
+  const chips = card.querySelector('.item-partner-participant-chips');
+
+  function renderChips() {
+    chips.innerHTML = names.map((n, i) => `
+      <span class="participant-chip" data-idx="${i}">${n}<button type="button">${icon('x-circle')}</button></span>
+    `).join('');
+    chips.querySelectorAll('.participant-chip button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        names.splice(Number(btn.closest('.participant-chip').dataset.idx), 1);
+        renderChips();
+      });
+    });
+  }
+
+  function addName() {
+    const v = input.value.trim();
+    if (!v) return;
+    names.push(v);
+    input.value = '';
+    renderChips();
+  }
+
+  card.querySelector('.item-partner-participant-add-btn').addEventListener('click', addName);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addName(); }
+  });
+
+  return { getNames() { return names.slice(); } };
+}
+
 // 打ち合わせ・接待交際費の「自社参加者」複数選択(検索→タップで選択、チップで表示)。
 function createParticipantSelect(container) {
   const selected = new Map();
@@ -541,7 +586,7 @@ async function searchAndShowPreapprovals(card, itemId) {
   } else {
     state.entertainmentPreapprovalId = null;
     const admin = session.requestRole === 'executive';
-    area.innerHTML = `<div class="preapproval-warning">${icon('alert-triangle')}承認済みの事前申請が見つかりません。接待交際費は事前申請が必要です。「接待・会食」から先に事前申請してください。</div>`
+    area.innerHTML = `<div class="preapproval-warning">${icon('alert-triangle')}事前申請が確認できないため、この接待交際費は通常の経費として申請できません。「接待・会食」から先に事前申請してください。</div>`
       + (admin ? `
         <div class="preapproval-override-box">
           <label>例外理由(管理者のみ入力可)<span class="required-mark">(必須)</span></label>
@@ -559,6 +604,7 @@ function enterExpenseScreen(category) {
   resetExpenseForm();
   hideError('expense-error');
   populateVendorList();
+  populatePurposeList();
   showScreen('expense');
 }
 
@@ -661,17 +707,28 @@ function addExpenseItem(initialFile) {
   const siteSelect = clone.querySelector('.item-site-select');
   const siteSearch = clone.querySelector('.item-site-search');
   const newSiteWrap = clone.querySelector('.item-new-site-wrap');
+  const newSiteToggleBtn = clone.querySelector('.item-new-site-toggle-btn');
   populateSiteSelect(siteSelect, '');
   siteSearch.addEventListener('input', () => populateSiteSelect(siteSelect, siteSearch.value.trim()));
   siteSelect.addEventListener('change', () => {
-    newSiteWrap.style.display = siteSelect.value === '__new__' ? 'block' : 'none';
+    if (siteSelect.value === '__new__') newSiteWrap.style.display = 'block';
+  });
+  // ネイティブselectの選択肢の中に埋もれて「新しい現場を入力」が見つけにくい実機があるため、
+  // 常に見える専用ボタンからも同じ新規入力欄を開けるようにする(selectとボタン、どちらからでも入力可)。
+  newSiteToggleBtn.addEventListener('click', () => {
+    siteSelect.value = '__new__';
+    newSiteWrap.style.display = 'block';
+    const cardEl = document.querySelector(`[data-item-id="${itemId}"]`);
+    if (cardEl) cardEl.querySelector('.item-new-site-name').focus();
   });
 
-  const purposeCategorySelect = clone.querySelector('.item-purpose-category');
+  const purposeCategoryInput = clone.querySelector('.item-purpose-category');
   const meetingBlock = clone.querySelector('.item-meeting-block');
   const entertainmentBlock = clone.querySelector('.item-entertainment-block');
-  purposeCategorySelect.addEventListener('change', () => {
-    const cat = purposeCategorySelect.value;
+  const partnerParticipantChips = wirePartnerParticipantChips(clone.querySelector('.item-meeting-block'));
+  let lastEntertainmentSearchKey = '';
+  function syncPurposeCategory() {
+    const cat = purposeCategoryInput.value.trim();
     const needsMeeting = cat === '打ち合わせ' || cat === '接待交際費';
     meetingBlock.style.display = needsMeeting ? 'block' : 'none';
     entertainmentBlock.style.display = cat === '接待交際費' ? 'block' : 'none';
@@ -681,11 +738,17 @@ function addExpenseItem(initialFile) {
       inst.setOnChange(() => { cardEl.querySelector('.item-our-count').textContent = inst.getCount(); });
       participantSelects.set(itemId, inst);
     }
-    if (cat === '接待交際費') {
+    if (cat === '接待交際費' && lastEntertainmentSearchKey !== cat) {
+      lastEntertainmentSearchKey = cat;
       const cardEl = document.querySelector(`[data-item-id="${itemId}"]`);
       searchAndShowPreapprovals(cardEl, itemId);
+    } else if (cat !== '接待交際費') {
+      lastEntertainmentSearchKey = '';
     }
-  });
+  }
+  purposeCategoryInput.addEventListener('input', syncPurposeCategory);
+  purposeCategoryInput.addEventListener('change', syncPurposeCategory);
+  expenseItemState.get(itemId).partnerParticipantChips = partnerParticipantChips;
 
   clone.querySelector('.remove-item-btn').addEventListener('click', () => {
     document.querySelector(`[data-item-id="${itemId}"]`).remove();
@@ -798,7 +861,7 @@ async function doSubmitExpense() {
     const payment = card.querySelector('.item-payment').value;
     const note = card.querySelector('.item-note').value.trim();
     const label = card.querySelector('.item-label').textContent;
-    const purposeCategory = card.querySelector('.item-purpose-category').value;
+    const purposeCategory = card.querySelector('.item-purpose-category').value.trim();
     const purpose = card.querySelector('.item-purpose').value.trim();
 
     if (state.uploading) { showError('expense-error', `${label}: 写真のアップロード中です。少しお待ちください。`); return; }
@@ -833,7 +896,8 @@ async function doSubmitExpense() {
     const needsMeeting = purposeCategory === '打ち合わせ' || purposeCategory === '接待交際費';
     if (needsMeeting) {
       if (!businessPartnerId && !newBusinessPartnerName) { showError('expense-error', `${label}: 取引先を選択または入力してください。`); return; }
-      partnerParticipants = card.querySelector('.item-partner-participants').value.trim() || null;
+      const chipNames = state.partnerParticipantChips ? state.partnerParticipantChips.getNames() : [];
+      partnerParticipants = chipNames.length > 0 ? chipNames.join('、') : null;
       partnerCount = Number(card.querySelector('.item-partner-count').value || 0);
       if (!partnerCount) { showError('expense-error', `${label}: 取引先の参加人数を入力してください。`); return; }
       const pSelect = participantSelects.get(itemId);
@@ -849,9 +913,9 @@ async function doSubmitExpense() {
         if (session.requestRole === 'executive') {
           const reasonEl = card.querySelector('.item-override-reason');
           overrideReason = reasonEl ? reasonEl.value.trim() : '';
-          if (!overrideReason) { showError('expense-error', `${label}: 接待交際費は事前申請が必要です。管理者の場合は例外理由を入力してください。`); return; }
+          if (!overrideReason) { showError('expense-error', `${label}: 事前申請が確認できないため、この接待交際費は通常の経費として申請できません。管理者の場合は例外理由を入力してください。`); return; }
         } else {
-          showError('expense-error', `${label}: 接待交際費は事前申請が必要です。「接待・会食」から先に事前申請してください。`); return;
+          showError('expense-error', `${label}: 事前申請が確認できないため、この接待交際費は通常の経費として申請できません。「接待・会食」から先に事前申請してください。`); return;
         }
       }
     }
@@ -2979,8 +3043,23 @@ function init() {
     startLoginFlow();
   }
 
+  // PWAをホーム画面に追加して使う実機では、アプリを開いたままだと新しいバージョンの
+  // Service Workerが有効化されても画面上のHTML/JSは古いまま(再読み込みするまで反映されない)。
+  // sw.js側でskipWaiting+clients.claim済みなので、制御が新しいSWへ切り替わった瞬間に
+  // 自動で1回だけ再読み込みし、実機でも次に開いたときには必ず最新版になるようにする。
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    let swRefreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (swRefreshing) return;
+      swRefreshing = true;
+      window.location.reload();
+    });
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      reg.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      });
+    }).catch(() => {});
   }
 }
 

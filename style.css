@@ -612,6 +612,19 @@ button.link {
 .participant-chip button { width: auto; margin: 0; padding: 2px; background: none; color: var(--primary); border-radius: 50%; display: flex; }
 .participant-chip button .icon { width: 14px; height: 14px; }
 
+.item-new-site-toggle-btn {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 8px 12px; width: auto;
+  background: var(--info-bg); color: var(--primary); border-radius: var(--radius-sm); font-size: 13px; font-weight: 700;
+}
+.item-new-site-toggle-btn .icon { width: 16px; height: 16px; }
+
+.item-partner-participant-add-row { display: flex; gap: 8px; margin-bottom: 6px; }
+.item-partner-participant-add-row .item-partner-participant-input { flex: 1; margin: 0; }
+.item-partner-participant-add-btn {
+  width: auto; margin: 0; padding: 0 16px; background: var(--primary); color: #fff; border-radius: var(--radius-sm); font-weight: 700; font-size: 13px;
+}
+.item-partner-participant-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+
 /* 取引先/現場の候補一覧(検索型セレクト) */
 .candidate-results { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .candidate-item {

@@ -421,31 +421,16 @@
           <div class="hint-inline">どの現場に関係する経費か選択してください。該当が無ければ「会社共通」「現場外」を選べます</div>
           <input type="text" class="item-site-search" placeholder="現場名で検索...">
           <select class="item-site-select"></select>
+          <button type="button" class="item-new-site-toggle-btn"><span class="icon-slot" data-icon="plus"></span>リストに無い現場を入力する</button>
           <div class="item-new-site-wrap" style="display:none;">
             <label>現場名を入力<span class="required-mark">(必須)</span></label>
             <div class="hint-inline">新しい現場として保存されます。管理者が確認後、次回から候補に表示されます</div>
             <input type="text" class="item-new-site-name" placeholder="例: 〇〇マンション新築工事">
           </div>
 
-          <label>使用目的(カテゴリ)<span class="required-mark">(必須)</span></label>
-          <select class="item-purpose-category">
-            <option value="">選択してください</option>
-            <option value="現場消耗品">現場消耗品</option>
-            <option value="資材購入">資材購入</option>
-            <option value="工具購入">工具購入</option>
-            <option value="駐車場代">駐車場代</option>
-            <option value="高速代">高速代</option>
-            <option value="交通費">交通費</option>
-            <option value="出張">出張</option>
-            <option value="宿泊">宿泊</option>
-            <option value="飲食">飲食</option>
-            <option value="打ち合わせ">打ち合わせ</option>
-            <option value="接待交際費">接待交際費</option>
-            <option value="社員用飲料">社員用飲料</option>
-            <option value="会社備品">会社備品</option>
-            <option value="事務用品">事務用品</option>
-            <option value="その他">その他</option>
-          </select>
+          <label>使用目的<span class="required-mark">(必須)</span></label>
+          <div class="hint-inline">候補から選ぶか、無ければそのまま自由に入力してください(次回から候補になります)</div>
+          <input type="text" class="item-purpose-category" list="purpose-list" placeholder="例: 接待交際費・駐車料金・資材購入">
           <label class="item-purpose-detail-label">詳細・具体的な使用目的</label>
           <div class="hint-inline">例: 現場用消耗品購入・駐車料金・出張宿泊・資材購入。「その他」「打ち合わせ」「接待交際費」を選んだ場合は必須です</div>
           <input type="text" class="item-purpose">
@@ -458,8 +443,12 @@
           <!-- 打ち合わせ・接待交際費の追加項目 -->
           <div class="item-meeting-block" style="display:none;">
             <label>取引先参加者</label>
-            <div class="hint-inline">氏名が分かれば入力(任意)</div>
-            <input type="text" class="item-partner-participants" placeholder="例: 山田様">
+            <div class="hint-inline">氏名が分かれば1名ずつ追加してください(任意、複数名登録可)</div>
+            <div class="item-partner-participant-add-row">
+              <input type="text" class="item-partner-participant-input" placeholder="例: 山田様">
+              <button type="button" class="item-partner-participant-add-btn">追加</button>
+            </div>
+            <div class="item-partner-participant-chips"></div>
             <label>取引先の参加人数<span class="required-mark">(必須)</span></label>
             <input type="number" class="item-partner-count" min="1">
             <label>自社参加者<span class="required-mark">(必須)</span></label>
@@ -482,6 +471,7 @@
       </div>
     </template>
     <datalist id="vendor-list"></datalist>
+    <datalist id="purpose-list"></datalist>
   </section>
 
   <!-- 会議申請フォーム -->

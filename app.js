@@ -106,7 +106,12 @@ function hydrateIcons(root) {
   });
 }
 
-function showScreen(id) {
+// スマホのハードウェア/ジェスチャーの「戻る」に対応するため、画面遷移のたびに
+// history.pushStateで積んでおく(popstateから呼ぶ場合はfromPopstate:trueにして
+// 積み直さない)。これが無いと「戻る」操作がアプリ内遷移として扱われず、
+// アプリ自体が終了・ホーム画面に戻る等の予期しない挙動になってしまう。
+function showScreen(id, opts) {
+  opts = opts || {};
   document.querySelectorAll('.screen').forEach((el) => el.classList.remove('active'));
   document.getElementById(`screen-${id}`).classList.add('active');
   const preAuthScreens = ['login', 'pin-entry', 'pin-register'];
@@ -114,7 +119,36 @@ function showScreen(id) {
   document.querySelectorAll('.bottom-nav-item').forEach((btn) => {
     btn.classList.toggle('active', btn.getAttribute('data-nav') === (BOTTOM_NAV_MAP[id] || id));
   });
+  if (!opts.fromPopstate && !preAuthScreens.includes(id)) {
+    history.pushState({ screen: id }, '', location.pathname + location.search);
+  }
+  window.scrollTo(0, 0);
   if (SCREEN_ENTER_HOOKS[id]) SCREEN_ENTER_HOOKS[id]();
+}
+
+window.addEventListener('popstate', (e) => {
+  if (!getSession()) return; // ログイン前はブラウザ標準の戻る動作に任せる
+  const id = (e.state && e.state.screen) || 'menu';
+  if (document.getElementById(`screen-${id}`)) showScreen(id, { fromPopstate: true });
+});
+
+// 各種申請の完了画面(screen-done)は共通だが、「メニューに戻る」を常にホームへ
+// 固定すると申請のたびにホームへ戻されて不便なため、申請元の画面へ戻れるように
+// 遷移先を呼び出し側から指定できるようにする。
+// 「差し戻す」「却下する」を押すと理由入力欄が下に表示される作りだが、ボタンの
+// すぐ下に表示されるだけだと画面の下に隠れて何も起きていないように見えるため、
+// 表示と同時にスクロールしてテキストエリアへフォーカスする。
+function revealReasonBox(boxEl) {
+  boxEl.style.display = 'block';
+  boxEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const textarea = boxEl.querySelector('textarea');
+  if (textarea) setTimeout(() => textarea.focus(), 300);
+}
+
+function showDone(message, returnTo) {
+  document.getElementById('done-message').textContent = message;
+  document.querySelector('#screen-done [data-nav]').setAttribute('data-nav', returnTo || 'menu');
+  showScreen('done');
 }
 
 function showError(elId, message) {
@@ -408,8 +442,7 @@ async function doSubmitLeave() {
       p_reason: reason,
       p_note: note || null,
     });
-    document.getElementById('done-message').textContent = '有給休暇申請を受け付けました。承認をお待ちください。';
-    showScreen('done');
+    showDone('有給休暇申請を受け付けました。承認をお待ちください。', 'menu-apply');
     ['leave-start', 'leave-end', 'leave-reason', 'leave-note'].forEach((id) => { document.getElementById(id).value = ''; });
     document.getElementById('leave-half').checked = false;
     updateLeaveDaysDisplay();
@@ -984,8 +1017,7 @@ async function doSubmitExpense() {
     const result = await rpc('submit_expense_claim', { p_employee_code: session.employeeCode, p_expense_category: currentExpenseCategory, p_items: items });
     const r = result && result[0];
     const label = currentExpenseCategory === 'company_expense' ? '会社経費登録' : '経費立替申請';
-    document.getElementById('done-message').textContent = `${label}を受け付けました(${r ? r.item_count : items.length}件、合計${r ? Number(r.total_amount).toLocaleString() : ''}円)。承認をお待ちください。`;
-    showScreen('done');
+    showDone(`${label}を受け付けました(${r ? r.item_count : items.length}件、合計${r ? Number(r.total_amount).toLocaleString() : ''}円)。承認をお待ちください。`, 'menu-apply');
     resetExpenseForm();
   } catch (e) {
     showError('expense-error', '送信に失敗しました。もう一度お試しください。');
@@ -1025,8 +1057,7 @@ async function doSubmitMeeting() {
       p_amount: amount ? Number(amount) : null,
       p_receive_method: receive,
     });
-    document.getElementById('done-message').textContent = '会議申請を受け付けました。承認をお待ちください。';
-    showScreen('done');
+    showDone('会議申請を受け付けました。承認をお待ちください。', 'menu-apply');
     ['meeting-date', 'meeting-place', 'meeting-headcount', 'meeting-content', 'meeting-amount'].forEach((id) => { document.getElementById(id).value = ''; });
     document.getElementById('meeting-meal').checked = false;
   } catch (e) {
@@ -1153,8 +1184,7 @@ async function doSubmitSupplyRequest() {
       p_reason: reason,
       p_master_item_id: selectedSupplyMasterId,
     });
-    document.getElementById('done-message').textContent = '支給品申請を受け付けました。承認をお待ちください。';
-    showScreen('done');
+    showDone('支給品申請を受け付けました。承認をお待ちください。', 'menu-apply');
   } catch (e) {
     showError('supply-req-error', e.message || '送信に失敗しました。もう一度お試しください。');
   } finally {
@@ -1770,7 +1800,7 @@ async function loadAdminRequestList() {
     });
     listEl.querySelectorAll('.reject-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
-        e.target.closest('.history-item').querySelector('.reject-reason-box').style.display = 'block';
+        revealReasonBox(e.target.closest('.history-item').querySelector('.reject-reason-box'));
       });
     });
     listEl.querySelectorAll('.reject-confirm-btn').forEach((btn) => {
@@ -2006,8 +2036,7 @@ async function doSubmitQualification() {
       p_license_type_id: category === 'license' ? Number(licenseTypeId) : null,
     });
     resetQualForm();
-    document.getElementById('done-message').textContent = `${category === 'license' ? '免許' : '資格'}を登録しました。管理者の確認をお待ちください。`;
-    showScreen('done');
+    showDone(`${category === 'license' ? '免許' : '資格'}を登録しました。管理者の確認をお待ちください。`, 'menu-apply');
   } catch (e) {
     showError('qual-error', e.message || '送信に失敗しました。');
   } finally {
@@ -2223,8 +2252,7 @@ async function doSubmitProfileEdit() {
   btn.disabled = true;
   try {
     await rpc('submit_info_change_request', { p_employee_code: session.employeeCode, p_field_name: field, p_new_value: value });
-    document.getElementById('done-message').textContent = '変更を申請しました。管理者が確認したうえで反映されます。';
-    showScreen('done');
+    showDone('変更を申請しました。管理者が確認したうえで反映されます。', 'myinfo');
   } catch (e) {
     showError('profile-edit-error', e.message || '送信に失敗しました。');
   } finally {
@@ -2617,8 +2645,7 @@ async function doSubmitHealthCheckup() {
       p_result_drive_file_url: healthFileUpload ? healthFileUpload.driveFileUrl : null,
     });
     resetHealthForm();
-    document.getElementById('done-message').textContent = '健康診断の記録を登録しました。';
-    showScreen('done');
+    showDone('健康診断の記録を登録しました。', 'menu-apply');
   } catch (e) {
     showError('health-error', e.message || '送信に失敗しました。');
   } finally {
@@ -2723,8 +2750,7 @@ async function doSubmitEntertainmentPreapproval() {
       p_our_participant_employee_codes: ourCodes,
       p_note: document.getElementById('ent-note').value.trim() || null,
     });
-    document.getElementById('done-message').textContent = '接待・会食の事前申請を送信しました。管理者の承認をお待ちください。';
-    showScreen('done');
+    showDone('接待・会食の事前申請を送信しました。管理者の承認をお待ちください。', 'menu-apply');
   } catch (e) {
     showError('ent-error', e.message || '送信に失敗しました。');
   } finally {
@@ -3193,8 +3219,7 @@ async function doSubmitDailyReport() {
     const msg = r && r.is_special
       ? `日報を受け付けました(${dateStr}、${r.entry_count}現場)。3現場以上のため特殊日報として管理者が確認します。`
       : `日報を受け付けました(${dateStr}、合計${r ? Number(r.total_headcount).toFixed(1) : ''}人工)。`;
-    document.getElementById('done-message').textContent = msg;
-    showScreen('done');
+    showDone(msg, 'menu-apply');
   } catch (e) {
     showError('daily-report-error', e.message || '送信に失敗しました。もう一度お試しください。');
   } finally {
@@ -3353,8 +3378,8 @@ function renderRequestDetailActions(sourceType, r) {
       </div>
     `;
     document.getElementById('rdetail-approve').addEventListener('click', () => doRequestDetailDecide('approved', null));
-    document.getElementById('rdetail-needs-info').addEventListener('click', () => { document.getElementById('rdetail-reason-box').dataset.action = 'needs_info'; document.getElementById('rdetail-reason-box').style.display = 'block'; });
-    document.getElementById('rdetail-reject').addEventListener('click', () => { document.getElementById('rdetail-reason-box').dataset.action = 'rejected'; document.getElementById('rdetail-reason-box').style.display = 'block'; });
+    document.getElementById('rdetail-needs-info').addEventListener('click', () => { const box = document.getElementById('rdetail-reason-box'); box.dataset.action = 'needs_info'; revealReasonBox(box); });
+    document.getElementById('rdetail-reject').addEventListener('click', () => { const box = document.getElementById('rdetail-reason-box'); box.dataset.action = 'rejected'; revealReasonBox(box); });
     document.getElementById('rdetail-reason-confirm').addEventListener('click', () => {
       const reason = document.getElementById('rdetail-reason').value.trim();
       if (!reason) { showError('rdetail-error', '理由を入力してください。'); return; }
@@ -3371,7 +3396,7 @@ function renderRequestDetailActions(sourceType, r) {
         <button type="button" id="rdetail-reason-confirm">確定する</button>
       </div>
     `;
-    document.getElementById('rdetail-supply-reject').addEventListener('click', () => { document.getElementById('rdetail-reason-box').style.display = 'block'; });
+    document.getElementById('rdetail-supply-reject').addEventListener('click', () => { revealReasonBox(document.getElementById('rdetail-reason-box')); });
     document.getElementById('rdetail-reason-confirm').addEventListener('click', async () => {
       const reason = document.getElementById('rdetail-reason').value.trim();
       if (!reason) { showError('rdetail-error', '却下理由を入力してください。'); return; }

@@ -39,6 +39,17 @@ async function rpc(name, params) {
   return text ? JSON.parse(text) : null;
 }
 
+// new Date().toISOString()はUTC日付になるため、深夜0時〜9時JSTの間は「今日」が
+// 前日にずれてしまう(日報の未提出判定・自動確認・通知は日本時間の暦日で行う必要がある)。
+// 日報関連の「今日の日付」は必ずこの関数で取得する。
+function todayJST() {
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -3266,7 +3277,7 @@ async function resetDailyReportForm() {
   document.getElementById('daily-report-proxy-wrap').style.display = dailyReportIsNippoAdmin ? 'block' : 'none';
 
   const dateInput = document.getElementById('daily-report-date');
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayJST();
   dateInput.value = today;
   loadDailyReportForDate(today);
 }
@@ -3727,6 +3738,7 @@ async function doRevokeAdminRole(employeeCode, roleType) {
 let drmFilters = { name: '', workerType: '', status: '', dateFrom: '', dateTo: '', site: null, companyId: '' };
 let drmRows = [];
 let drmSelected = new Set(); // 選択中のグループキー(report_date|personKey)
+let drmSort = { col: 'report_date', dir: 'desc' };
 
 const DRM_STATUS_LABEL = { draft: '下書き', submitted: '提出済み', confirmed: '確認済み', rejected: '差し戻し' };
 
@@ -3750,7 +3762,7 @@ async function loadDailyReportManagement() {
   const bannerCount = document.getElementById('drm-missing-count');
   bannerCount.textContent = '本日の未提出 -';
   try {
-    const missing = await rpc('admin_get_daily_report_missing', { p_admin_employee_code: session.employeeCode, p_date: new Date().toISOString().slice(0, 10) });
+    const missing = await rpc('admin_get_daily_report_missing', { p_admin_employee_code: session.employeeCode, p_date: todayJST() });
     bannerCount.textContent = `本日の未提出 ${missing.length}名`;
     missingEl.innerHTML = missing.length === 0
       ? '<div class="hint">本日は全員提出済みです。</div>'
@@ -3764,7 +3776,37 @@ async function loadDailyReportManagement() {
     document.getElementById('drm-company-select').innerHTML = '<option value="">すべての外注会社</option>' + companies.map((c) => `<option value="${c.id}">${c.company_name}</option>`).join('');
   } catch (e) { /* 無視 */ }
 
+  loadDrmSummary();
   loadDailyReportManagementList();
+}
+
+const DRM_SUMMARY_CARDS = [
+  { key: 'submitted_count', label: '本日の提出' },
+  { key: 'missing_count', label: '本日の未提出' },
+  { key: 'pending_confirm_count', label: '確認待ち' },
+  { key: 'rejected_count', label: '差し戻し' },
+  { key: 'confirmed_count', label: '確認済み' },
+];
+
+async function loadDrmSummary() {
+  const session = getSession();
+  const grid = document.getElementById('drm-summary-grid');
+  grid.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_get_daily_report_summary', { p_admin_employee_code: session.employeeCode, p_date: todayJST() });
+    const d = rows && rows[0];
+    grid.innerHTML = DRM_SUMMARY_CARDS.map((c) => {
+      const count = d ? (d[c.key] || 0) : 0;
+      return `
+        <div class="dash-card">
+          <span class="dash-card-top"><span class="dash-card-count ${count === 0 ? 'zero' : 'alert'}">${count}</span></span>
+          <span class="dash-card-label">${c.label}</span>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    grid.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
 }
 
 function drmGroupKey(r) {
@@ -3798,6 +3840,33 @@ async function loadDailyReportManagementList() {
   }
 }
 
+function drmGroupSortValue(g, col) {
+  const f = g.first;
+  if (col === 'person_name') return f.worker_type === 'subcontractor' ? (f.subcontractor_worker_name || '') : (f.employee_name || '');
+  if (col === 'company_name') return f.subcontractor_company_name || '';
+  return f[col];
+}
+
+function sortDrmGroups(groupList) {
+  const { col, dir } = drmSort;
+  if (!col) return groupList;
+  const sorted = groupList.slice().sort((a, b) => {
+    let av = drmGroupSortValue(a, col);
+    let bv = drmGroupSortValue(b, col);
+    if (col === 'worker_type' || col === 'person_name' || col === 'company_name' || col === 'report_status') {
+      av = av || ''; bv = bv || '';
+      return String(av).localeCompare(String(bv), 'ja');
+    }
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (col === 'submitted_at') { av = new Date(av).getTime(); bv = new Date(bv).getTime(); }
+    return av > bv ? 1 : av < bv ? -1 : 0;
+  });
+  if (dir === 'desc') sorted.reverse();
+  return sorted;
+}
+
 function renderDrmAll() {
   // report_date + 対象者 でグループ化し、現場1/現場2を横に並べる(スプレッドシートの
   // 「1日=現場1行+現場2行」構造とも対応させやすいよう、スロット順に並べる)。
@@ -3807,14 +3876,19 @@ function renderDrmAll() {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(r);
   });
-  const groupList = Array.from(groups.entries()).map(([key, rows]) => {
+  let groupList = Array.from(groups.entries()).map(([key, rows]) => {
     rows.sort((a, b) => (a.entry_slot || 0) - (b.entry_slot || 0));
     return { key, rows, first: rows[0] };
   });
-  groupList.sort((a, b) => (a.first.report_date < b.first.report_date ? 1 : -1));
+  groupList = sortDrmGroups(groupList);
+
+  document.querySelectorAll('#screen-daily-report-management .areq-table th[data-sort]').forEach((th) => {
+    th.classList.toggle('sorted', th.dataset.sort === drmSort.col);
+    th.classList.toggle('desc', th.dataset.sort === drmSort.col && drmSort.dir === 'desc');
+  });
 
   const listEl = document.getElementById('drm-list');
-  if (groupList.length === 0) { listEl.innerHTML = '<div class="hint">該当する日報はありません。</div>'; document.getElementById('drm-table-body').innerHTML = '<tr><td colspan="11"><div class="hint">該当する日報はありません。</div></td></tr>'; return; }
+  if (groupList.length === 0) { listEl.innerHTML = '<div class="hint">該当する日報はありません。</div>'; document.getElementById('drm-table-body').innerHTML = '<tr><td colspan="12"><div class="hint">該当する日報はありません。</div></td></tr>'; return; }
 
   listEl.innerHTML = groupList.map((g) => {
     const f = g.first;
@@ -3854,6 +3928,7 @@ function renderDrmAll() {
         <td>${site1.site_name || '-'}</td>
         <td>${site1.work_type || '-'}</td>
         <td>${site2.site_name ? `${site2.site_name}(${site2.work_type || ''})` : '-'}</td>
+        <td>${f.submitted_at ? new Date(f.submitted_at).toLocaleString('ja-JP') : '-'}</td>
         <td>${DRM_STATUS_LABEL[f.report_status] || f.report_status}</td>
         <td><span class="status-badge ${statusBadgeClass}">${f.confirmed_by ? f.confirmed_by : (f.report_status === 'confirmed' || f.report_status === 'rejected' ? '-' : '未確認')}</span></td>
         <td>${reflected ? '反映済み' : '未反映'}</td>
@@ -4243,13 +4318,37 @@ function init() {
     const btn = document.getElementById('drm-notify-btn');
     btn.disabled = true;
     try {
-      const count = await rpc('admin_notify_missing_daily_reports', { p_admin_employee_code: session.employeeCode, p_date: new Date().toISOString().slice(0, 10) });
+      const count = await rpc('admin_notify_missing_daily_reports', { p_admin_employee_code: session.employeeCode, p_date: todayJST() });
       window.alert(`${count}名へ通知を送信しました。`);
     } catch (e) {
       window.alert(e.message || '通知の送信に失敗しました。');
     } finally {
       btn.disabled = false;
     }
+  });
+  document.getElementById('drm-autoconfirm-btn').addEventListener('click', async () => {
+    const session = getSession();
+    const btn = document.getElementById('drm-autoconfirm-btn');
+    const resultEl = document.getElementById('drm-autoconfirm-result');
+    btn.disabled = true;
+    resultEl.textContent = '実行中...';
+    try {
+      const count = await rpc('admin_run_auto_confirm_sweep', { p_admin_employee_code: session.employeeCode, p_date: todayJST() });
+      resultEl.textContent = `${count}件を自動確認しました。`;
+      loadDrmSummary();
+      loadDailyReportManagementList();
+    } catch (e) {
+      resultEl.textContent = e.message || '自動確認の実行に失敗しました。';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  document.querySelectorAll('#screen-daily-report-management .areq-table th[data-sort]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.sort;
+      drmSort = { col, dir: drmSort.col === col && drmSort.dir === 'asc' ? 'desc' : 'asc' };
+      renderDrmAll();
+    });
   });
   document.querySelectorAll('#drm-worker-type-filter .filter-chip').forEach((btn) => {
     btn.addEventListener('click', () => {

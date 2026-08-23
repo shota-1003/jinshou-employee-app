@@ -310,6 +310,8 @@
     <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
     <div class="form-title">日報管理</div>
 
+    <div class="dash-card-grid" id="drm-summary-grid" style="margin-bottom:14px;"></div>
+
     <div class="today-item urgent" id="drm-missing-banner" style="cursor:default;">
       <span class="today-item-icon"><span class="icon-slot" data-icon="alert-triangle"></span></span>
       <div class="today-item-body">
@@ -320,6 +322,8 @@
     <div id="drm-missing-today-list" style="display:none;"></div>
     <button type="button" class="secondary" id="drm-missing-toggle">未提出者を表示する</button>
     <button type="button" id="drm-notify-btn">未提出者へ「本日の日報が未提出です」を通知する</button>
+    <button type="button" class="secondary" id="drm-autoconfirm-btn">本日分を自動確認ルールで一括確認する</button>
+    <div class="hint-inline" id="drm-autoconfirm-result"></div>
 
     <div class="home-card-grid" style="margin:16px 0;">
       <button type="button" class="home-card" data-nav="daily-report-admin">
@@ -388,14 +392,15 @@
         <thead>
           <tr>
             <th><input type="checkbox" id="drm-select-all"></th>
-            <th>日付</th>
-            <th>社員/外注</th>
-            <th>氏名</th>
-            <th>外注会社</th>
+            <th data-sort="report_date">日付</th>
+            <th data-sort="worker_type">社員/外注</th>
+            <th data-sort="person_name">氏名</th>
+            <th data-sort="company_name">外注会社</th>
             <th>現場</th>
             <th>勤務区分</th>
-            <th>スロット</th>
-            <th>提出状況</th>
+            <th>現場2</th>
+            <th data-sort="submitted_at">提出時刻</th>
+            <th data-sort="report_status">提出状況</th>
             <th>確認状況</th>
             <th>反映状況</th>
           </tr>

@@ -180,9 +180,33 @@
       <div class="form-title">日報を入力する</div>
       <div class="hint" style="margin-bottom:10px;">現場と勤務区分(終日・午前・午後)を選ぶと、人工は自動で計算されます。人工を直接入力することはありません。</div>
 
+      <div id="daily-report-proxy-wrap" style="display:none;">
+        <label for="daily-report-target-type">誰の日報を入力しますか</label>
+        <select id="daily-report-target-type">
+          <option value="self">自分</option>
+          <option value="employee">他の社員(代理入力)</option>
+          <option value="subcontractor">外注作業員</option>
+        </select>
+        <div id="daily-report-target-employee-wrap" style="display:none;">
+          <input type="text" class="participant-search-input" id="daily-report-target-employee-search" placeholder="社員名で検索...">
+          <div id="daily-report-target-employee-results" class="candidate-results"></div>
+          <div class="hint-inline" id="daily-report-target-employee-label" style="display:none;"></div>
+        </div>
+        <div id="daily-report-target-worker-wrap" style="display:none;">
+          <input type="text" class="participant-search-input" id="daily-report-target-worker-search" placeholder="外注作業員名・会社名で検索...">
+          <div id="daily-report-target-worker-results" class="candidate-results"></div>
+          <div class="hint-inline" id="daily-report-target-worker-label" style="display:none;"></div>
+        </div>
+      </div>
+
       <label for="daily-report-date">日付<span class="required-mark">(必須)</span></label>
       <input type="date" id="daily-report-date">
       <div class="hint-inline" id="daily-report-existing-hint" style="display:none;"></div>
+
+      <div id="daily-report-recent-sites" style="display:none;">
+        <div class="hint-inline">よく使う現場・昨日の現場</div>
+        <div class="filter-row" id="daily-report-recent-sites-row"></div>
+      </div>
 
       <div id="daily-report-entry-list"></div>
 
@@ -199,6 +223,7 @@
 
       <div class="error" id="daily-report-error"></div>
       <button id="daily-report-submit">日報を提出する</button>
+      <button type="button" class="secondary" id="daily-report-save-draft">下書きとして保存する</button>
     </div>
   </section>
 
@@ -218,6 +243,14 @@
         <option value="午前">午前(0.5人工)</option>
         <option value="午後">午後(0.5人工)</option>
       </select>
+      <div class="checkbox-row">
+        <input type="checkbox" class="dr-is-leader">
+        <label>リーダーとして参加</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" class="dr-is-night-shift">
+        <label>夜勤</label>
+      </div>
       <button type="button" class="dr-remove-entry-btn link">この現場を削除</button>
     </div>
   </template>
@@ -251,8 +284,16 @@
     <div class="section-title">現在の管理者</div>
     <div id="arm-current-list"></div>
 
+    <div class="section-title">現在の日報担当</div>
+    <div id="arm-nippo-list"></div>
+
     <div class="card">
-      <div class="form-title" style="font-size:15px;">管理者を追加</div>
+      <div class="form-title" style="font-size:15px;">管理者・日報担当を追加</div>
+      <label for="arm-role-type-select">付与する権限</label>
+      <select id="arm-role-type-select">
+        <option value="general_admin">全体管理者(general_admin)</option>
+        <option value="nippo_admin">日報担当(nippo_admin)</option>
+      </select>
       <label for="arm-add-search">社員名・社員番号で検索</label>
       <input type="text" id="arm-add-search" placeholder="検索...">
       <div id="arm-add-candidates" class="candidate-results"></div>
@@ -263,38 +304,143 @@
     <div id="arm-history-list"></div>
   </section>
 
-  <!-- 日報管理(入口・基本画面): 日付・社員・現場・状態で検索、本日の未提出を確認 -->
+  <!-- 日報管理(管理者/日報担当): 日付・社員・外注・現場・状態で検索、本日の未提出を確認、
+       複数件まとめて確認、外注マスターへの導線。サクミルの日報機能を置き換える中核画面。 -->
   <section id="screen-daily-report-management" class="screen">
     <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
     <div class="form-title">日報管理</div>
-    <div class="hint" style="margin-bottom:12px;">サクミルからの移行に向けた準備画面です。入力ルール・スプレッドシート連携の最終仕様は今後決定します。</div>
 
-    <div class="section-title">本日、日報が未提出の社員</div>
-    <div id="drm-missing-today-list"></div>
-    <button type="button" class="secondary" data-nav="daily-report-admin">3現場以上の特殊ケースを確認する</button>
+    <div class="today-item urgent" id="drm-missing-banner" style="cursor:default;">
+      <span class="today-item-icon"><span class="icon-slot" data-icon="alert-triangle"></span></span>
+      <div class="today-item-body">
+        <div class="today-item-label" id="drm-missing-count">本日の未提出 -</div>
+        <div class="today-item-count">タップすると一覧を開きます</div>
+      </div>
+    </div>
+    <div id="drm-missing-today-list" style="display:none;"></div>
+    <button type="button" class="secondary" id="drm-missing-toggle">未提出者を表示する</button>
+    <button type="button" id="drm-notify-btn">未提出者へ「本日の日報が未提出です」を通知する</button>
+
+    <div class="home-card-grid" style="margin:16px 0;">
+      <button type="button" class="home-card" data-nav="daily-report-admin">
+        <span class="icon-slot" data-icon="alert-triangle"></span>
+        <span class="home-card-label">特殊ケース確認</span>
+        <span class="home-card-desc">3現場以上の日報</span>
+      </button>
+      <button type="button" class="home-card" data-nav="subcontractor-company-admin">
+        <span class="icon-slot" data-icon="users-round"></span>
+        <span class="home-card-label">外注会社管理</span>
+        <span class="home-card-desc">外注会社の追加・停止</span>
+      </button>
+      <button type="button" class="home-card" data-nav="subcontractor-worker-admin">
+        <span class="icon-slot" data-icon="users-round"></span>
+        <span class="home-card-label">外注作業員管理</span>
+        <span class="home-card-desc">外注作業員の追加・停止</span>
+      </button>
+    </div>
 
     <div class="section-title">日報を検索</div>
     <div class="search-bar">
       <span class="icon-slot" data-icon="search"></span>
+      <input type="text" id="drm-search-name" placeholder="社員名・外注作業員名で検索...">
+    </div>
+    <div class="filter-row" id="drm-worker-type-filter">
+      <button type="button" class="filter-chip active" data-worker-type="">すべて</button>
+      <button type="button" class="filter-chip" data-worker-type="employee">社員</button>
+      <button type="button" class="filter-chip" data-worker-type="subcontractor">外注</button>
+    </div>
+    <div class="filter-row" id="drm-status-filter">
+      <button type="button" class="filter-chip active" data-status="">すべての状態</button>
+      <button type="button" class="filter-chip" data-status="submitted">提出済み</button>
+      <button type="button" class="filter-chip" data-status="confirmed">確認済み</button>
+      <button type="button" class="filter-chip" data-status="rejected">差し戻し</button>
+      <button type="button" class="filter-chip" data-status="draft">下書き</button>
+    </div>
+    <button type="button" class="link" id="drm-toggle-advanced">詳細検索(期間・現場・外注会社)</button>
+    <div id="drm-advanced" style="display:none;">
+      <label for="drm-date-from">日付(開始)</label>
+      <input type="date" id="drm-date-from">
+      <label for="drm-date-to">日付(終了)</label>
+      <input type="date" id="drm-date-to">
+      <label for="drm-search-site">現場</label>
       <input type="text" id="drm-search-site" placeholder="現場名で検索...">
+      <div id="drm-site-candidates" class="candidate-results"></div>
+      <input type="hidden" id="drm-selected-site-id">
+      <div class="hint-inline" id="drm-selected-site-label" style="display:none;"></div>
+      <label for="drm-company-select">外注会社</label>
+      <select id="drm-company-select"><option value="">すべての外注会社</option></select>
     </div>
-    <div id="drm-site-candidates" class="candidate-results"></div>
-    <input type="hidden" id="drm-selected-site-id">
-    <div class="hint-inline" id="drm-selected-site-label" style="display:none;"></div>
 
-    <label for="drm-employee-select">社員</label>
-    <select id="drm-employee-select"><option value="">すべての社員</option></select>
-    <label for="drm-date-from">日付(開始)</label>
-    <input type="date" id="drm-date-from">
-    <label for="drm-date-to">日付(終了)</label>
-    <input type="date" id="drm-date-to">
-    <div class="filter-row">
-      <button type="button" class="filter-chip active" data-status="">すべて</button>
-      <button type="button" class="filter-chip" data-status="normal">通常提出</button>
-      <button type="button" class="filter-chip" data-status="anomaly">要確認(特殊ケース)</button>
-    </div>
     <div class="hint" id="drm-count" style="margin:10px 0;"></div>
-    <div id="drm-list"></div>
+    <div id="drm-bulk-bar" style="display:none; margin-bottom:10px;">
+      <span class="hint-inline" id="drm-selected-count"></span>
+      <button type="button" id="drm-bulk-confirm">選択した日報を確認済みにする</button>
+      <button type="button" class="secondary" id="drm-bulk-reject">選択した日報を差し戻す</button>
+      <div id="drm-bulk-reason-box" style="display:none;">
+        <label>差し戻し理由<span class="required-mark">(必須)</span></label>
+        <textarea id="drm-bulk-reason"></textarea>
+        <button type="button" id="drm-bulk-reason-confirm">確定する</button>
+      </div>
+    </div>
+    <div id="drm-list" class="areq-cards"></div>
+    <div id="drm-table-wrap" class="areq-table-wrap">
+      <table class="areq-table">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="drm-select-all"></th>
+            <th>日付</th>
+            <th>社員/外注</th>
+            <th>氏名</th>
+            <th>外注会社</th>
+            <th>現場</th>
+            <th>勤務区分</th>
+            <th>スロット</th>
+            <th>提出状況</th>
+            <th>確認状況</th>
+            <th>反映状況</th>
+          </tr>
+        </thead>
+        <tbody id="drm-table-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 外注会社マスター管理 -->
+  <section id="screen-subcontractor-company-admin" class="screen">
+    <button type="button" class="back-link" data-nav="daily-report-management">日報管理に戻る</button>
+    <div class="form-title">外注会社管理</div>
+    <div class="card">
+      <div class="form-title" style="font-size:15px;">外注会社を追加</div>
+      <input type="hidden" id="sc-company-edit-id">
+      <label for="sc-company-name">会社名</label>
+      <input type="text" id="sc-company-name" placeholder="例: 〇〇建設">
+      <label for="sc-company-notes">備考</label>
+      <input type="text" id="sc-company-notes">
+      <div class="error" id="sc-company-error"></div>
+      <button id="sc-company-submit">保存する</button>
+    </div>
+    <div class="section-title">登録済みの外注会社</div>
+    <div id="sc-company-list"></div>
+  </section>
+
+  <!-- 外注作業員マスター管理 -->
+  <section id="screen-subcontractor-worker-admin" class="screen">
+    <button type="button" class="back-link" data-nav="daily-report-management">日報管理に戻る</button>
+    <div class="form-title">外注作業員管理</div>
+    <div class="card">
+      <div class="form-title" style="font-size:15px;">外注作業員を追加</div>
+      <input type="hidden" id="sc-worker-edit-id">
+      <label for="sc-worker-company-select">外注会社<span class="required-mark">(必須)</span></label>
+      <select id="sc-worker-company-select"></select>
+      <label for="sc-worker-name">作業員名</label>
+      <input type="text" id="sc-worker-name" placeholder="例: 山田 太郎">
+      <label for="sc-worker-notes">備考</label>
+      <input type="text" id="sc-worker-notes">
+      <div class="error" id="sc-worker-error"></div>
+      <button id="sc-worker-submit">保存する</button>
+    </div>
+    <div class="section-title">登録済みの外注作業員</div>
+    <div id="sc-worker-list"></div>
   </section>
 
   <!-- 資格・免許申請フォーム -->

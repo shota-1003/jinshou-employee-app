@@ -1234,6 +1234,19 @@ function isAdmin() {
   return session && session.requestRole === 'executive';
 }
 
+// nippo_adminは既存のrequest_role(session)には現れないため、都度サーバーへ確認する。
+// 同一タブ内での連打を避けるため軽くキャッシュする(ログイン中の権限変更は稀なため許容)。
+let _nippoAdminCache = null;
+async function isNippoAdmin() {
+  if (isAdmin()) return true;
+  if (_nippoAdminCache !== null) return _nippoAdminCache;
+  const session = getSession();
+  try {
+    _nippoAdminCache = await rpc('check_nippo_admin', { p_employee_code: session.employeeCode });
+  } catch (e) { _nippoAdminCache = false; }
+  return _nippoAdminCache;
+}
+
 async function loadAdminEmployeeSelects() {
   const session = getSession();
   const rows = await rpc('list_active_employees', { p_admin_employee_code: session.employeeCode });
@@ -3100,6 +3113,9 @@ async function doSaveAdminHealthRecord() {
 
 const DR_HEADCOUNT_BY_WORK_TYPE = { '終日': 1.0, '午前': 0.5, '午後': 0.5 };
 let dailyReportEntrySeq = 0;
+// 代理入力の対象(本人以外の社員、または外注作業員)。self以外はnippo_admin/executiveのみ選べる。
+let dailyReportTarget = { type: 'self', employeeCode: null, employeeName: null, subcontractorWorkerId: null, workerName: null };
+let dailyReportIsNippoAdmin = false;
 
 function addDailyReportEntry(prefill) {
   const template = document.getElementById('daily-report-entry-template');
@@ -3129,6 +3145,8 @@ function addDailyReportEntry(prefill) {
   const workTypeSelect = clone.querySelector('.dr-work-type');
   if (prefill && prefill.work_type) workTypeSelect.value = prefill.work_type;
   workTypeSelect.addEventListener('change', updateDailyReportTotal);
+  if (prefill && prefill.is_leader) clone.querySelector('.dr-is-leader').checked = true;
+  if (prefill && prefill.is_night_shift) clone.querySelector('.dr-is-night-shift').checked = true;
 
   clone.querySelector('.dr-remove-entry-btn').addEventListener('click', () => {
     document.querySelector(`[data-entry-id="${entryId}"]`).remove();
@@ -3139,6 +3157,40 @@ function addDailyReportEntry(prefill) {
   updateDailyReportTotal();
 }
 
+// ワンタップで現場を差し込む(昨日と同じ現場・よく使う現場)。空の入力欄が無ければ1件追加してから入れる。
+function applyRecentSiteToEntry(siteId, siteName) {
+  let entryEls = Array.from(document.querySelectorAll('.daily-report-entry'));
+  let target = entryEls.find((el) => !el.querySelector('.dr-site-select').value);
+  if (!target) {
+    if (entryEls.length >= 2) return; // 通常は最大2現場
+    addDailyReportEntry();
+    entryEls = Array.from(document.querySelectorAll('.daily-report-entry'));
+    target = entryEls[entryEls.length - 1];
+  }
+  const select = target.querySelector('.dr-site-select');
+  populateSiteSelect(select, siteName).then(() => { select.value = String(siteId); });
+}
+
+async function loadDailyReportRecentSites() {
+  const area = document.getElementById('daily-report-recent-sites');
+  const row = document.getElementById('daily-report-recent-sites-row');
+  const params = dailyReportTarget.type === 'subcontractor'
+    ? { p_employee_code: null, p_worker_type: 'subcontractor', p_subcontractor_worker_id: dailyReportTarget.subcontractorWorkerId }
+    : { p_employee_code: dailyReportTarget.type === 'employee' ? dailyReportTarget.employeeCode : getSession().employeeCode, p_worker_type: 'employee', p_subcontractor_worker_id: null };
+  if (dailyReportTarget.type === 'subcontractor' && !dailyReportTarget.subcontractorWorkerId) { area.style.display = 'none'; return; }
+  try {
+    const rows = await rpc('get_recent_daily_report_sites', params);
+    if (!rows || rows.length === 0) { area.style.display = 'none'; return; }
+    area.style.display = 'block';
+    row.innerHTML = rows.map((r) => `
+      <button type="button" class="filter-chip dr-recent-site-chip" data-site-id="${r.site_id}" data-site-name="${r.site_name}">${r.is_yesterday ? '昨日: ' : ''}${r.site_name}</button>
+    `).join('');
+    row.querySelectorAll('.dr-recent-site-chip').forEach((btn) => {
+      btn.addEventListener('click', () => applyRecentSiteToEntry(btn.dataset.siteId, btn.dataset.siteName));
+    });
+  } catch (e) { area.style.display = 'none'; }
+}
+
 function updateDailyReportTotal() {
   const entries = document.querySelectorAll('.daily-report-entry');
   let total = 0;
@@ -3147,8 +3199,30 @@ function updateDailyReportTotal() {
   document.getElementById('daily-report-special-warning').style.display = entries.length >= 3 ? 'block' : 'none';
 }
 
-async function loadDailyReportForDate(dateStr) {
+// 代理入力の対象に応じてget_my_daily_report_for_date相当のデータを取る。
+// 本人以外はadmin_search_daily_reportsで代用する(1日分だけに絞り込む)。
+async function fetchDailyReportForTarget(dateStr) {
   const session = getSession();
+  if (dailyReportTarget.type === 'self') {
+    return rpc('get_my_daily_report_for_date', { p_employee_code: session.employeeCode, p_report_date: dateStr });
+  }
+  const rows = await rpc('admin_search_daily_reports', {
+    p_admin_employee_code: session.employeeCode, p_date_from: dateStr, p_date_to: dateStr,
+    p_employee_code: dailyReportTarget.type === 'employee' ? dailyReportTarget.employeeCode : null,
+    p_site_id: null, p_validation_status: null,
+    p_worker_type: dailyReportTarget.type === 'subcontractor' ? 'subcontractor' : 'employee',
+    p_subcontractor_company_id: null, p_report_status: null,
+  });
+  const filtered = dailyReportTarget.type === 'subcontractor'
+    ? rows.filter((r) => r.subcontractor_worker_name === dailyReportTarget.workerName)
+    : rows;
+  return filtered.map((r) => ({
+    site_id: r.site_id, work_type: r.work_type, reflected: !!r.reflected_to_sheet_at,
+    report_status: r.report_status, is_leader: r.is_leader, is_night_shift: false,
+  }));
+}
+
+async function loadDailyReportForDate(dateStr) {
   const hint = document.getElementById('daily-report-existing-hint');
   const submitBtn = document.getElementById('daily-report-submit');
   const addBtn = document.getElementById('daily-report-add-entry');
@@ -3157,41 +3231,54 @@ async function loadDailyReportForDate(dateStr) {
   addBtn.disabled = false;
   document.getElementById('daily-report-entry-list').innerHTML = '';
   dailyReportEntrySeq = 0;
+  loadDailyReportRecentSites();
 
   let existing = [];
   try {
-    existing = await rpc('get_my_daily_report_for_date', { p_employee_code: session.employeeCode, p_report_date: dateStr });
+    existing = await fetchDailyReportForTarget(dateStr);
   } catch (e) { /* 取得できなくても新規入力は続けられる */ }
 
   if (existing.length > 0) {
     const reflected = existing[0].reflected;
     hint.style.display = 'block';
     if (reflected) {
-      hint.textContent = 'この日の日報は既にスプレッドシートへ反映済みのため、アプリからは修正できません。修正が必要な場合は管理者へ連絡してください。';
-      submitBtn.disabled = true;
-      addBtn.disabled = true;
+      hint.textContent = 'この日の日報は既にスプレッドシートへ反映済みです。内容を修正すると再反映されます。';
     } else {
       hint.textContent = 'この日は入力済みです。内容を修正して「日報を提出する」を押すと上書きされます。';
     }
-    existing.forEach((e) => addDailyReportEntry({ site_id: e.site_id, work_type: e.work_type }));
+    existing.forEach((e) => addDailyReportEntry({ site_id: e.site_id, work_type: e.work_type, is_leader: e.is_leader, is_night_shift: e.is_night_shift }));
   } else {
     addDailyReportEntry();
   }
 }
 
-function resetDailyReportForm() {
+async function resetDailyReportForm() {
   hideError('daily-report-error');
+  const session = getSession();
+  dailyReportTarget = { type: 'self', employeeCode: session.employeeCode, employeeName: session.employeeName, subcontractorWorkerId: null, workerName: null };
+  document.getElementById('daily-report-target-type').value = 'self';
+  document.getElementById('daily-report-target-employee-wrap').style.display = 'none';
+  document.getElementById('daily-report-target-worker-wrap').style.display = 'none';
+
+  try {
+    dailyReportIsNippoAdmin = await rpc('check_nippo_admin', { p_employee_code: session.employeeCode });
+  } catch (e) { dailyReportIsNippoAdmin = false; }
+  document.getElementById('daily-report-proxy-wrap').style.display = dailyReportIsNippoAdmin ? 'block' : 'none';
+
   const dateInput = document.getElementById('daily-report-date');
   const today = new Date().toISOString().slice(0, 10);
   dateInput.value = today;
   loadDailyReportForDate(today);
 }
 
-async function doSubmitDailyReport() {
+async function doSubmitDailyReport(isDraft) {
   const session = getSession();
   hideError('daily-report-error');
   const dateStr = document.getElementById('daily-report-date').value;
   if (!dateStr) { showError('daily-report-error', '日付を選択してください。'); return; }
+
+  if (dailyReportTarget.type === 'employee' && !dailyReportTarget.employeeCode) { showError('daily-report-error', '代理入力する社員を選択してください。'); return; }
+  if (dailyReportTarget.type === 'subcontractor' && !dailyReportTarget.subcontractorWorkerId) { showError('daily-report-error', '外注作業員を選択してください。'); return; }
 
   const entryEls = Array.from(document.querySelectorAll('.daily-report-entry'));
   if (entryEls.length === 0) { showError('daily-report-error', '現場を1件以上入力してください。'); return; }
@@ -3208,14 +3295,23 @@ async function doSubmitDailyReport() {
     } else if (!siteId) {
       showError('daily-report-error', '現場を選択してください。'); return;
     }
-    entries.push({ site_id: siteId, new_site_name: newSiteName, work_type: el.querySelector('.dr-work-type').value });
+    entries.push({
+      site_id: siteId, new_site_name: newSiteName, work_type: el.querySelector('.dr-work-type').value,
+      is_leader: el.querySelector('.dr-is-leader').checked, is_night_shift: el.querySelector('.dr-is-night-shift').checked,
+    });
   }
 
   const btn = document.getElementById('daily-report-submit');
   btn.disabled = true;
   try {
-    const result = await rpc('submit_daily_report', { p_employee_code: session.employeeCode, p_report_date: dateStr, p_entries: entries });
+    const result = await rpc('submit_daily_report', {
+      p_actor_employee_code: session.employeeCode, p_report_date: dateStr, p_entries: entries, p_is_draft: !!isDraft,
+      p_target_employee_code: dailyReportTarget.type === 'employee' ? dailyReportTarget.employeeCode : null,
+      p_target_worker_type: dailyReportTarget.type === 'subcontractor' ? 'subcontractor' : 'employee',
+      p_target_subcontractor_worker_id: dailyReportTarget.type === 'subcontractor' ? dailyReportTarget.subcontractorWorkerId : null,
+    });
     const r = result && result[0];
+    if (isDraft) { showDone(`日報を下書き保存しました(${dateStr})。提出は完了していません。`, 'menu-apply'); return; }
     const msg = r && r.is_special
       ? `日報を受け付けました(${dateStr}、${r.entry_count}現場)。3現場以上のため特殊日報として管理者が確認します。`
       : `日報を受け付けました(${dateStr}、合計${r ? Number(r.total_headcount).toFixed(1) : ''}人工)。`;
@@ -3535,20 +3631,28 @@ async function loadAdminRoleCurrentList() {
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
     const rows = await rpc('admin_list_admin_roles', { p_admin_employee_code: session.employeeCode });
-    const general = rows.filter((r) => r.role_type === 'general_admin');
-    if (general.length === 0) { listEl.innerHTML = '<div class="hint">管理者がいません。</div>'; return; }
-    listEl.innerHTML = general.map((r) => `
+    const renderRows = (items, roleType) => items.map((r) => `
       <div class="employee-row" data-code="${r.employee_code}" style="cursor:default;">
         <span class="employee-avatar">${r.employee_name.slice(0, 1)}</span>
         <div class="employee-row-body">
           <div class="employee-row-name">${r.employee_name}(${r.employee_code})</div>
           <div class="employee-row-meta">付与: ${r.granted_by}・${new Date(r.granted_at).toLocaleDateString('ja-JP')}</div>
         </div>
-        <button type="button" class="reject-btn arm-revoke-btn" style="width:auto;margin:0;">解除</button>
+        <button type="button" class="reject-btn arm-revoke-btn" data-role-type="${roleType}" style="width:auto;margin:0;">解除</button>
       </div>
     `).join('');
+
+    const general = rows.filter((r) => r.role_type === 'general_admin');
+    listEl.innerHTML = general.length === 0 ? '<div class="hint">管理者がいません。</div>' : renderRows(general, 'general_admin');
     listEl.querySelectorAll('.arm-revoke-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => doRevokeAdminRole(e.target.closest('.employee-row').dataset.code));
+      btn.addEventListener('click', (e) => doRevokeAdminRole(e.target.closest('.employee-row').dataset.code, btn.dataset.roleType));
+    });
+
+    const nippoEl = document.getElementById('arm-nippo-list');
+    const nippo = rows.filter((r) => r.role_type === 'nippo_admin');
+    nippoEl.innerHTML = nippo.length === 0 ? '<div class="hint">日報担当はいません。</div>' : renderRows(nippo, 'nippo_admin');
+    nippoEl.querySelectorAll('.arm-revoke-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => doRevokeAdminRole(e.target.closest('.employee-row').dataset.code, btn.dataset.roleType));
     });
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
@@ -3593,9 +3697,11 @@ function renderAdminRoleCandidates(query) {
 async function doGrantAdminRole(employeeCode, employeeName) {
   const session = getSession();
   hideError('arm-error');
-  if (!window.confirm(`${employeeName}(${employeeCode})を管理者に追加しますか?`)) return;
+  const roleType = document.getElementById('arm-role-type-select').value;
+  const roleLabel = roleType === 'nippo_admin' ? '日報担当' : '全体管理者';
+  if (!window.confirm(`${employeeName}(${employeeCode})を${roleLabel}に追加しますか?`)) return;
   try {
-    await rpc('admin_grant_admin_role', { p_admin_employee_code: session.employeeCode, p_target_employee_code: employeeCode, p_role_type: 'general_admin' });
+    await rpc('admin_grant_admin_role', { p_admin_employee_code: session.employeeCode, p_target_employee_code: employeeCode, p_role_type: roleType });
     document.getElementById('arm-add-search').value = '';
     document.getElementById('arm-add-candidates').innerHTML = '';
     await Promise.all([loadAdminRoleCurrentList(), loadAdminRoleHistory()]);
@@ -3604,36 +3710,48 @@ async function doGrantAdminRole(employeeCode, employeeName) {
   }
 }
 
-async function doRevokeAdminRole(employeeCode) {
+async function doRevokeAdminRole(employeeCode, roleType) {
   const session = getSession();
   hideError('arm-error');
-  if (!window.confirm(`社員番号${employeeCode}を管理者から解除しますか?`)) return;
+  if (!window.confirm(`社員番号${employeeCode}を解除しますか?`)) return;
   try {
-    await rpc('admin_revoke_admin_role', { p_admin_employee_code: session.employeeCode, p_target_employee_code: employeeCode, p_role_type: 'general_admin' });
+    await rpc('admin_revoke_admin_role', { p_admin_employee_code: session.employeeCode, p_target_employee_code: employeeCode, p_role_type: roleType || 'general_admin' });
     await Promise.all([loadAdminRoleCurrentList(), loadAdminRoleHistory()]);
   } catch (e) {
     showError('arm-error', e.message || '解除に失敗しました。');
   }
 }
 
-// ---------- 日報管理(入口・基本画面) ----------
+// ---------- 日報管理(管理者/日報担当) ----------
 
-let drmFilters = { site: null, employee: '', dateFrom: '', dateTo: '', status: '' };
+let drmFilters = { name: '', workerType: '', status: '', dateFrom: '', dateTo: '', site: null, companyId: '' };
+let drmRows = [];
+let drmSelected = new Set(); // 選択中のグループキー(report_date|personKey)
+
+const DRM_STATUS_LABEL = { draft: '下書き', submitted: '提出済み', confirmed: '確認済み', rejected: '差し戻し' };
 
 async function loadDailyReportManagement() {
   const session = getSession();
-  drmFilters = { site: null, employee: '', dateFrom: '', dateTo: '', status: '' };
+  drmFilters = { name: '', workerType: '', status: '', dateFrom: '', dateTo: '', site: null, companyId: '' };
+  drmSelected.clear();
+  document.getElementById('drm-search-name').value = '';
   document.getElementById('drm-search-site').value = '';
   document.getElementById('drm-selected-site-label').style.display = 'none';
   document.getElementById('drm-site-candidates').innerHTML = '';
   document.getElementById('drm-date-from').value = '';
   document.getElementById('drm-date-to').value = '';
-  document.querySelectorAll('#screen-daily-report-management .filter-chip').forEach((c, i) => c.classList.toggle('active', i === 0));
+  document.getElementById('drm-advanced').style.display = 'none';
+  document.getElementById('drm-missing-today-list').style.display = 'none';
+  document.getElementById('drm-missing-toggle').textContent = '未提出者を表示する';
+  document.querySelectorAll('#drm-worker-type-filter .filter-chip').forEach((c, i) => c.classList.toggle('active', i === 0));
+  document.querySelectorAll('#drm-status-filter .filter-chip').forEach((c, i) => c.classList.toggle('active', i === 0));
 
   const missingEl = document.getElementById('drm-missing-today-list');
-  missingEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  const bannerCount = document.getElementById('drm-missing-count');
+  bannerCount.textContent = '本日の未提出 -';
   try {
     const missing = await rpc('admin_get_daily_report_missing', { p_admin_employee_code: session.employeeCode, p_date: new Date().toISOString().slice(0, 10) });
+    bannerCount.textContent = `本日の未提出 ${missing.length}名`;
     missingEl.innerHTML = missing.length === 0
       ? '<div class="hint">本日は全員提出済みです。</div>'
       : missing.map((m) => `<span class="mini-tag danger" style="display:inline-block;margin:2px 4px 2px 0;">${m.employee_name}</span>`).join('');
@@ -3642,11 +3760,15 @@ async function loadDailyReportManagement() {
   }
 
   try {
-    const employees = await rpc('list_active_employees', { p_admin_employee_code: session.employeeCode });
-    document.getElementById('drm-employee-select').innerHTML = '<option value="">すべての社員</option>' + employees.map((e) => `<option value="${e.employee_code}">${e.employee_name}(${e.employee_code})</option>`).join('');
+    const companies = await rpc('admin_list_subcontractor_companies', { p_admin_employee_code: session.employeeCode, p_include_inactive: false });
+    document.getElementById('drm-company-select').innerHTML = '<option value="">すべての外注会社</option>' + companies.map((c) => `<option value="${c.id}">${c.company_name}</option>`).join('');
   } catch (e) { /* 無視 */ }
 
   loadDailyReportManagementList();
+}
+
+function drmGroupKey(r) {
+  return `${r.report_date}|${r.worker_type}|${r.employee_code || r.subcontractor_worker_name}`;
 }
 
 async function loadDailyReportManagementList() {
@@ -3654,25 +3776,255 @@ async function loadDailyReportManagementList() {
   const listEl = document.getElementById('drm-list');
   const countEl = document.getElementById('drm-count');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  document.getElementById('drm-table-body').innerHTML = '';
   try {
-    const rows = await rpc('admin_search_daily_reports', {
+    drmRows = await rpc('admin_search_daily_reports', {
       p_admin_employee_code: session.employeeCode,
       p_date_from: drmFilters.dateFrom || null, p_date_to: drmFilters.dateTo || null,
-      p_employee_code: drmFilters.employee || null, p_site_id: drmFilters.site || null,
-      p_validation_status: drmFilters.status || null,
+      p_employee_code: null, p_site_id: drmFilters.site || null,
+      p_validation_status: null,
+      p_worker_type: drmFilters.workerType || null,
+      p_subcontractor_company_id: drmFilters.companyId ? Number(drmFilters.companyId) : null,
+      p_report_status: drmFilters.status || null,
     });
-    countEl.textContent = `${rows.length}件`;
-    if (rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する日報はありません。</div>'; return; }
-    listEl.innerHTML = rows.map((r) => `
-      <div class="history-item">
-        <div class="row1"><span>${r.employee_name || '(不明)'}・${r.site_name || '(現場不明)'}</span><span>${r.headcount != null ? Number(r.headcount).toFixed(1) + '人工' : ''}</span></div>
-        <div class="row2">${r.report_date}・${r.work_type || ''}</div>
-        ${r.validation_status === 'anomaly' ? '<span class="mini-tag danger">要確認</span>' : '<span class="mini-tag muted">通常提出</span>'}
-        ${r.reflected_to_sheet_at ? '<span class="mini-tag info">シート反映済み</span>' : ''}
-      </div>
-    `).join('');
+    if (drmFilters.name) {
+      const q = drmFilters.name;
+      drmRows = drmRows.filter((r) => (r.employee_name || '').includes(q) || (r.subcontractor_worker_name || '').includes(q));
+    }
+    countEl.textContent = `${drmRows.length}件`;
+    renderDrmAll();
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+function renderDrmAll() {
+  // report_date + 対象者 でグループ化し、現場1/現場2を横に並べる(スプレッドシートの
+  // 「1日=現場1行+現場2行」構造とも対応させやすいよう、スロット順に並べる)。
+  const groups = new Map();
+  drmRows.forEach((r) => {
+    const key = drmGroupKey(r);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  });
+  const groupList = Array.from(groups.entries()).map(([key, rows]) => {
+    rows.sort((a, b) => (a.entry_slot || 0) - (b.entry_slot || 0));
+    return { key, rows, first: rows[0] };
+  });
+  groupList.sort((a, b) => (a.first.report_date < b.first.report_date ? 1 : -1));
+
+  const listEl = document.getElementById('drm-list');
+  if (groupList.length === 0) { listEl.innerHTML = '<div class="hint">該当する日報はありません。</div>'; document.getElementById('drm-table-body').innerHTML = '<tr><td colspan="11"><div class="hint">該当する日報はありません。</div></td></tr>'; return; }
+
+  listEl.innerHTML = groupList.map((g) => {
+    const f = g.first;
+    const personName = f.worker_type === 'subcontractor' ? `${f.subcontractor_worker_name}(外注:${f.subcontractor_company_name || ''})` : (f.employee_name || '(不明)');
+    const sites = g.rows.map((r) => `${r.site_name || '(現場不明)'}・${r.work_type || ''}`).join(' / ');
+    const statusBadgeClass = f.report_status === 'confirmed' ? 'done' : (f.report_status === 'rejected' ? 'rejected' : '');
+    return `
+      <div class="history-item" data-key="${g.key}">
+        <div class="row1"><span>${personName}</span><span>${f.report_date}</span></div>
+        <div class="row2">${sites}</div>
+        <span class="status-badge ${statusBadgeClass}">${DRM_STATUS_LABEL[f.report_status] || f.report_status}</span>
+        ${f.validation_status === 'anomaly' ? '<span class="mini-tag danger">要確認</span>' : ''}
+        ${g.rows.every((r) => r.reflected_to_sheet_at) ? '<span class="mini-tag info">シート反映済み</span>' : ''}
+        <div class="checkbox-row"><input type="checkbox" class="drm-row-check" data-key="${g.key}" ${drmSelected.has(g.key) ? 'checked' : ''}><label>選択</label></div>
+      </div>
+    `;
+  }).join('');
+  listEl.querySelectorAll('.drm-row-check').forEach((cb) => {
+    cb.addEventListener('change', () => { toggleDrmSelect(cb.dataset.key, cb.checked); });
+  });
+
+  const bodyEl = document.getElementById('drm-table-body');
+  bodyEl.innerHTML = groupList.map((g) => {
+    const f = g.first;
+    const site1 = g.rows[0] || {};
+    const site2 = g.rows[1] || {};
+    const personName = f.worker_type === 'subcontractor' ? f.subcontractor_worker_name : f.employee_name;
+    const statusBadgeClass = f.report_status === 'confirmed' ? 'done' : (f.report_status === 'rejected' ? 'rejected' : '');
+    const reflected = g.rows.every((r) => r.reflected_to_sheet_at);
+    return `
+      <tr data-key="${g.key}">
+        <td><input type="checkbox" class="drm-row-check" data-key="${g.key}" ${drmSelected.has(g.key) ? 'checked' : ''}></td>
+        <td>${f.report_date}</td>
+        <td>${f.worker_type === 'subcontractor' ? '外注' : '社員'}</td>
+        <td>${personName || '(不明)'}</td>
+        <td>${f.subcontractor_company_name || '-'}</td>
+        <td>${site1.site_name || '-'}</td>
+        <td>${site1.work_type || '-'}</td>
+        <td>${site2.site_name ? `${site2.site_name}(${site2.work_type || ''})` : '-'}</td>
+        <td>${DRM_STATUS_LABEL[f.report_status] || f.report_status}</td>
+        <td><span class="status-badge ${statusBadgeClass}">${f.confirmed_by ? f.confirmed_by : (f.report_status === 'confirmed' || f.report_status === 'rejected' ? '-' : '未確認')}</span></td>
+        <td>${reflected ? '反映済み' : '未反映'}</td>
+      </tr>
+    `;
+  }).join('');
+  bodyEl.querySelectorAll('.drm-row-check').forEach((cb) => {
+    cb.addEventListener('change', () => { toggleDrmSelect(cb.dataset.key, cb.checked); });
+  });
+
+  updateDrmBulkBar();
+}
+
+function toggleDrmSelect(key, checked) {
+  if (checked) drmSelected.add(key); else drmSelected.delete(key);
+  document.querySelectorAll(`.drm-row-check[data-key="${key}"]`).forEach((cb) => { cb.checked = checked; });
+  updateDrmBulkBar();
+}
+
+function updateDrmBulkBar() {
+  const bar = document.getElementById('drm-bulk-bar');
+  bar.style.display = drmSelected.size > 0 ? 'block' : 'none';
+  document.getElementById('drm-selected-count').textContent = `${drmSelected.size}件を選択中`;
+  document.getElementById('drm-bulk-reason-box').style.display = 'none';
+}
+
+function drmSelectedRowIds() {
+  const ids = [];
+  drmSelected.forEach((key) => {
+    drmRows.filter((r) => drmGroupKey(r) === key).forEach((r) => ids.push(Number(r.id)));
+  });
+  return ids;
+}
+
+async function doDrmBulkConfirm(action, reason) {
+  const session = getSession();
+  const ids = drmSelectedRowIds();
+  if (ids.length === 0) return;
+  try {
+    await rpc('admin_confirm_daily_reports', { p_admin_employee_code: session.employeeCode, p_daily_report_ids: ids, p_action: action, p_reason: reason || null });
+    drmSelected.clear();
+    await loadDailyReportManagementList();
+  } catch (e) {
+    window.alert(e.message || '処理に失敗しました。');
+  }
+}
+
+// ---------- 外注会社・外注作業員マスター管理(管理者/日報担当) ----------
+
+async function loadSubcontractorCompanyAdmin() {
+  const session = getSession();
+  const listEl = document.getElementById('sc-company-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  document.getElementById('sc-company-edit-id').value = '';
+  document.getElementById('sc-company-name').value = '';
+  document.getElementById('sc-company-notes').value = '';
+  hideError('sc-company-error');
+  try {
+    const rows = await rpc('admin_list_subcontractor_companies', { p_admin_employee_code: session.employeeCode, p_include_inactive: true });
+    listEl.innerHTML = rows.map((c) => `
+      <div class="supply-item" data-id="${c.id}" style="${c.status === 'active' ? '' : 'opacity:.5;'}">
+        <div class="row1"><span>${c.company_name}</span><span>${c.worker_count}名</span></div>
+        <div class="row2">${c.notes || ''}</div>
+        <div class="qual-verify-btns">
+          <button type="button" class="edit-sc-company-btn" data-name="${c.company_name}" data-notes="${c.notes || ''}">編集</button>
+          <button type="button" class="reject-btn toggle-sc-company-btn" data-active="${c.status === 'active'}">${c.status === 'active' ? '停止する' : '再開する'}</button>
+        </div>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.edit-sc-company-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const item = btn.closest('.supply-item');
+        document.getElementById('sc-company-edit-id').value = item.dataset.id;
+        document.getElementById('sc-company-name').value = btn.dataset.name;
+        document.getElementById('sc-company-notes').value = btn.dataset.notes;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+    listEl.querySelectorAll('.toggle-sc-company-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const item = btn.closest('.supply-item');
+        await rpc('admin_set_subcontractor_company_active', { p_admin_employee_code: session.employeeCode, p_id: Number(item.dataset.id), p_active: btn.dataset.active !== 'true' });
+        loadSubcontractorCompanyAdmin();
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doSaveSubcontractorCompany() {
+  const session = getSession();
+  const id = document.getElementById('sc-company-edit-id').value;
+  const name = document.getElementById('sc-company-name').value.trim();
+  const notes = document.getElementById('sc-company-notes').value.trim();
+  hideError('sc-company-error');
+  if (!name) { showError('sc-company-error', '会社名を入力してください。'); return; }
+  const btn = document.getElementById('sc-company-submit');
+  btn.disabled = true;
+  try {
+    await rpc('admin_upsert_subcontractor_company', { p_admin_employee_code: session.employeeCode, p_id: id ? Number(id) : null, p_company_name: name, p_notes: notes || null });
+    await loadSubcontractorCompanyAdmin();
+  } catch (e) {
+    showError('sc-company-error', e.message || '保存に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadSubcontractorWorkerAdmin() {
+  const session = getSession();
+  const listEl = document.getElementById('sc-worker-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  document.getElementById('sc-worker-edit-id').value = '';
+  document.getElementById('sc-worker-name').value = '';
+  document.getElementById('sc-worker-notes').value = '';
+  hideError('sc-worker-error');
+  try {
+    const companies = await rpc('admin_list_subcontractor_companies', { p_admin_employee_code: session.employeeCode, p_include_inactive: false });
+    document.getElementById('sc-worker-company-select').innerHTML = companies.map((c) => `<option value="${c.id}">${c.company_name}</option>`).join('');
+    const rows = await rpc('admin_list_subcontractor_workers', { p_admin_employee_code: session.employeeCode, p_company_id: null, p_include_inactive: true });
+    listEl.innerHTML = rows.map((w) => `
+      <div class="supply-item" data-id="${w.id}" style="${w.status === 'active' ? '' : 'opacity:.5;'}">
+        <div class="row1"><span>${w.worker_name}</span><span>${w.company_name}</span></div>
+        <div class="row2">${w.notes || ''}</div>
+        <div class="qual-verify-btns">
+          <button type="button" class="edit-sc-worker-btn" data-name="${w.worker_name}" data-notes="${w.notes || ''}" data-company="${w.subcontractor_company_id}">編集</button>
+          <button type="button" class="reject-btn toggle-sc-worker-btn" data-active="${w.status === 'active'}">${w.status === 'active' ? '停止する' : '再開する'}</button>
+        </div>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.edit-sc-worker-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const item = btn.closest('.supply-item');
+        document.getElementById('sc-worker-edit-id').value = item.dataset.id;
+        document.getElementById('sc-worker-name').value = btn.dataset.name;
+        document.getElementById('sc-worker-notes').value = btn.dataset.notes;
+        document.getElementById('sc-worker-company-select').value = btn.dataset.company;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+    listEl.querySelectorAll('.toggle-sc-worker-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const item = btn.closest('.supply-item');
+        await rpc('admin_set_subcontractor_worker_active', { p_admin_employee_code: session.employeeCode, p_id: Number(item.dataset.id), p_active: btn.dataset.active !== 'true' });
+        loadSubcontractorWorkerAdmin();
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doSaveSubcontractorWorker() {
+  const session = getSession();
+  const id = document.getElementById('sc-worker-edit-id').value;
+  const companyId = document.getElementById('sc-worker-company-select').value;
+  const name = document.getElementById('sc-worker-name').value.trim();
+  const notes = document.getElementById('sc-worker-notes').value.trim();
+  hideError('sc-worker-error');
+  if (!name) { showError('sc-worker-error', '作業員名を入力してください。'); return; }
+  if (!companyId) { showError('sc-worker-error', '外注会社を選択してください。'); return; }
+  const btn = document.getElementById('sc-worker-submit');
+  btn.disabled = true;
+  try {
+    await rpc('admin_upsert_subcontractor_worker', { p_admin_employee_code: session.employeeCode, p_id: id ? Number(id) : null, p_subcontractor_company_id: Number(companyId), p_worker_name: name, p_notes: notes || null });
+    await loadSubcontractorWorkerAdmin();
+  } catch (e) {
+    showError('sc-worker-error', e.message || '保存に失敗しました。');
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -3860,8 +4212,13 @@ function init() {
       } catch (e2) { /* 無視 */ }
     }, 250);
   });
-  document.getElementById('drm-employee-select').addEventListener('change', (e) => {
-    drmFilters.employee = e.target.value;
+  let drmNameSearchTimer = null;
+  document.getElementById('drm-search-name').addEventListener('input', (e) => {
+    clearTimeout(drmNameSearchTimer);
+    drmNameSearchTimer = setTimeout(() => { drmFilters.name = e.target.value.trim(); loadDailyReportManagementList(); }, 300);
+  });
+  document.getElementById('drm-company-select').addEventListener('change', (e) => {
+    drmFilters.companyId = e.target.value;
     loadDailyReportManagementList();
   });
   ['drm-date-from', 'drm-date-to'].forEach((id) => {
@@ -3871,14 +4228,60 @@ function init() {
       loadDailyReportManagementList();
     });
   });
-  document.querySelectorAll('#screen-daily-report-management .filter-row .filter-chip').forEach((btn) => {
+  document.getElementById('drm-toggle-advanced').addEventListener('click', () => {
+    const el = document.getElementById('drm-advanced');
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  });
+  document.getElementById('drm-missing-toggle').addEventListener('click', () => {
+    const el = document.getElementById('drm-missing-today-list');
+    const show = el.style.display === 'none';
+    el.style.display = show ? 'block' : 'none';
+    document.getElementById('drm-missing-toggle').textContent = show ? '未提出者を隠す' : '未提出者を表示する';
+  });
+  document.getElementById('drm-notify-btn').addEventListener('click', async () => {
+    const session = getSession();
+    const btn = document.getElementById('drm-notify-btn');
+    btn.disabled = true;
+    try {
+      const count = await rpc('admin_notify_missing_daily_reports', { p_admin_employee_code: session.employeeCode, p_date: new Date().toISOString().slice(0, 10) });
+      window.alert(`${count}名へ通知を送信しました。`);
+    } catch (e) {
+      window.alert(e.message || '通知の送信に失敗しました。');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  document.querySelectorAll('#drm-worker-type-filter .filter-chip').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('#screen-daily-report-management .filter-row .filter-chip').forEach((b) => b.classList.remove('active'));
+      document.querySelectorAll('#drm-worker-type-filter .filter-chip').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      drmFilters.workerType = btn.dataset.workerType;
+      loadDailyReportManagementList();
+    });
+  });
+  document.querySelectorAll('#drm-status-filter .filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#drm-status-filter .filter-chip').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       drmFilters.status = btn.dataset.status;
       loadDailyReportManagementList();
     });
   });
+  document.getElementById('drm-select-all').addEventListener('change', (e) => {
+    const groups = new Set(drmRows.map((r) => drmGroupKey(r)));
+    if (e.target.checked) { groups.forEach((k) => drmSelected.add(k)); } else { drmSelected.clear(); }
+    renderDrmAll();
+  });
+  document.getElementById('drm-bulk-confirm').addEventListener('click', () => doDrmBulkConfirm('confirmed', null));
+  document.getElementById('drm-bulk-reject').addEventListener('click', () => { revealReasonBox(document.getElementById('drm-bulk-reason-box')); });
+  document.getElementById('drm-bulk-reason-confirm').addEventListener('click', () => {
+    const reason = document.getElementById('drm-bulk-reason').value.trim();
+    if (!reason) return;
+    doDrmBulkConfirm('rejected', reason);
+  });
+
+  document.getElementById('sc-company-submit').addEventListener('click', doSaveSubcontractorCompany);
+  document.getElementById('sc-worker-submit').addEventListener('click', doSaveSubcontractorWorker);
 
   let areqSearchTimer = null;
   document.getElementById('areq-search-name').addEventListener('input', (e) => {
@@ -3926,7 +4329,58 @@ function init() {
   document.getElementById('daily-report-date').addEventListener('change', (e) => loadDailyReportForDate(e.target.value));
   document.getElementById('daily-report-add-entry').addEventListener('click', () => addDailyReportEntry());
   document.getElementById('daily-report-add-special-entry').addEventListener('click', () => addDailyReportEntry());
-  document.getElementById('daily-report-submit').addEventListener('click', doSubmitDailyReport);
+  document.getElementById('daily-report-submit').addEventListener('click', () => doSubmitDailyReport(false));
+  document.getElementById('daily-report-save-draft').addEventListener('click', () => doSubmitDailyReport(true));
+
+  document.getElementById('daily-report-target-type').addEventListener('change', (e) => {
+    const session = getSession();
+    const type = e.target.value;
+    document.getElementById('daily-report-target-employee-wrap').style.display = type === 'employee' ? 'block' : 'none';
+    document.getElementById('daily-report-target-worker-wrap').style.display = type === 'subcontractor' ? 'block' : 'none';
+    if (type === 'self') {
+      dailyReportTarget = { type: 'self', employeeCode: session.employeeCode, employeeName: session.employeeName, subcontractorWorkerId: null, workerName: null };
+      loadDailyReportForDate(document.getElementById('daily-report-date').value);
+    } else {
+      dailyReportTarget = { type, employeeCode: null, employeeName: null, subcontractorWorkerId: null, workerName: null };
+    }
+  });
+  document.getElementById('daily-report-target-employee-search').addEventListener('input', async (e) => {
+    const q = e.target.value.trim();
+    const results = document.getElementById('daily-report-target-employee-results');
+    if (q.length < 1) { results.innerHTML = ''; return; }
+    const session = getSession();
+    try {
+      const rows = await rpc('list_employees_for_participant_select', { p_employee_code: session.employeeCode });
+      const matches = rows.filter((r) => r.employee_name.includes(q) || r.employee_code.includes(q)).slice(0, 8);
+      results.innerHTML = matches.map((r) => `<button type="button" class="candidate-item" data-code="${r.employee_code}" data-name="${r.employee_name}">${r.employee_name}(${r.employee_code})</button>`).join('');
+      results.querySelectorAll('.candidate-item').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          dailyReportTarget = { type: 'employee', employeeCode: btn.dataset.code, employeeName: btn.dataset.name, subcontractorWorkerId: null, workerName: null };
+          document.getElementById('daily-report-target-employee-label').style.display = 'block';
+          document.getElementById('daily-report-target-employee-label').textContent = `選択中: ${btn.dataset.name}(${btn.dataset.code})`;
+          results.innerHTML = ''; e.target.value = '';
+          loadDailyReportForDate(document.getElementById('daily-report-date').value);
+        });
+      });
+    } catch (err) { /* 無視 */ }
+  });
+  document.getElementById('daily-report-target-worker-search').addEventListener('input', async (e) => {
+    const q = e.target.value.trim();
+    const results = document.getElementById('daily-report-target-worker-results');
+    try {
+      const rows = await rpc('search_subcontractor_workers', { p_query: q || null });
+      results.innerHTML = rows.map((r) => `<button type="button" class="candidate-item" data-id="${r.id}" data-name="${r.worker_name}">${r.worker_name}(${r.company_name})</button>`).join('');
+      results.querySelectorAll('.candidate-item').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          dailyReportTarget = { type: 'subcontractor', employeeCode: null, employeeName: null, subcontractorWorkerId: Number(btn.dataset.id), workerName: btn.dataset.name };
+          document.getElementById('daily-report-target-worker-label').style.display = 'block';
+          document.getElementById('daily-report-target-worker-label').textContent = `選択中: ${btn.dataset.name}`;
+          results.innerHTML = ''; e.target.value = '';
+          loadDailyReportForDate(document.getElementById('daily-report-date').value);
+        });
+      });
+    } catch (err) { /* 無視 */ }
+  });
   document.querySelectorAll('#screen-daily-report-admin .filter-chip').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#screen-daily-report-admin .filter-chip').forEach((b) => b.classList.remove('active'));
@@ -4053,8 +4507,8 @@ function init() {
   };
   SCREEN_ENTER_HOOKS['daily-report'] = resetDailyReportForm;
   SCREEN_ENTER_HOOKS['my-daily-reports'] = loadMyDailyReports;
-  SCREEN_ENTER_HOOKS['daily-report-admin'] = () => {
-    if (!isAdmin()) { enterMenu(); return; }
+  SCREEN_ENTER_HOOKS['daily-report-admin'] = async () => {
+    if (!(await isNippoAdmin())) { enterMenu(); return; }
     loadDailyReportAdminList();
   };
   SCREEN_ENTER_HOOKS['purpose-admin'] = () => {
@@ -4069,9 +4523,17 @@ function init() {
     if (!isAdmin()) { enterMenu(); return; }
     loadAdminRoleManagement();
   };
-  SCREEN_ENTER_HOOKS['daily-report-management'] = () => {
-    if (!isAdmin()) { enterMenu(); return; }
+  SCREEN_ENTER_HOOKS['daily-report-management'] = async () => {
+    if (!(await isNippoAdmin())) { enterMenu(); return; }
     loadDailyReportManagement();
+  };
+  SCREEN_ENTER_HOOKS['subcontractor-company-admin'] = async () => {
+    if (!(await isNippoAdmin())) { enterMenu(); return; }
+    loadSubcontractorCompanyAdmin();
+  };
+  SCREEN_ENTER_HOOKS['subcontractor-worker-admin'] = async () => {
+    if (!(await isNippoAdmin())) { enterMenu(); return; }
+    loadSubcontractorWorkerAdmin();
   };
 
   const session = getSession();

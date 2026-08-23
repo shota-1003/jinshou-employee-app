@@ -2,7 +2,7 @@
 
 // アプリの見た目(HTML/CSS/JS)だけをキャッシュするapp-shell方式。申請データ自体は
 // 常にオンラインでSupabaseへ直接送るため、APIレスポンスはキャッシュしない。
-const CACHE_NAME = 'jinshou-employee-app-v19';
+const CACHE_NAME = 'jinshou-employee-app-v20';
 const SHELL_FILES = [
   './', './index.html', './style.css', './app.js', './icons.js', './manifest.json', './icons/icon.svg',
   './icons/app-icon-180.png', './brand/logo-gold.png', './brand/logo-navy.png', './brand/logo-white.png',

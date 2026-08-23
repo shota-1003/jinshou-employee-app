@@ -3236,6 +3236,7 @@ function addDailyReportEntry(prefill) {
   workTypeSelect.addEventListener('change', updateDailyReportTotal);
   if (prefill && prefill.is_leader) clone.querySelector('.dr-is-leader').checked = true;
   if (prefill && prefill.is_night_shift) clone.querySelector('.dr-is-night-shift').checked = true;
+  if (prefill && prefill.notes) clone.querySelector('.dr-notes').value = prefill.notes;
 
   clone.querySelector('.dr-remove-entry-btn').addEventListener('click', () => {
     document.querySelector(`[data-entry-id="${entryId}"]`).remove();
@@ -3307,7 +3308,7 @@ async function fetchDailyReportForTarget(dateStr) {
     : rows;
   return filtered.map((r) => ({
     site_id: r.site_id, work_type: r.work_type, reflected: !!r.reflected_to_sheet_at,
-    report_status: r.report_status, is_leader: r.is_leader, is_night_shift: false,
+    report_status: r.report_status, is_leader: r.is_leader, is_night_shift: r.is_night_shift, notes: r.notes,
   }));
 }
 
@@ -3335,7 +3336,7 @@ async function loadDailyReportForDate(dateStr) {
     } else {
       hint.textContent = 'この日は入力済みです。内容を修正して「日報を提出する」を押すと上書きされます。';
     }
-    existing.forEach((e) => addDailyReportEntry({ site_id: e.site_id, work_type: e.work_type, is_leader: e.is_leader, is_night_shift: e.is_night_shift }));
+    existing.forEach((e) => addDailyReportEntry({ site_id: e.site_id, work_type: e.work_type, is_leader: e.is_leader, is_night_shift: e.is_night_shift, notes: e.notes }));
   } else {
     addDailyReportEntry();
   }
@@ -3387,6 +3388,7 @@ async function doSubmitDailyReport(isDraft) {
     entries.push({
       site_id: siteId, new_site_name: newSiteName, work_type: el.querySelector('.dr-work-type').value,
       is_leader: el.querySelector('.dr-is-leader').checked, is_night_shift: el.querySelector('.dr-is-night-shift').checked,
+      notes: el.querySelector('.dr-notes').value.trim() || null,
     });
   }
 

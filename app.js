@@ -3901,6 +3901,7 @@ function renderDrmAll() {
         <div class="row2">${sites}</div>
         <span class="status-badge ${statusBadgeClass}">${DRM_STATUS_LABEL[f.report_status] || f.report_status}</span>
         ${f.validation_status === 'anomaly' ? '<span class="mini-tag danger">要確認</span>' : ''}
+        ${g.rows.some((r) => r.reflect_override_work_type) ? '<span class="mini-tag info">反映値を調整済み</span>' : ''}
         ${g.rows.every((r) => r.reflected_to_sheet_at) ? '<span class="mini-tag info">シート反映済み</span>' : ''}
         <div class="checkbox-row"><input type="checkbox" class="drm-row-check" data-key="${g.key}" ${drmSelected.has(g.key) ? 'checked' : ''}><label>選択</label></div>
       </div>
@@ -3908,6 +3909,12 @@ function renderDrmAll() {
   }).join('');
   listEl.querySelectorAll('.drm-row-check').forEach((cb) => {
     cb.addEventListener('change', () => { toggleDrmSelect(cb.dataset.key, cb.checked); });
+  });
+  listEl.querySelectorAll('.history-item').forEach((el) => {
+    el.addEventListener('click', (ev) => {
+      if (ev.target.classList.contains('drm-row-check') || ev.target.tagName === 'LABEL') return;
+      openDailyReportDetail(el.dataset.key);
+    });
   });
 
   const bodyEl = document.getElementById('drm-table-body');
@@ -3929,7 +3936,7 @@ function renderDrmAll() {
         <td>${site1.work_type || '-'}</td>
         <td>${site2.site_name ? `${site2.site_name}(${site2.work_type || ''})` : '-'}</td>
         <td>${f.submitted_at ? new Date(f.submitted_at).toLocaleString('ja-JP') : '-'}</td>
-        <td>${DRM_STATUS_LABEL[f.report_status] || f.report_status}</td>
+        <td>${DRM_STATUS_LABEL[f.report_status] || f.report_status}${g.rows.some((r) => r.reflect_override_work_type) ? ' <span class="mini-tag info">調整済み</span>' : ''}</td>
         <td><span class="status-badge ${statusBadgeClass}">${f.confirmed_by ? f.confirmed_by : (f.report_status === 'confirmed' || f.report_status === 'rejected' ? '-' : '未確認')}</span></td>
         <td>${reflected ? '反映済み' : '未反映'}</td>
       </tr>
@@ -3938,8 +3945,173 @@ function renderDrmAll() {
   bodyEl.querySelectorAll('.drm-row-check').forEach((cb) => {
     cb.addEventListener('change', () => { toggleDrmSelect(cb.dataset.key, cb.checked); });
   });
+  bodyEl.querySelectorAll('tr[data-key]').forEach((tr) => {
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', (ev) => {
+      if (ev.target.classList.contains('drm-row-check')) return;
+      openDailyReportDetail(tr.dataset.key);
+    });
+  });
 
   updateDrmBulkBar();
+}
+
+// 日報1件(グループ=同一日・同一対象者の現場1/2スロット)の詳細画面。
+// 「原本(本人が提出した内容)」は表示専用、「スプレッドシートへ反映する内容」は
+// 管理者が調整できる(reflect_override_*)。既にloadDailyReportManagementListで
+// 取得済みのdrmRowsから該当グループを探すだけで、追加のRPC呼び出しは不要。
+async function openDailyReportDetail(groupKey) {
+  const rows = drmRows.filter((r) => drmGroupKey(r) === groupKey).sort((a, b) => (a.entry_slot || 0) - (b.entry_slot || 0));
+  showScreen('daily-report-detail');
+  if (rows.length === 0) {
+    document.getElementById('drd-title').textContent = '日報詳細';
+    document.getElementById('drd-meta').textContent = '該当する日報が見つかりませんでした。';
+    document.getElementById('drd-slots').innerHTML = '';
+    document.getElementById('drd-history').innerHTML = '';
+    return;
+  }
+  const f = rows[0];
+  const personName = f.worker_type === 'subcontractor' ? `${f.subcontractor_worker_name}(外注:${f.subcontractor_company_name || ''})` : (f.employee_name || '(不明)');
+  document.getElementById('drd-title').textContent = `${personName}・${f.report_date}`;
+  document.getElementById('drd-meta').textContent = `提出状況: ${DRM_STATUS_LABEL[f.report_status] || f.report_status}`;
+
+  document.getElementById('drd-slots').innerHTML = rows.map((r, idx) => {
+    const effWorkType = r.reflect_override_work_type || r.work_type;
+    const effLeader = r.reflect_override_work_type ? r.reflect_override_is_leader : r.is_leader;
+    const effNight = r.reflect_override_work_type ? r.reflect_override_is_night_shift : r.is_night_shift;
+    return `
+      <div class="card" data-slot-id="${r.id}">
+        <div class="form-title" style="font-size:15px;">現場${idx + 1}(スロット${r.entry_slot || idx + 1})</div>
+        <div class="field-group">
+          <div class="field-row"><span class="field-label">【原本】現場</span><span class="field-value">${r.site_name || '-'}</span></div>
+          <div class="field-row"><span class="field-label">【原本】勤務区分</span><span class="field-value">${r.work_type || '-'}${r.is_leader ? '・リーダー' : ''}${r.is_night_shift ? '・夜勤' : ''}</span></div>
+          <div class="field-row"><span class="field-label">スプレッドシート反映</span><span class="field-value">${r.reflected_to_sheet_at ? `反映済み(${new Date(r.reflected_to_sheet_at).toLocaleString('ja-JP')})` : '未反映'}</span></div>
+          ${r.reflect_override_work_type ? `<div class="field-row"><span class="field-label">反映値を調整</span><span class="field-value">${r.reflect_override_by || ''} ${r.reflect_override_at ? new Date(r.reflect_override_at).toLocaleString('ja-JP') : ''}${r.reflect_override_reason ? `(${r.reflect_override_reason})` : ''}</span></div>` : ''}
+        </div>
+        <div class="form-title" style="font-size:14px;">スプレッドシートへ反映する内容</div>
+        <label>現場</label>
+        <input type="text" class="drd-site-search" data-slot-id="${r.id}" placeholder="現場名で検索" value="${r.reflect_override_site_name || r.site_name || ''}">
+        <input type="hidden" class="drd-site-id" data-slot-id="${r.id}" value="${r.reflect_override_site_id || r.site_id || ''}">
+        <div class="drd-site-candidates" data-slot-id="${r.id}"></div>
+        <label>勤務区分</label>
+        <div class="filter-row drd-worktype" data-slot-id="${r.id}">
+          <button type="button" class="filter-chip ${effWorkType === '終日' ? 'active' : ''}" data-work-type="終日">終日</button>
+          <button type="button" class="filter-chip ${effWorkType === '午前' ? 'active' : ''}" data-work-type="午前">午前</button>
+          <button type="button" class="filter-chip ${effWorkType === '午後' ? 'active' : ''}" data-work-type="午後">午後</button>
+        </div>
+        <label class="checkbox-row"><input type="checkbox" class="drd-leader" data-slot-id="${r.id}" ${effLeader ? 'checked' : ''}> リーダーとして参加</label>
+        <label class="checkbox-row"><input type="checkbox" class="drd-night" data-slot-id="${r.id}" ${effNight ? 'checked' : ''}> 夜勤</label>
+        <label>調整理由(任意)</label>
+        <textarea class="drd-reason" data-slot-id="${r.id}"></textarea>
+        <button type="button" class="drd-save" data-slot-id="${r.id}">保存(反映値を調整して再反映予約)</button>
+        ${r.reflect_override_work_type ? `<button type="button" class="secondary drd-clear" data-slot-id="${r.id}">原本に戻す</button>` : ''}
+        <div class="hint drd-result" data-slot-id="${r.id}"></div>
+      </div>
+    `;
+  }).join('');
+
+  wireDailyReportDetailSlots(rows);
+
+  const historyEl = document.getElementById('drd-history');
+  historyEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const session = getSession();
+    const histories = await Promise.all(rows.map((r) => rpc('admin_get_daily_report_audit_log', { p_admin_employee_code: session.employeeCode, p_daily_report_id: r.id }).catch(() => [])));
+    const merged = histories.flat().sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    historyEl.innerHTML = merged.length === 0 ? '<div class="hint">変更履歴はありません。</div>' : merged.map((h) => `
+      <div class="change-request-item"><div class="row1"><span>${h.action}</span></div><div class="row2">${h.actor_name}・${new Date(h.created_at).toLocaleString('ja-JP')}</div></div>
+    `).join('');
+  } catch (e) {
+    historyEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+function wireDailyReportDetailSlots(rows) {
+  const slotsEl = document.getElementById('drd-slots');
+  slotsEl.querySelectorAll('.drd-worktype').forEach((row) => {
+    row.querySelectorAll('.filter-chip').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        row.querySelectorAll('.filter-chip').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+  });
+
+  let siteSearchTimer = null;
+  slotsEl.querySelectorAll('.drd-site-search').forEach((input) => {
+    input.addEventListener('input', () => {
+      clearTimeout(siteSearchTimer);
+      const slotId = input.dataset.slotId;
+      const q = input.value.trim();
+      const candEl = slotsEl.querySelector(`.drd-site-candidates[data-slot-id="${slotId}"]`);
+      siteSearchTimer = setTimeout(async () => {
+        if (!q) { candEl.innerHTML = ''; return; }
+        const session = getSession();
+        try {
+          const sites = await rpc('admin_search_sites_simple', { p_admin_employee_code: session.employeeCode, p_query: q });
+          candEl.innerHTML = sites.map((s) => `<button type="button" class="candidate-item" data-id="${s.id}" data-name="${s.site_name}">${s.site_name}</button>`).join('');
+          candEl.querySelectorAll('.candidate-item').forEach((btn) => {
+            btn.addEventListener('click', () => {
+              input.value = btn.dataset.name;
+              slotsEl.querySelector(`.drd-site-id[data-slot-id="${slotId}"]`).value = btn.dataset.id;
+              candEl.innerHTML = '';
+            });
+          });
+        } catch (e) { /* 無視 */ }
+      }, 250);
+    });
+  });
+
+  slotsEl.querySelectorAll('.drd-save').forEach((btn) => {
+    btn.addEventListener('click', () => doSaveDailyReportReflectOverride(btn.dataset.slotId));
+  });
+  slotsEl.querySelectorAll('.drd-clear').forEach((btn) => {
+    btn.addEventListener('click', () => doClearDailyReportReflectOverride(btn.dataset.slotId));
+  });
+}
+
+async function doSaveDailyReportReflectOverride(slotId) {
+  const session = getSession();
+  const slotsEl = document.getElementById('drd-slots');
+  const resultEl = slotsEl.querySelector(`.drd-result[data-slot-id="${slotId}"]`);
+  const siteIdInput = slotsEl.querySelector(`.drd-site-id[data-slot-id="${slotId}"]`);
+  const siteSearchInput = slotsEl.querySelector(`.drd-site-search[data-slot-id="${slotId}"]`);
+  const workTypeBtn = slotsEl.querySelector(`.drd-worktype[data-slot-id="${slotId}"] .filter-chip.active`);
+  const leader = slotsEl.querySelector(`.drd-leader[data-slot-id="${slotId}"]`).checked;
+  const night = slotsEl.querySelector(`.drd-night[data-slot-id="${slotId}"]`).checked;
+  const reason = slotsEl.querySelector(`.drd-reason[data-slot-id="${slotId}"]`).value.trim();
+  if (!workTypeBtn) { resultEl.textContent = '勤務区分を選択してください。'; return; }
+  const siteId = siteIdInput.value ? Number(siteIdInput.value) : null;
+  const newSiteName = siteId ? null : siteSearchInput.value.trim();
+  if (!siteId && !newSiteName) { resultEl.textContent = '現場を選択または入力してください。'; return; }
+  resultEl.textContent = '保存中...';
+  try {
+    await rpc('admin_set_daily_report_reflect_override', {
+      p_admin_employee_code: session.employeeCode, p_daily_report_id: Number(slotId),
+      p_site_id: siteId, p_new_site_name: newSiteName, p_work_type: workTypeBtn.dataset.workType,
+      p_is_leader: leader, p_is_night_shift: night, p_reason: reason || null,
+    });
+    resultEl.textContent = '保存しました(次回のスプレッドシート反映処理で更新されます)。';
+    await loadDailyReportManagementList();
+  } catch (e) {
+    resultEl.textContent = e.message || '保存に失敗しました。';
+  }
+}
+
+async function doClearDailyReportReflectOverride(slotId) {
+  const session = getSession();
+  const slotsEl = document.getElementById('drd-slots');
+  const resultEl = slotsEl.querySelector(`.drd-result[data-slot-id="${slotId}"]`);
+  resultEl.textContent = '処理中...';
+  try {
+    await rpc('admin_clear_daily_report_reflect_override', { p_admin_employee_code: session.employeeCode, p_daily_report_id: Number(slotId), p_reason: null });
+    resultEl.textContent = '原本に戻しました(次回のスプレッドシート反映処理で更新されます)。';
+    await loadDailyReportManagementList();
+    const g = drmRows.find((r) => String(r.id) === String(slotId));
+    if (g) openDailyReportDetail(drmGroupKey(g));
+  } catch (e) {
+    resultEl.textContent = e.message || '処理に失敗しました。';
+  }
 }
 
 function toggleDrmSelect(key, checked) {
@@ -4633,6 +4805,9 @@ function init() {
   SCREEN_ENTER_HOOKS['subcontractor-worker-admin'] = async () => {
     if (!(await isNippoAdmin())) { enterMenu(); return; }
     loadSubcontractorWorkerAdmin();
+  };
+  SCREEN_ENTER_HOOKS['daily-report-detail'] = async () => {
+    if (!(await isNippoAdmin())) { enterMenu(); return; }
   };
 
   const session = getSession();

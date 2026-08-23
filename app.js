@@ -3281,6 +3281,8 @@ async function loadDailyReportAdminList() {
 // ---------- 申請管理(管理者、全申請横断検索) ----------
 
 let areqFilters = { type: '', status: '', name: '', dateFrom: '', dateTo: '', site: '', partner: '' };
+let areqRows = [];
+let areqSort = { col: 'requested_at', dir: 'desc' };
 
 async function loadAdminAllRequests() {
   const session = getSession();
@@ -3288,7 +3290,7 @@ async function loadAdminAllRequests() {
   const countEl = document.getElementById('areq-count');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
-    const rows = await rpc('admin_search_requests', {
+    areqRows = await rpc('admin_search_requests', {
       p_admin_employee_code: session.employeeCode,
       p_request_type: areqFilters.type || null,
       p_employee_code: null,
@@ -3300,26 +3302,88 @@ async function loadAdminAllRequests() {
       p_partner_name: areqFilters.partner || null,
       p_keyword: null,
     });
-    countEl.textContent = `${rows.length}件`;
-    if (rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する申請はありません。</div>'; return; }
-    listEl.innerHTML = rows.map((r) => {
-      const amountStr = r.amount != null ? `${Number(r.amount).toLocaleString()}円` : '';
-      const statusClass = r.status_group === 'approved' ? 'done' : (r.status_group === 'rejected' ? 'rejected' : '');
-      return `
-        <div class="history-item" data-type="${r.source_type}" data-id="${r.source_id}">
-          <div class="row1"><span>${r.employee_name}・${REQUEST_TYPE_LABEL[r.source_type] || r.source_type}</span><span>${amountStr}</span></div>
-          <div class="row2">${new Date(r.requested_at).toLocaleDateString('ja-JP')}　${r.summary || ''}</div>
-          <span class="status-badge ${statusClass}">${STATUS_GROUP_LABEL[r.status_group] || r.status}</span>
-          ${r.requires_special_review ? '<span class="mini-tag danger">事前申請なし</span>' : ''}
-        </div>
-      `;
-    }).join('');
-    listEl.querySelectorAll('.history-item').forEach((el) => {
-      el.addEventListener('click', () => openRequestDetail(el.dataset.type, el.dataset.id));
-    });
+    countEl.textContent = `${areqRows.length}件`;
+    renderAreqAll();
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+    document.getElementById('areq-table-body').innerHTML = '';
   }
+}
+
+// スマホはカード一覧(#areq-list)、PC(768px以上)はCSSで表形式(#areq-table-wrap)に
+// 切り替える。データ取得は共通(areqRows)で、並び替えもここで両方に反映する。
+function renderAreqAll() {
+  const sorted = sortAreqRows(areqRows);
+  renderAreqCards(sorted);
+  renderAreqTable(sorted);
+}
+
+function sortAreqRows(rows) {
+  const { col, dir } = areqSort;
+  if (!col) return rows;
+  const sorted = rows.slice().sort((a, b) => {
+    let av = a[col]; let bv = b[col];
+    if (col === 'employee_name' || col === 'source_type' || col === 'site_name' || col === 'status' || col === 'status_group') {
+      av = av || ''; bv = bv || '';
+      return String(av).localeCompare(String(bv), 'ja');
+    }
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (col === 'requested_at' || col === 'updated_at') { av = new Date(av).getTime(); bv = new Date(bv).getTime(); }
+    return av > bv ? 1 : av < bv ? -1 : 0;
+  });
+  if (dir === 'desc') sorted.reverse();
+  return sorted;
+}
+
+function renderAreqCards(rows) {
+  const listEl = document.getElementById('areq-list');
+  if (rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する申請はありません。</div>'; return; }
+  listEl.innerHTML = rows.map((r) => {
+    const amountStr = r.amount != null ? `${Number(r.amount).toLocaleString()}円` : '';
+    const statusClass = r.status_group === 'approved' ? 'done' : (r.status_group === 'rejected' ? 'rejected' : '');
+    return `
+      <div class="history-item" data-type="${r.source_type}" data-id="${r.source_id}">
+        <div class="row1"><span>${r.employee_name}・${REQUEST_TYPE_LABEL[r.source_type] || r.source_type}</span><span>${amountStr}</span></div>
+        <div class="row2">${new Date(r.requested_at).toLocaleDateString('ja-JP')}　${r.summary || ''}</div>
+        <span class="status-badge ${statusClass}">${STATUS_GROUP_LABEL[r.status_group] || r.status}</span>
+        ${r.requires_special_review ? '<span class="mini-tag danger">事前申請なし</span>' : ''}
+      </div>
+    `;
+  }).join('');
+  listEl.querySelectorAll('.history-item').forEach((el) => {
+    el.addEventListener('click', () => openRequestDetail(el.dataset.type, el.dataset.id));
+  });
+}
+
+function renderAreqTable(rows) {
+  const bodyEl = document.getElementById('areq-table-body');
+  document.querySelectorAll('#screen-admin-all-requests .areq-table th[data-sort]').forEach((th) => {
+    th.classList.toggle('sorted', th.dataset.sort === areqSort.col);
+    th.classList.toggle('desc', th.dataset.sort === areqSort.col && areqSort.dir === 'desc');
+  });
+  if (rows.length === 0) { bodyEl.innerHTML = `<tr><td colspan="9"><div class="hint">該当する申請はありません。</div></td></tr>`; return; }
+  bodyEl.innerHTML = rows.map((r) => {
+    const amountStr = r.amount != null ? `${Number(r.amount).toLocaleString()}円` : '-';
+    const statusClass = r.status_group === 'approved' ? 'done' : (r.status_group === 'rejected' ? 'rejected' : '');
+    return `
+      <tr data-type="${r.source_type}" data-id="${r.source_id}">
+        <td>${r.employee_name}</td>
+        <td>${REQUEST_TYPE_LABEL[r.source_type] || r.source_type}${r.requires_special_review ? ' <span class="mini-tag danger">事前申請なし</span>' : ''}</td>
+        <td>${new Date(r.requested_at).toLocaleDateString('ja-JP')}</td>
+        <td>${r.site_name || '-'}</td>
+        <td>${amountStr}</td>
+        <td>${STATUS_LABEL[r.status] || r.status}</td>
+        <td><span class="status-badge ${statusClass}">${STATUS_GROUP_LABEL[r.status_group] || r.status_group}</span></td>
+        <td>${r.updated_at ? new Date(r.updated_at).toLocaleString('ja-JP') : '-'}</td>
+        <td><button type="button" class="areq-table-detail-btn">詳細</button></td>
+      </tr>
+    `;
+  }).join('');
+  bodyEl.querySelectorAll('tr').forEach((tr) => {
+    tr.addEventListener('click', () => openRequestDetail(tr.dataset.type, tr.dataset.id));
+  });
 }
 
 let currentRequestDetail = null;
@@ -3848,6 +3912,14 @@ function init() {
       areqFilters.site = document.getElementById('areq-site').value.trim();
       areqFilters.partner = document.getElementById('areq-partner').value.trim();
       loadAdminAllRequests();
+    });
+  });
+  // PC版のテーブル表示: 見出しクリックで並び替え(再取得はせずareqRowsをクライアント側で並び替え)
+  document.querySelectorAll('#screen-admin-all-requests .areq-table th[data-sort]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.sort;
+      areqSort = { col, dir: areqSort.col === col && areqSort.dir === 'asc' ? 'desc' : 'asc' };
+      renderAreqAll();
     });
   });
 

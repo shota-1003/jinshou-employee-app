@@ -993,7 +993,25 @@
       <input type="text" id="areq-partner" placeholder="取引先名で検索...">
     </div>
     <div class="hint" id="areq-count" style="margin:10px 0;"></div>
-    <div id="areq-list"></div>
+    <div id="areq-list" class="areq-cards"></div>
+    <div id="areq-table-wrap" class="areq-table-wrap">
+      <table class="areq-table">
+        <thead>
+          <tr>
+            <th data-sort="employee_name">社員名</th>
+            <th data-sort="source_type">申請種類</th>
+            <th data-sort="requested_at">申請日</th>
+            <th data-sort="site_name">現場</th>
+            <th data-sort="amount">金額</th>
+            <th data-sort="status">ステータス</th>
+            <th data-sort="status_group">承認状況</th>
+            <th data-sort="updated_at">更新日時</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="areq-table-body"></tbody>
+      </table>
+    </div>
   </section>
 
   <!-- 申請詳細(管理者) -->

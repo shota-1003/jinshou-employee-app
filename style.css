@@ -721,6 +721,10 @@ button.link {
 .qual-category-toggle button.secondary-off { background: oklch(1 0 0 / 8%); color: var(--text-muted); }
 .health-summary-card { background: var(--info-bg); border-radius: var(--radius-md); padding: 16px; margin-bottom: 8px; }
 .health-summary-card .row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13.5px; color: var(--text); }
+
+/* 申請管理(PC版テーブル表示): スマホはカード一覧(.areq-cards)のまま、PC(768px以上)は
+   このテーブルへCSSだけで切り替える(データ・JS・RPCはカードと共通)。 */
+.areq-table-wrap { display: none; }
 .health-summary-card .row .label { color: var(--text-muted); }
 
 /* ===== モーダル風の簡易オーバーレイ(必要に応じて) ===== */
@@ -788,10 +792,37 @@ button.link {
 
   .modal-overlay { align-items: center; }
   .modal-sheet { max-width: 480px; border-radius: var(--radius-lg); max-height: 86vh; }
+
+  /* 申請管理: PCではカード一覧の代わりに表形式で表示し、業務システムらしく
+     横方向に多くの情報(社員名/種類/申請日/現場/金額/ステータス/承認状況/更新日時/操作)を
+     一度に確認できるようにする。データ・クリック時の遷移先はカード版と共通。 */
+  .areq-cards { display: none; }
+  .areq-table-wrap { display: block; overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card-bg); }
+  .areq-table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+  .areq-table th, .areq-table td { padding: 11px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  .areq-table thead th {
+    position: sticky; top: 0; background: var(--card-bg-solid); color: var(--text-muted);
+    font-size: 11.5px; font-weight: 700; letter-spacing: .03em; z-index: 1; user-select: none;
+  }
+  .areq-table th[data-sort] { cursor: pointer; }
+  .areq-table th[data-sort]:hover { color: var(--text); }
+  .areq-table th[data-sort]::after { content: ''; margin-left: 4px; opacity: .4; }
+  .areq-table th[data-sort].sorted::after { content: '▲'; opacity: 1; color: var(--primary); font-size: 9px; }
+  .areq-table th[data-sort].sorted.desc::after { content: '▼'; }
+  .areq-table tbody tr { cursor: pointer; transition: background .15s; }
+  .areq-table tbody tr:hover { background: oklch(1 0 0 / 5%); }
+  .areq-table tbody tr:last-child td { border-bottom: none; }
+  .areq-table .status-badge { margin-top: 0; white-space: nowrap; }
+  .areq-table-detail-btn {
+    width: auto; margin: 0; padding: 6px 14px; font-size: 12px; font-weight: 700;
+    background: var(--info-bg); color: var(--primary); border-radius: var(--radius-pill); box-shadow: none;
+  }
+  body:has(#screen-admin-all-requests.active) main { max-width: 1400px; }
 }
 
 @media (min-width: 1280px) {
   main { max-width: 1280px; }
+  body:has(#screen-admin-all-requests.active) main { max-width: 1600px; }
   [id$="-list"], [id$="-results"] { column-count: 3; }
   #today-list, #daily-report-entry-list, #expense-item-list,
   .home-card-grid, .main-menu-grid, .dash-card-grid, .supply-select-grid, .menu-list {

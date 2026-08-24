@@ -4,28 +4,37 @@
 // 社員全員で直接共有編集する(誰が何を消したか分からなくなる)問題を避けるため、
 // 各社員が自分の端末からSupabaseへ直接送信する構成にした。
 //
-// 認証(2026-08-22改訂): 社員番号だけでの本人確認はセキュリティ上不十分という指摘を受け、
-// 暗証番号(4〜6桁、pgcryptoでサーバー側ハッシュ化、平文は一切保存しない)を追加した。
-// 「端末記憶」と「認証情報」を分離する設計: localStorageには社員番号だけを覚えさせ
-// (=次回起動時に社員番号入力を省略するため)、実際の本人確認(暗証番号照合)は毎回
-// サーバー側で行う。認証成功後の「ログイン状態」はsessionStorageに置き、アプリを
-// 完全に開き直すたび(タブを閉じる・PWAを終了する等)に暗証番号の再入力を求める
-// (ページを更新しただけの間は再入力不要)。
+// 認証(2026-08-24改訂): 「社員番号を知っているだけで他人になりすませる」という
+// 監査指摘を受け、端末バインド型のセッショントークン認証を導入した。暗証番号
+// (4〜6桁、pgcryptoでサーバー側bcryptハッシュ化、平文は一切保存しない)による
+// 本人確認は「新しい端末で最初の1回だけ」行い、成功時にサーバーが256bitのランダムな
+// 端末トークンを発行する。このトークンをlocalStorage(ブラウザ/PWAを閉じても消えない)
+// へ保存し、以後は全RPC呼び出しでX-Device-Tokenヘッダーとして送る。サーバー側は
+// このヘッダーをrequire_employee_session()で検証しており、有効なトークンが
+// employee_codeと一致しない限り、社員番号を渡すだけでは一切のRPCが失敗する
+// (詳細: database/supabase/202608241411_device-session-auth.sql)。
+// 別の端末では対応するトークンを持たないため暗証番号の再確認が必ず発生し、
+// 管理者は社員詳細画面「ログイン端末」タブから特定の端末だけを個別に無効化できる。
 
 const SUPABASE_URL = 'https://tcxbtanumtuyfrqtjtvo.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_UVAjFJSjIs7Sl2tMpLWRkQ_uyDw9eyW';
 const N8N_BASE_URL = 'https://shota1003.app.n8n.cloud';
-const SESSION_KEY = 'jinshou_employee_session'; // sessionStorage(タブを閉じると消える)
-const REMEMBERED_CODE_KEY = 'jinshou_remembered_employee_code'; // localStorage(端末記憶)
+const SESSION_KEY = 'jinshou_employee_session'; // sessionStorage(タブを閉じると消える、UI表示用のキャッシュ)
+const REMEMBERED_CODE_KEY = 'jinshou_remembered_employee_code'; // localStorage(社員番号入力欄の補助のみ)
+const DEVICE_AUTH_KEY = 'jinshou_device_auth'; // localStorage({employeeCode, token}、この端末の実際の認証情報)
+
+let currentDeviceToken = null; // このタブで現在有効な端末トークン(rpc()が毎回ヘッダーへ載せる)
 
 async function rpc(name, params) {
+  const headers = {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    'Content-Type': 'application/json',
+  };
+  if (currentDeviceToken) headers['X-Device-Token'] = currentDeviceToken;
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
     method: 'POST',
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(params),
   });
   const text = await res.text();
@@ -34,6 +43,17 @@ async function rpc(name, params) {
     // 表示用に読みやすいメッセージだけを取り出す(生JSONをそのまま見せない)。
     let message = `通信エラー(${res.status})`;
     try { const parsed = JSON.parse(text); if (parsed && parsed.message) message = parsed.message; } catch { /* JSONでなければそのまま */ }
+    // 端末が無効化された/退職・利用停止になった等でセッションが失効した場合は、
+    // その場のエラー表示だけで終わらせず、ログイン画面へ強制的に戻す。
+    if (message === 'セッションが確認できませんでした。再度ログインしてください' || message === 'このアカウントは現在ご利用いただけません') {
+      clearSession();
+      clearDeviceAuth();
+      currentDeviceToken = null;
+      if (document.getElementById('screen-login')) {
+        showScreen('login');
+        showError('login-error', message === 'このアカウントは現在ご利用いただけません' ? message : 'ログイン状態が無効になりました。もう一度ログインしてください。');
+      }
+    }
     throw new Error(message);
   }
   return text ? JSON.parse(text) : null;
@@ -84,6 +104,18 @@ function clearSession() {
 }
 function getRememberedCode() { return localStorage.getItem(REMEMBERED_CODE_KEY); }
 function setRememberedCode(code) { localStorage.setItem(REMEMBERED_CODE_KEY, code); }
+
+function getDeviceAuth() {
+  try { return JSON.parse(localStorage.getItem(DEVICE_AUTH_KEY)); } catch { return null; }
+}
+function setDeviceAuth(employeeCode, token) {
+  localStorage.setItem(DEVICE_AUTH_KEY, JSON.stringify({ employeeCode, token }));
+  currentDeviceToken = token;
+}
+function clearDeviceAuth() {
+  localStorage.removeItem(DEVICE_AUTH_KEY);
+  currentDeviceToken = null;
+}
 
 const SCREEN_ENTER_HOOKS = {};
 
@@ -174,8 +206,29 @@ function hideError(elId) {
 
 let pendingLoginCode = null; // 社員番号入力〜暗証番号入力/登録の間だけ保持する一時変数
 
+// 起動時: この端末が有効な端末トークンを持っていれば、暗証番号なしでログイン状態を
+// 復元する(「初回だけ本人確認、以後はログイン状態を維持」の実体)。トークンが
+// 無効(別端末・管理者に無効化された・退職/利用停止)なら暗証番号の入力へフォールバックする。
+async function tryResumeDeviceSession() {
+  const auth = getDeviceAuth();
+  if (!auth || !auth.token || !auth.employeeCode) return false;
+  currentDeviceToken = auth.token;
+  try {
+    const rows = await rpc('resume_employee_session', { p_employee_code: auth.employeeCode });
+    const info = rows && rows[0];
+    if (!info) throw new Error('empty');
+    setSession({ employeeCode: auth.employeeCode, employeeId: info.out_employee_id, employeeName: info.out_employee_name, requestRole: info.out_request_role });
+    return true;
+  } catch (e) {
+    clearDeviceAuth();
+    return false;
+  }
+}
+
 // 起動時: 端末が社員番号を覚えていれば暗証番号入力画面へ、覚えていなければ社員番号入力画面へ。
 async function startLoginFlow() {
+  if (await tryResumeDeviceSession()) { enterMenu(); return; }
+
   const remembered = getRememberedCode();
   if (!remembered) { showScreen('login'); return; }
 
@@ -246,6 +299,7 @@ async function doVerifyPin() {
     }
     const emp = rows[0];
     setSession({ employeeCode: pendingLoginCode, employeeId: emp.out_employee_id, employeeName: emp.out_employee_name, requestRole: emp.out_request_role });
+    setDeviceAuth(pendingLoginCode, emp.out_device_token);
     document.getElementById('pin-entry-code').value = '';
     enterMenu();
   } catch (e) {
@@ -275,6 +329,7 @@ async function doRegisterPin() {
     const rows = await rpc('register_employee_pin', { p_employee_code: pendingLoginCode, p_pin: pin });
     const emp = rows[0];
     setSession({ employeeCode: pendingLoginCode, employeeId: emp.out_employee_id, employeeName: emp.out_employee_name, requestRole: emp.out_request_role });
+    setDeviceAuth(pendingLoginCode, emp.out_device_token);
     document.getElementById('pin-register-code').value = '';
     document.getElementById('pin-register-confirm').value = '';
     enterMenu();
@@ -285,8 +340,16 @@ async function doRegisterPin() {
   }
 }
 
-function switchEmployee() {
+// 「別の社員番号でログインし直す」= 実質的なログアウト。既にログイン済みであれば、
+// この端末のトークンをサーバー側でも明示的に無効化してから画面を切り替える
+// (共有端末の切り替え時に前の利用者のトークンを残さないため)。
+async function switchEmployee() {
+  const session = getSession();
+  if (session && currentDeviceToken) {
+    try { await rpc('logout_employee_session', { p_employee_code: session.employeeCode }); } catch (e) { /* 失敗しても端末側は必ずログアウトさせる */ }
+  }
   clearSession();
+  clearDeviceAuth();
   pendingLoginCode = null;
   document.getElementById('login-code').value = '';
   showScreen('login');
@@ -2443,6 +2506,42 @@ async function switchEmployeeDetailTab(tab) {
   else if (tab === 'qual') await loadEmployeeDetailQual();
   else if (tab === 'supply') await loadEmployeeDetailSupply();
   else if (tab === 'requests') await loadEmployeeDetailRequests();
+  else if (tab === 'devices') await loadEmployeeDetailDevices();
+}
+
+async function loadEmployeeDetailDevices() {
+  const session = getSession();
+  const code = currentEmployeeDetailCode;
+  const listEl = document.getElementById('employee-detail-devices-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_employee_devices', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">この社員はまだどの端末からもログインしていません。</div>'; return; }
+    listEl.innerHTML = rows.map((d) => `
+      <div class="admin-result-item">
+        <div class="row1"><span>${d.device_label || '不明な端末'}</span><span class="status-badge ${d.is_active && d.employee_status === 'active' ? 'done' : 'rejected'}">${!d.is_active ? '無効化済み' : (d.employee_status !== 'active' ? '本人が利用停止中' : '有効')}</span></div>
+        <div class="row2">初回ログイン: ${new Date(d.created_at).toLocaleString('ja-JP')}</div>
+        <div class="row2">最終利用: ${new Date(d.last_seen_at).toLocaleString('ja-JP')}${d.last_seen_ip ? `・${d.last_seen_ip}` : ''}</div>
+        ${!d.is_active ? `<div class="row2">無効化: ${d.revoked_at ? new Date(d.revoked_at).toLocaleString('ja-JP') : ''}(${d.revoked_by === 'self' ? '本人がログアウト' : (d.revoked_by === 'system:employee_inactive' ? '退職・利用停止による自動遮断' : `管理者(${d.revoked_by})が無効化`)})</div>` : ''}
+        ${d.is_active ? `<button type="button" class="return-btn" data-revoke-device-id="${d.id}">この端末を無効化する</button>` : ''}
+      </div>
+    `).join('');
+    listEl.querySelectorAll('[data-revoke-device-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('この端末を無効化しますか?次回利用時に暗証番号の再入力が必要になります。')) return;
+        btn.disabled = true;
+        try {
+          await rpc('admin_revoke_employee_device', { p_admin_employee_code: session.employeeCode, p_device_id: Number(btn.dataset.revokeDeviceId) });
+          await loadEmployeeDetailDevices();
+        } catch (e) {
+          alert(e.message);
+          btn.disabled = false;
+        }
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
 }
 
 async function loadEmployeeDetailBasic() {
@@ -5255,6 +5354,16 @@ function init() {
   document.getElementById('supply-master-submit').addEventListener('click', doSaveSupplyMasterItem);
   document.getElementById('employee-detail-edit-basic-btn').addEventListener('click', openEmployeeEditBasic);
   document.getElementById('employee-edit-submit').addEventListener('click', doSaveEmployeeBasic);
+  document.getElementById('employee-detail-revoke-all-devices-btn').addEventListener('click', async () => {
+    if (!confirm(`${currentEmployeeDetailCode}のログイン中の全端末を無効化しますか?全ての端末で次回利用時に暗証番号の再入力が必要になります。`)) return;
+    const session = getSession();
+    try {
+      await rpc('admin_revoke_all_employee_devices', { p_admin_employee_code: session.employeeCode, p_target_employee_code: currentEmployeeDetailCode });
+      await loadEmployeeDetailDevices();
+    } catch (e) {
+      alert(e.message);
+    }
+  });
   document.getElementById('admin-issue-master').addEventListener('change', toggleAdminIssueOtherWrap);
 
   document.querySelectorAll('#employee-detail-tabs .tab-btn').forEach((btn) => {
@@ -5473,8 +5582,15 @@ function init() {
     if (!(await isNippoAdmin())) { enterMenu(); return; }
   };
 
+  // sessionStorageに前回のセッション表示情報が残っていても、実際にRPCを呼ぶための
+  // 端末トークン(currentDeviceToken)はページを開き直すたびにリセットされる
+  // (JSのメモリ変数のため)。ここでlocalStorageの端末トークンと突き合わせて一致する
+  // 場合だけ、サーバーへ問い合わせずにそのままメニューへ進む(タブ内リロードを軽くする)。
+  // 一致しない・存在しない場合はstartLoginFlow()側でトークンの検証からやり直す。
   const session = getSession();
-  if (session && session.employeeId) {
+  const deviceAuth = getDeviceAuth();
+  if (session && session.employeeId && deviceAuth && deviceAuth.token && deviceAuth.employeeCode === session.employeeCode) {
+    currentDeviceToken = deviceAuth.token;
     enterMenu();
   } else {
     startLoginFlow();

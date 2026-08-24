@@ -1443,6 +1443,7 @@
       <button type="button" class="tab-btn" data-tab="qual">資格・免許・健診</button>
       <button type="button" class="tab-btn" data-tab="supply">支給品</button>
       <button type="button" class="tab-btn" data-tab="requests">申請履歴</button>
+      <button type="button" class="tab-btn" data-tab="devices">ログイン端末</button>
     </div>
     <div class="tab-panel active" id="employee-detail-panel-basic">
       <div class="card">
@@ -1469,6 +1470,11 @@
     </div>
     <div class="tab-panel" id="employee-detail-panel-requests">
       <div id="employee-detail-requests-list"></div>
+    </div>
+    <div class="tab-panel" id="employee-detail-panel-devices">
+      <div class="hint">ログイン中の端末を一覧表示します。不審な端末や紛失した端末は無効化できます。無効化された端末は、次回利用時に暗証番号の再入力が必要になります。</div>
+      <button type="button" class="secondary danger" id="employee-detail-revoke-all-devices-btn">この社員の全端末を無効化する</button>
+      <div id="employee-detail-devices-list"></div>
     </div>
   </section>
 

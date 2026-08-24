@@ -265,6 +265,11 @@ button.secondary {
   margin-top: 10px;
 }
 
+button.secondary.danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
 button.link {
   background: transparent;
   color: var(--text-muted);
@@ -831,4 +836,39 @@ button.link {
   .home-card-grid, .main-menu-grid, .dash-card-grid, .supply-select-grid, .menu-list {
     grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   }
+}
+
+/* ===== 常用伝票 印刷・PDF表示(お客様へそのまま渡せる帳票のため、アプリのダーク基調ではなく
+   紙の書類らしい白背景・黒文字に固定する。画面表示・印刷の両方でこの見た目にする) ===== */
+.no-print { }
+#jd-print-btn { margin-top: 4px; }
+#screen-joyo-denpyo-print { max-width: 720px; }
+.jd-print-page {
+  background: #fff; color: #1a1a1a; border-radius: 8px; padding: 28px 26px;
+  margin-bottom: 24px; box-shadow: 0 2px 10px rgba(0,0,0,.35);
+  page-break-after: always; break-after: page;
+}
+.jd-print-page:last-child { page-break-after: auto; break-after: auto; }
+.jd-print-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1a1a1a; padding-bottom: 10px; margin-bottom: 16px; }
+.jd-print-company { font-size: 15px; font-weight: 700; }
+.jd-print-title { font-size: 20px; font-weight: 800; letter-spacing: .05em; }
+.jd-print-meta { font-size: 12px; color: #444; text-align: right; }
+.jd-print-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 13px; }
+.jd-print-table th, .jd-print-table td { border: 1px solid #999; padding: 7px 10px; text-align: left; vertical-align: top; }
+.jd-print-table th { background: #f0f0f0; width: 120px; font-weight: 700; white-space: nowrap; }
+.jd-print-workers-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 12.5px; }
+.jd-print-workers-table th, .jd-print-workers-table td { border: 1px solid #999; padding: 6px 9px; text-align: left; }
+.jd-print-workers-table th { background: #f0f0f0; }
+.jd-print-signature { display: flex; gap: 16px; margin-top: 20px; }
+.jd-print-signature-box { flex: 1; border: 1px solid #999; border-radius: 4px; padding: 10px 12px; min-height: 70px; }
+.jd-print-signature-label { font-size: 11px; color: #555; font-weight: 700; margin-bottom: 30px; }
+.jd-print-signature-value { font-size: 13px; }
+
+@media print {
+  body * { visibility: hidden; }
+  #screen-joyo-denpyo-print, #screen-joyo-denpyo-print * { visibility: visible; }
+  #screen-joyo-denpyo-print { position: absolute; left: 0; top: 0; width: 100%; max-width: none; }
+  .no-print { display: none !important; }
+  .bottom-nav, .app-header { display: none !important; }
+  .jd-print-page { box-shadow: none; margin: 0; border-radius: 0; }
 }

@@ -3458,7 +3458,7 @@ async function loadDailyReportAdminList() {
   const list = document.getElementById('daily-report-admin-list');
   list.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
-    const rows = await rpc('admin_list_daily_report_exceptions', { p_status: dailyReportAdminStatus || null });
+    const rows = await rpc('admin_list_daily_report_exceptions', { p_admin_employee_code: session.employeeCode, p_status: dailyReportAdminStatus || null });
     if (rows.length === 0) { list.innerHTML = '<div class="empty-state">該当する日報はありません</div>'; return; }
     list.innerHTML = rows.map((r) => `
       <div class="history-item">

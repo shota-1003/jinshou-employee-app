@@ -452,14 +452,21 @@ async function loadHomeAnnouncePreview() {
   area.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
     const rows = await rpc('get_my_announcements', { p_employee_code: session.employeeCode });
-    if (!rows || rows.length === 0) { area.innerHTML = '<div class="hint">お知らせはありません。</div>'; return; }
-    const top = rows.slice(0, 3);
+    // 既読済みの通常通知がホームに居座らないようにする(shouldShowOnHome参照)。
+    // 表示順は「最重要/重要 → 通常の未読」(RPC側で同じ順に並んでいるが、フィルタ後も
+    // 崩れないよう明示的に並べ直す)。
+    const rank = { critical: 0, important: 1, normal: 2 };
+    const visible = (rows || []).filter(shouldShowOnHome)
+      .sort((a, b) => (rank[a.importance] ?? 2) - (rank[b.importance] ?? 2) || new Date(b.created_at) - new Date(a.created_at));
+    if (visible.length === 0) { area.innerHTML = '<div class="hint">お知らせはありません。</div>'; return; }
+    const top = visible.slice(0, 3);
+    const TAG_LABEL = { critical: '最重要', important: '重要' };
     area.innerHTML = top.map((a) => `
       <div class="home-announce-item" data-id="${a.id}">
-        <span class="home-announce-dot ${a.importance === 'important' ? 'important' : (!a.is_read ? 'unread normal-imp' : '')}"></span>
+        <span class="home-announce-dot ${a.importance !== 'normal' ? 'important' : (!a.is_read ? 'unread normal-imp' : '')}"></span>
         <div class="home-announce-body2">
           <div class="home-announce-title-row">
-            ${a.importance === 'important' ? '<span class="home-announce-tag important">重要</span>' : '<span class="home-announce-tag normal">お知らせ</span>'}
+            ${TAG_LABEL[a.importance] ? `<span class="home-announce-tag important">${TAG_LABEL[a.importance]}</span>` : '<span class="home-announce-tag normal">お知らせ</span>'}
             <span class="home-announce-title">${a.title}</span>
           </div>
           <div class="home-announce-date">${new Date(a.created_at).toLocaleDateString('ja-JP')}</div>
@@ -1215,21 +1222,64 @@ async function loadHistory() {
       return;
     }
     listEl.innerHTML = '';
+    const detailableTypes = ['expense_reimbursement', 'paid_leave', 'meeting', 'supply_item'];
     rows.forEach((r) => {
       const div = document.createElement('div');
       div.className = 'history-item';
       const dateStr = new Date(r.requested_at).toLocaleDateString('ja-JP');
       const amountStr = r.amount != null ? `${Number(r.amount).toLocaleString()}円` : '';
       const statusClass = ['approved', 'paid'].includes(r.status) ? 'done' : (['rejected', 'cancelled'].includes(r.status) ? 'rejected' : '');
+      const clickable = r.status === 'rejected' && detailableTypes.includes(r.request_type);
       div.innerHTML = `
         <div class="row1"><span>${REQUEST_TYPE_LABEL[r.request_type] || r.request_type}</span><span>${amountStr}</span></div>
         <div class="row2">${dateStr}　${r.summary || ''}</div>
         <span class="status-badge ${statusClass}">${STATUS_LABEL[r.status] || r.status}</span>
+        ${clickable ? '<div class="hint-inline">タップして詳細・却下理由を確認</div>' : ''}
       `;
+      if (clickable) {
+        div.style.cursor = 'pointer';
+        div.addEventListener('click', () => openMyRequestDetail(r.id));
+      }
       listEl.appendChild(div);
     });
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+// ---------- 却下された申請の詳細(社員本人視点、通知タップ/申請履歴から遷移) ----------
+
+async function openMyRequestDetail(requestId) {
+  const session = getSession();
+  showScreen('my-request-detail');
+  document.getElementById('mrd-title').textContent = '申請詳細';
+  document.getElementById('mrd-reject-box').style.display = 'none';
+  document.getElementById('mrd-items').innerHTML = '<div class="hint">読み込み中...</div>';
+  const yen = (n) => `${Number(n).toLocaleString('ja-JP')}円`;
+  try {
+    const rows = await rpc('get_my_request_detail', { p_employee_code: session.employeeCode, p_request_id: Number(requestId) });
+    if (!rows || rows.length === 0) { document.getElementById('mrd-items').innerHTML = '<div class="hint">申請が見つかりませんでした。</div>'; return; }
+    const head = rows[0];
+    document.getElementById('mrd-title').textContent = `${REQUEST_TYPE_LABEL[head.request_type] || head.request_type}の詳細`;
+    if (head.status === 'rejected' && head.rejection_reason) {
+      document.getElementById('mrd-reject-box').style.display = '';
+      document.getElementById('mrd-rejection-reason').textContent = head.rejection_reason;
+      document.getElementById('mrd-decided-at').textContent = head.decided_at ? `却下日: ${new Date(head.decided_at).toLocaleDateString('ja-JP')}` : '';
+    }
+    document.getElementById('mrd-items').innerHTML = rows.map((r) => `
+      <div class="history-item">
+        <div class="row1"><span>申請日</span><span>${new Date(r.requested_at).toLocaleDateString('ja-JP')}</span></div>
+        ${r.site_name ? `<div class="row2">現場: ${r.site_name}</div>` : ''}
+        ${r.purpose ? `<div class="row2">使用目的: ${r.purpose}</div>` : ''}
+        ${r.partner_name ? `<div class="row2">取引先: ${r.partner_name}</div>` : ''}
+        ${r.amount != null ? `<div class="row2">金額: ${yen(r.amount)}</div>` : ''}
+        ${r.target_date ? `<div class="row2">${r.target_date}</div>` : ''}
+        ${r.note ? `<div class="row2">備考: ${r.note}</div>` : ''}
+        ${r.receipt_url ? `<div class="row2"><a href="${r.receipt_url}" target="_blank" rel="noopener">添付領収書を開く</a></div>` : ''}
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('mrd-items').innerHTML = `<div class="hint">読み込みに失敗しました: ${e.message}</div>`;
   }
 }
 
@@ -1766,16 +1816,29 @@ async function loadAnnounceBanner() {
   area.innerHTML = '';
   try {
     const rows = await rpc('get_my_announcements', { p_employee_code: session.employeeCode });
-    const important = (rows || []).find((a) => a.importance === 'important' && !a.is_read);
+    const important = (rows || []).find((a) => (a.importance === 'important' || a.importance === 'critical') && !a.is_read);
     if (!important) return;
     area.innerHTML = `
       <button type="button" class="announce-banner" id="home-announce-banner">
-        <div class="announce-banner-label">📢 重要なお知らせ</div>
+        <div class="announce-banner-label">📢 ${important.importance === 'critical' ? '最重要のお知らせ' : '重要なお知らせ'}</div>
         <div class="announce-banner-title">${important.title}</div>
       </button>
     `;
     document.getElementById('home-announce-banner').addEventListener('click', () => showScreen('announcements'));
   } catch (e) { /* 表示できなくても致命的ではないため無視 */ }
+}
+
+// お知らせがホーム画面に表示され続けてよいかどうかの判定(共通)。
+// ルール: 未読は常に表示する。既読の場合は、display_modeがpersist_after_readなら表示し続け、
+// until_dateならdisplay_untilの日付までは表示し続け、それ以外(hide_after_read等)は
+// 既読になった時点でホームから消える(お知らせ履歴/申請履歴では引き続き確認できる)。
+function shouldShowOnHome(a) {
+  if (!a.is_read) return true;
+  if (a.display_mode === 'persist_after_read') return true;
+  if (a.display_mode === 'until_date' && a.display_until) {
+    return new Date(a.display_until + 'T23:59:59') >= new Date();
+  }
+  return false;
 }
 
 async function loadAnnouncements() {
@@ -1788,11 +1851,12 @@ async function loadAnnouncements() {
     listEl.innerHTML = rows.map((a) => `
       <div class="announce-item ${a.is_read ? '' : 'unread'}" data-id="${a.id}">
         <div class="row1">
-          <span class="title">${a.importance === 'important' ? `<span class="icon-slot" data-icon="alert-triangle"></span> ` : ''}${a.title}</span>
+          <span class="title">${a.importance !== 'normal' ? `<span class="icon-slot" data-icon="alert-triangle"></span> ` : ''}${a.title}</span>
           <span class="date">${new Date(a.created_at).toLocaleDateString('ja-JP')}</span>
         </div>
         <div class="body">${a.body}${a.attachment_url ? `<br><a href="${a.attachment_url}" target="_blank" rel="noopener">添付ファイルを開く</a>` : ''}</div>
-        ${a.importance === 'important' ? `
+        ${a.related_type === 'employee_requests' ? `<button type="button" class="secondary announce-detail-btn" data-request-id="${a.related_id}">この申請の詳細を見る</button>` : ''}
+        ${a.importance !== 'normal' ? `
           <div class="announce-ack-row">
             ${a.acknowledged_at
               ? `<span class="mini-tag info">確認済み(${new Date(a.acknowledged_at).toLocaleString('ja-JP')})</span>`
@@ -1804,13 +1868,19 @@ async function loadAnnouncements() {
     hydrateIcons(listEl);
     listEl.querySelectorAll('.announce-item').forEach((el) => {
       el.addEventListener('click', async (e) => {
-        if (e.target.closest('.announce-ack-btn') || e.target.closest('a')) return;
+        if (e.target.closest('.announce-ack-btn') || e.target.closest('.announce-detail-btn') || e.target.closest('a')) return;
         const wasUnread = el.classList.contains('unread');
         el.classList.toggle('expanded');
         if (wasUnread) {
           el.classList.remove('unread');
           try { await rpc('mark_announcement_read', { p_employee_code: session.employeeCode, p_announcement_id: Number(el.dataset.id) }); } catch (e2) { /* 無視 */ }
         }
+      });
+    });
+    listEl.querySelectorAll('.announce-detail-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openMyRequestDetail(btn.dataset.requestId);
       });
     });
     listEl.querySelectorAll('.announce-ack-btn').forEach((btn) => {
@@ -2016,9 +2086,12 @@ async function doCreateAnnouncement() {
   const title = document.getElementById('announce-title').value.trim();
   const body = document.getElementById('announce-body').value.trim();
   const importance = document.querySelector('input[name="announce-importance"]:checked').value;
+  const displayMode = document.querySelector('input[name="announce-display-mode"]:checked').value;
+  const displayUntil = displayMode === 'until_date' ? document.getElementById('announce-display-until-date').value : null;
   const target = document.querySelector('input[name="announce-target"]:checked').value;
   hideError('announce-error');
   if (!title || !body) { showError('announce-error', 'タイトルと本文を入力してください。'); return; }
+  if (displayMode === 'until_date' && !displayUntil) { showError('announce-error', '表示する期限の日付を選んでください。'); return; }
   let employeeCodes = null;
   if (target === 'select') {
     employeeCodes = Array.from(announceSelectedCodes);
@@ -2032,10 +2105,14 @@ async function doCreateAnnouncement() {
       p_importance: importance, p_employee_codes: employeeCodes,
       p_attachment_drive_file_id: announceAttachment ? announceAttachment.driveFileId : null,
       p_attachment_drive_url: announceAttachment ? announceAttachment.driveFileUrl : null,
+      p_display_mode: displayMode, p_display_until: displayUntil,
     });
     document.getElementById('announce-title').value = '';
     document.getElementById('announce-body').value = '';
     document.getElementById('announce-importance-normal').checked = true;
+    document.getElementById('announce-display-hide').checked = true;
+    document.getElementById('announce-display-until-box').style.display = 'none';
+    document.getElementById('announce-display-until-date').value = '';
     document.getElementById('announce-target-all').checked = true;
     document.getElementById('announce-employee-picker').style.display = 'none';
     announceSelectedCodes.clear();
@@ -2765,16 +2842,16 @@ async function loadEmployeeSummary() {
     if (rows.length === 0) { listEl.innerHTML = '<div class="hint">対象の社員がいません。</div>'; return; }
     listEl.innerHTML = rows.map((r) => `
       <div class="admin-result-item es-row" data-code="${r.employee_code}">
-        <div class="row1"><span>${r.employee_name}(${r.employee_code})</span><span>未払${yen(r.unpaid_amount)}</span></div>
-        <div class="row2">経費立替${yen(r.expense_advance_amount)}・会社経費${yen(r.company_expense_amount)}・支払済${yen(r.paid_amount)}</div>
+        <div class="row1"><span>${r.employee_name}(${r.employee_code})</span><span>支払待ち${yen(r.unpaid_amount)}</span></div>
+        <div class="row2">申請総額${yen(r.expense_advance_amount)}(承認${yen(r.approved_total)}・却下${yen(r.rejected_total)})・会社経費${yen(r.company_expense_amount)}・支払済${yen(r.paid_amount)}</div>
         <div class="row2">有給付与${r.leave_granted}日・使用${r.leave_used}日・残${r.leave_balance}日・その他申請${r.other_request_count}件</div>
       </div>
     `).join('');
     tbodyEl.innerHTML = rows.map((r) => `
       <tr class="es-row" data-code="${r.employee_code}">
         <td>${r.employee_code}</td><td>${r.employee_name}</td>
-        <td>${yen(r.expense_advance_amount)}</td><td>${yen(r.company_expense_amount)}</td>
-        <td>${yen(r.paid_amount)}</td><td>${yen(r.unpaid_amount)}</td>
+        <td>${yen(r.expense_advance_amount)}</td><td>${yen(r.approved_total)}</td><td>${yen(r.rejected_total)}</td>
+        <td>${yen(r.company_expense_amount)}</td><td>${yen(r.paid_amount)}</td><td>${yen(r.unpaid_amount)}</td>
         <td>${r.leave_granted}日</td><td>${r.leave_used}日</td><td>${r.leave_balance}日</td>
         <td>${r.other_request_count}件</td>
       </tr>
@@ -2792,21 +2869,26 @@ async function loadEmployeeSummary() {
 
 // ---------- 社員個人詳細(社員別集計のドリルダウン) ----------
 
+let emdContext = null; // { code, name, year, month } (支払登録画面から戻る際の再読み込み用)
+
 async function openEmployeeMonthlyDetail(code, name, year, month) {
   const session = getSession();
+  emdContext = { code, name, year, month };
   showScreen('employee-monthly-detail');
   document.getElementById('emd-title').textContent = `${name}さん(${code}) ${year}年${month}月`;
   const yen = (n) => `${Number(n).toLocaleString('ja-JP')}円`;
   ['emd-advance-list', 'emd-company-list', 'emd-leave-list', 'emd-other-list', 'emd-site-list'].forEach((id) => {
     document.getElementById(id).innerHTML = '<div class="hint">読み込み中...</div>';
   });
+  document.getElementById('emd-approved').textContent = '-';
+  document.getElementById('emd-rejected').textContent = '-';
   document.getElementById('emd-unpaid').textContent = '-';
   document.getElementById('emd-paid').textContent = '-';
   document.getElementById('emd-leave-balance').textContent = '-';
   document.getElementById('emd-headcount').textContent = '-';
 
   const PAY_LABEL = { not_started: '未着手', waiting_payment: '支払待ち', paid: '支払済' };
-  const CAT_LABEL = { employee_advance: '経費立替', company_expense: '会社経費' };
+  const REQ_STATUS_BADGE = { rejected: '却下', cancelled: '取消' };
 
   try {
     const [expenseRows, ledgerRows, siteRows, otherRows] = await Promise.all([
@@ -2818,18 +2900,45 @@ async function openEmployeeMonthlyDetail(code, name, year, month) {
 
     const advance = expenseRows.filter((r) => r.expense_category === 'employee_advance');
     const company = expenseRows.filter((r) => r.expense_category === 'company_expense');
-    const unpaid = expenseRows.filter((r) => r.payment_status !== 'paid').reduce((s, r) => s + Number(r.amount || 0), 0);
-    const paid = expenseRows.filter((r) => r.payment_status === 'paid').reduce((s, r) => s + Number(r.amount || 0), 0);
+    // 未払い/支払済みは「却下・取消された申請」を対象外にする(却下された申請は未払いに残さない)。
+    const liveAdvance = advance.filter((r) => r.request_status !== 'rejected' && r.request_status !== 'cancelled');
+    const rejectedTotal = advance.filter((r) => r.request_status === 'rejected').reduce((s, r) => s + Number(r.amount || 0), 0);
+    const approvedTotal = liveAdvance.reduce((s, r) => s + Number(r.amount || 0), 0);
+    const unpaid = liveAdvance.filter((r) => r.payment_status !== 'paid').reduce((s, r) => s + Number(r.amount || 0), 0);
+    const paid = liveAdvance.filter((r) => r.payment_status === 'paid').reduce((s, r) => s + Number(r.amount || 0), 0);
+    document.getElementById('emd-approved').textContent = yen(approvedTotal);
+    document.getElementById('emd-rejected').textContent = yen(rejectedTotal);
     document.getElementById('emd-unpaid').textContent = yen(unpaid);
     document.getElementById('emd-paid').textContent = yen(paid);
 
-    const expenseRow = (r) => `
-      <div class="history-item"><div class="row1"><span>${r.vendor_name}</span><span>${yen(r.amount)}</span></div>
-      <div class="row2">${r.site_name || '-'}・${r.purpose_category || '-'}・${PAY_LABEL[r.payment_status] || r.payment_status}</div>
-      <div class="row2">${r.document_date || ''}</div></div>
+    // 支払登録ボタンは1申請(request_id)につき1つだけ出す(複数明細の申請でも重複させない)。
+    const paymentButtonShownFor = new Set();
+    const expenseRow = (r, isAdvance) => {
+      const badge = REQ_STATUS_BADGE[r.request_status];
+      const canPay = isAdvance && !badge && r.payment_status !== 'paid';
+      let payBtn = '';
+      if (canPay && !paymentButtonShownFor.has(r.request_id)) {
+        paymentButtonShownFor.add(r.request_id);
+        payBtn = `<button type="button" class="secondary emd-pay-btn" data-request-id="${r.request_id}" style="margin-top:6px;">支払を登録する</button>`;
+      }
+      return `
+      <div class="history-item">
+        <div class="row1"><span>${r.vendor_name}</span><span>${yen(r.amount)}</span></div>
+        <div class="row2">${r.site_name || '-'}・${r.purpose_category || '-'}・${isAdvance ? (PAY_LABEL[r.payment_status] || r.payment_status) : '会社経費(立替なし)'}${badge ? `・<span class="status-badge rejected">${badge}</span>` : ''}</div>
+        <div class="row2">${r.document_date || ''}${r.rejection_reason ? `・却下理由: ${r.rejection_reason}` : ''}</div>
+        ${payBtn}
+      </div>
     `;
-    document.getElementById('emd-advance-list').innerHTML = advance.length === 0 ? '<div class="hint">この月の経費立替はありません。</div>' : advance.map(expenseRow).join('');
-    document.getElementById('emd-company-list').innerHTML = company.length === 0 ? '<div class="hint">この月の会社経費はありません。</div>' : company.map(expenseRow).join('');
+    };
+    document.getElementById('emd-advance-list').innerHTML = advance.length === 0 ? '<div class="hint">この月の経費立替はありません。</div>' : advance.map((r) => expenseRow(r, true)).join('');
+    document.getElementById('emd-company-list').innerHTML = company.length === 0 ? '<div class="hint">この月の会社経費はありません。</div>' : company.map((r) => expenseRow(r, false)).join('');
+
+    document.querySelectorAll('.emd-pay-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openExpensePayment(btn.dataset.requestId, name, code);
+      });
+    });
 
     const currentBalance = ledgerRows.reduce((s, tx) => s + Number(tx.amount || 0), 0);
     document.getElementById('emd-leave-balance').textContent = `${currentBalance}日`;
@@ -2852,6 +2961,68 @@ async function openEmployeeMonthlyDetail(code, name, year, month) {
     `).join('');
   } catch (e) {
     document.getElementById('emd-advance-list').innerHTML = `<div class="hint">読み込みに失敗しました: ${e.message}</div>`;
+  }
+}
+
+// ---------- 経費支払登録 ----------
+
+let expensePaymentTarget = null; // { requestId, employeeName, employeeCode }
+
+async function openExpensePayment(requestId, employeeName, employeeCode) {
+  const session = getSession();
+  expensePaymentTarget = { requestId, employeeName, employeeCode };
+  showScreen('expense-payment');
+  document.getElementById('ep-target').textContent = `対象: ${employeeName}さん(${employeeCode})`;
+  document.getElementById('ep-total').textContent = '-';
+  document.getElementById('ep-remaining').textContent = '-';
+  document.getElementById('ep-amount').value = '';
+  document.getElementById('ep-date').value = todayJST();
+  document.getElementById('ep-method').value = '';
+  document.getElementById('ep-note').value = '';
+  hideError('ep-error');
+  const yen = (n) => `${Number(n).toLocaleString('ja-JP')}円`;
+  try {
+    const rows = await rpc('admin_get_expense_payment_status', { p_admin_employee_code: session.employeeCode, p_employee_request_id: Number(requestId) });
+    const s = rows && rows[0];
+    if (s) {
+      document.getElementById('ep-total').textContent = yen(s.total_amount);
+      document.getElementById('ep-remaining').textContent = yen(s.remaining_amount);
+      document.getElementById('ep-amount').value = s.remaining_amount;
+      document.getElementById('ep-amount').max = s.remaining_amount;
+    }
+  } catch (e) {
+    showError('ep-error', e.message || '状態の取得に失敗しました。');
+  }
+}
+
+async function doSubmitExpensePayment() {
+  const session = getSession();
+  if (!expensePaymentTarget) return;
+  const amount = Number(document.getElementById('ep-amount').value);
+  const date = document.getElementById('ep-date').value;
+  const method = document.getElementById('ep-method').value || null;
+  const note = document.getElementById('ep-note').value.trim() || null;
+  hideError('ep-error');
+  if (!amount || amount <= 0) { showError('ep-error', '支払金額を入力してください。'); return; }
+  if (!date) { showError('ep-error', '支払日を入力してください。'); return; }
+  const btn = document.getElementById('ep-submit');
+  btn.disabled = true;
+  try {
+    await rpc('admin_register_expense_payment', {
+      p_admin_employee_code: session.employeeCode, p_employee_request_id: Number(expensePaymentTarget.requestId),
+      p_paid_amount: amount, p_paid_at: date, p_payment_method: method, p_note: note,
+    });
+    // 「完了」画面を挟まず、社員個人詳細へ直接戻って再読み込みする(支払済み/未払いの
+    // 数字が変わったこと自体が完了の確認になる)。showDoneのdata-nav+SCREEN_ENTER_HOOKSの
+    // 組み合わせだと、このコンテキスト付き再読み込みをフックに登録した場合、
+    // openEmployeeMonthlyDetail自身がshowScreen('employee-monthly-detail')を呼ぶため
+    // 再度フックが発火して無限ループになるため使わない。
+    if (emdContext) await openEmployeeMonthlyDetail(emdContext.code, emdContext.name, emdContext.year, emdContext.month);
+    else showScreen('employee-summary');
+  } catch (e) {
+    showError('ep-error', e.message || '登録に失敗しました。');
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -5589,6 +5760,12 @@ function init() {
       document.getElementById('announce-employee-picker').style.display = showPicker ? 'block' : 'none';
     });
   });
+  document.querySelectorAll('input[name="announce-display-mode"]').forEach((el) => {
+    el.addEventListener('change', () => {
+      const showDate = document.getElementById('announce-display-until').checked;
+      document.getElementById('announce-display-until-box').style.display = showDate ? 'block' : 'none';
+    });
+  });
   document.getElementById('announce-employee-search').addEventListener('input', (e) => renderAnnounceEmployeeChecklist(e.target.value));
   document.getElementById('announce-attachment-input').addEventListener('change', (e) => handleAnnounceAttachment(e.target.files[0]));
 
@@ -6009,6 +6186,7 @@ function init() {
     employeeSearchTimer = setTimeout(loadLeaveAdmin, 300);
   });
   document.getElementById('leave-grant-submit').addEventListener('click', doSubmitLeaveGrant);
+  document.getElementById('ep-submit').addEventListener('click', doSubmitExpensePayment);
   document.getElementById('employee-detail-grant-leave-btn').addEventListener('click', () => {
     const nameEl = document.getElementById('employee-detail-name');
     openLeaveGrant(currentEmployeeDetailCode, nameEl ? nameEl.textContent : '');

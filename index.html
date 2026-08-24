@@ -1506,22 +1506,66 @@
     </div>
   </section>
 
+  <!-- 社員別集計: 社員個人詳細(明細まで追える) -->
+  <section id="screen-employee-monthly-detail" class="screen">
+    <button type="button" class="back-link" data-nav="employee-summary">社員別集計に戻る</button>
+    <div class="form-title" id="emd-title">社員個人詳細</div>
+    <div class="stat-mini-row">
+      <div class="stat-mini"><span class="stat-mini-label">未払</span><span class="stat-mini-value" id="emd-unpaid">-</span></div>
+      <div class="stat-mini"><span class="stat-mini-label">支払済</span><span class="stat-mini-value" id="emd-paid">-</span></div>
+    </div>
+    <div class="stat-mini-row">
+      <div class="stat-mini"><span class="stat-mini-label">有給残</span><span class="stat-mini-value" id="emd-leave-balance">-</span></div>
+      <div class="stat-mini"><span class="stat-mini-label">日報合計人工</span><span class="stat-mini-value" id="emd-headcount">-</span></div>
+    </div>
+
+    <div class="section-title">経費立替の明細</div>
+    <div id="emd-advance-list"></div>
+    <div class="section-title">会社経費の明細</div>
+    <div id="emd-company-list"></div>
+    <div class="section-title">有給付与・使用履歴(この月)</div>
+    <div id="emd-leave-list"></div>
+    <div class="section-title">その他申請履歴(この月)</div>
+    <div id="emd-other-list"></div>
+    <div class="section-title">現場別人工(この月)</div>
+    <div id="emd-site-list"></div>
+  </section>
+
   <!-- 出面集計: 社員別/外注会社別/現場別のマトリクス(サクミル代替) -->
   <section id="screen-attendance-matrix" class="screen">
     <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
     <div class="form-title">出面集計</div>
+    <div class="filter-row" id="am-period-filter">
+      <button type="button" class="filter-chip active" data-period="month">月次</button>
+      <button type="button" class="filter-chip" data-period="year">年間</button>
+    </div>
     <label for="am-month">対象月</label>
     <input type="month" id="am-month">
+    <label for="am-year" style="display:none;">対象年</label>
+    <input type="number" id="am-year" style="display:none;" min="2020" max="2100">
     <div class="filter-row" id="am-view-filter">
       <button type="button" class="filter-chip active" data-view="employee">社員別</button>
       <button type="button" class="filter-chip" data-view="subcontractor_company">外注会社別</button>
       <button type="button" class="filter-chip" data-view="site">現場別</button>
     </div>
+    <label for="am-employee-filter">社員で絞り込み</label>
+    <div class="hint-inline">任意</div>
+    <select id="am-employee-filter"><option value="">すべての社員</option></select>
+    <label for="am-company-filter">外注会社で絞り込み</label>
+    <div class="hint-inline">任意</div>
+    <select id="am-company-filter"><option value="">すべての外注会社</option></select>
     <label for="am-site-filter">現場で絞り込み</label>
     <div class="hint-inline">任意</div>
     <select id="am-site-filter"><option value="">すべての現場</option></select>
     <div class="hint" id="am-hint" style="margin:10px 0;"></div>
     <div class="attendance-matrix-wrap" id="am-matrix-wrap"></div>
+  </section>
+
+  <!-- 出面集計: セル単位の内訳(その日・その対象の実際の内訳) -->
+  <section id="screen-attendance-cell-detail" class="screen">
+    <button type="button" class="back-link" data-nav="attendance-matrix">出面集計に戻る</button>
+    <div class="form-title" id="acd-title">内訳</div>
+    <div id="acd-list"></div>
   </section>
 
   <!-- 出面集計: 個人→現場 / 現場→個人・外注会社 の内訳 -->
@@ -1576,6 +1620,15 @@
         <div class="stat-mini"><span class="stat-mini-label">今年使用</span><span class="stat-mini-value" id="employee-detail-leave-used">-</span></div>
       </div>
       <button type="button" class="secondary" id="employee-detail-grant-leave-btn">有給を付与する</button>
+
+      <div class="section-title">付与ポリシー</div>
+      <div class="hint" id="employee-detail-leave-policy-hint" style="margin-bottom:10px;"></div>
+      <label for="employee-detail-leave-base-date">基準日</label>
+      <input type="date" id="employee-detail-leave-base-date">
+      <label for="employee-detail-leave-next-grant">次回付与予定日</label>
+      <input type="date" id="employee-detail-leave-next-grant">
+      <button type="button" class="secondary" id="employee-detail-leave-policy-save">ポリシーを保存する</button>
+
       <div class="section-title">付与・使用履歴</div>
       <div id="employee-detail-leave-history"></div>
     </div>

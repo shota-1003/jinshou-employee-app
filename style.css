@@ -886,6 +886,17 @@ button.link {
 .attendance-matrix-table tbody tr:last-child td { border-bottom: none; }
 .attendance-matrix-table tbody tr.am-row-clickable { cursor: pointer; }
 .attendance-matrix-table tbody tr.am-row-clickable:hover td:first-child { color: var(--primary); }
+.attendance-matrix-table td.am-cell-value:hover { text-decoration: underline; }
+.attendance-matrix-table th:last-child, .attendance-matrix-table td:last-child {
+  position: sticky; right: 0; z-index: 1; background: var(--card-bg-solid);
+}
+.attendance-matrix-table thead th:last-child { z-index: 3; }
+
+@media (min-width: 1280px) {
+  .attendance-matrix-table { font-size: 13px; }
+  .attendance-matrix-table th, .attendance-matrix-table td { padding: 6px 7px; }
+  #screen-attendance-matrix .attendance-matrix-wrap { max-height: 74vh; overflow-y: auto; }
+}
 .jd-print-signature { display: flex; gap: 16px; margin-top: 20px; }
 .jd-print-signature-box { flex: 1; border: 1px solid #999; border-radius: 4px; padding: 10px 12px; min-height: 70px; }
 .jd-print-signature-label { font-size: 11px; color: #555; font-weight: 700; margin-bottom: 30px; }

@@ -2554,7 +2554,7 @@ async function switchEmployeeDetailTab(tab) {
   document.querySelectorAll('#employee-detail-tabs .tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('#screen-employee-detail .tab-panel').forEach((p) => p.classList.toggle('active', p.id === `employee-detail-panel-${tab}`));
   if (tab === 'basic') await loadEmployeeDetailBasic();
-  else if (tab === 'leave') await loadEmployeeDetailLeave();
+  else if (tab === 'leave') { await loadEmployeeDetailLeave(); await loadEmployeeDetailLeavePolicy(); }
   else if (tab === 'qual') await loadEmployeeDetailQual();
   else if (tab === 'supply') await loadEmployeeDetailSupply();
   else if (tab === 'requests') await loadEmployeeDetailRequests();
@@ -2682,6 +2682,33 @@ async function doSubmitLeaveGrant() {
   }
 }
 
+async function loadEmployeeDetailLeavePolicy() {
+  const session = getSession();
+  const code = currentEmployeeDetailCode;
+  try {
+    const rows = await rpc('admin_get_employee_leave_policy', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
+    const p = rows && rows[0];
+    document.getElementById('employee-detail-leave-base-date').value = (p && p.base_date) ? p.base_date : '';
+    document.getElementById('employee-detail-leave-next-grant').value = (p && p.next_grant_date) ? p.next_grant_date : '';
+    document.getElementById('employee-detail-leave-policy-hint').textContent = p && p.is_estimate
+      ? `次回付与予定日は未設定のため目安(入社日または直近付与実績から自動計算)を表示しています。入社日: ${p.hire_date ? new Date(p.hire_date).toLocaleDateString('ja-JP') : '未登録'}`
+      : '次回付与予定日は管理者により設定済みです。';
+  } catch (e) { /* 無視 */ }
+}
+
+async function doSaveLeavePolicy() {
+  const session = getSession();
+  const code = currentEmployeeDetailCode;
+  try {
+    await rpc('admin_set_employee_leave_policy', {
+      p_admin_employee_code: session.employeeCode, p_target_employee_code: code,
+      p_base_date: document.getElementById('employee-detail-leave-base-date').value || null,
+      p_next_grant_date: document.getElementById('employee-detail-leave-next-grant').value || null,
+    });
+    await loadEmployeeDetailLeavePolicy();
+  } catch (e) { alert(e.message || '保存に失敗しました。'); }
+}
+
 // ---------- 有給管理(管理者、全社員比較) ----------
 
 async function loadLeaveAdmin() {
@@ -2753,17 +2780,88 @@ async function loadEmployeeSummary() {
       </tr>
     `).join('');
     document.querySelectorAll('.es-row').forEach((el) => {
-      el.addEventListener('click', () => openEmployeeDetail(el.dataset.code, 'requests'));
+      el.addEventListener('click', () => {
+        const r = rows.find((x) => x.employee_code === el.dataset.code);
+        openEmployeeMonthlyDetail(el.dataset.code, r ? r.employee_name : '', year, month);
+      });
     });
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }
 }
 
-// ---------- 出面集計(管理者、社員別/外注会社別/現場別マトリクス) ----------
+// ---------- 社員個人詳細(社員別集計のドリルダウン) ----------
+
+async function openEmployeeMonthlyDetail(code, name, year, month) {
+  const session = getSession();
+  showScreen('employee-monthly-detail');
+  document.getElementById('emd-title').textContent = `${name}さん(${code}) ${year}年${month}月`;
+  const yen = (n) => `${Number(n).toLocaleString('ja-JP')}円`;
+  ['emd-advance-list', 'emd-company-list', 'emd-leave-list', 'emd-other-list', 'emd-site-list'].forEach((id) => {
+    document.getElementById(id).innerHTML = '<div class="hint">読み込み中...</div>';
+  });
+  document.getElementById('emd-unpaid').textContent = '-';
+  document.getElementById('emd-paid').textContent = '-';
+  document.getElementById('emd-leave-balance').textContent = '-';
+  document.getElementById('emd-headcount').textContent = '-';
+
+  const PAY_LABEL = { not_started: '未着手', waiting_payment: '支払待ち', paid: '支払済' };
+  const CAT_LABEL = { employee_advance: '経費立替', company_expense: '会社経費' };
+
+  try {
+    const [expenseRows, ledgerRows, siteRows, otherRows] = await Promise.all([
+      rpc('admin_get_employee_expense_detail', { p_admin_employee_code: session.employeeCode, p_year: year, p_month: month, p_target_employee_code: code }),
+      rpc('admin_get_employee_leave_ledger', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code }),
+      rpc('admin_get_employee_attendance_by_site', { p_admin_employee_code: session.employeeCode, p_year: year, p_month: month, p_employee_code: code }),
+      rpc('admin_search_requests', { p_admin_employee_code: session.employeeCode, p_employee_code: code, p_date_from: `${year}-${String(month).padStart(2, '0')}-01`, p_date_to: new Date(year, month, 0).toISOString().slice(0, 10) }),
+    ]);
+
+    const advance = expenseRows.filter((r) => r.expense_category === 'employee_advance');
+    const company = expenseRows.filter((r) => r.expense_category === 'company_expense');
+    const unpaid = expenseRows.filter((r) => r.payment_status !== 'paid').reduce((s, r) => s + Number(r.amount || 0), 0);
+    const paid = expenseRows.filter((r) => r.payment_status === 'paid').reduce((s, r) => s + Number(r.amount || 0), 0);
+    document.getElementById('emd-unpaid').textContent = yen(unpaid);
+    document.getElementById('emd-paid').textContent = yen(paid);
+
+    const expenseRow = (r) => `
+      <div class="history-item"><div class="row1"><span>${r.vendor_name}</span><span>${yen(r.amount)}</span></div>
+      <div class="row2">${r.site_name || '-'}・${r.purpose_category || '-'}・${PAY_LABEL[r.payment_status] || r.payment_status}</div>
+      <div class="row2">${r.document_date || ''}</div></div>
+    `;
+    document.getElementById('emd-advance-list').innerHTML = advance.length === 0 ? '<div class="hint">この月の経費立替はありません。</div>' : advance.map(expenseRow).join('');
+    document.getElementById('emd-company-list').innerHTML = company.length === 0 ? '<div class="hint">この月の会社経費はありません。</div>' : company.map(expenseRow).join('');
+
+    const currentBalance = ledgerRows.reduce((s, tx) => s + Number(tx.amount || 0), 0);
+    document.getElementById('emd-leave-balance').textContent = `${currentBalance}日`;
+    const monthLedger = ledgerRows.filter((tx) => tx.effective_date && tx.effective_date.slice(0, 7) === `${year}-${String(month).padStart(2, '0')}`);
+    document.getElementById('emd-leave-list').innerHTML = monthLedger.length === 0 ? '<div class="hint">この月の有給の動きはありません。</div>' : monthLedger.map((tx) => `
+      <div class="history-item"><div class="row1"><span>${LEAVE_TX_LABEL[tx.transaction_type] || tx.transaction_type}</span><span>${tx.amount > 0 ? '+' : ''}${tx.amount}日</span></div>
+      <div class="row2">${new Date(tx.effective_date).toLocaleDateString('ja-JP')}${tx.note ? `・${tx.note}` : ''}</div></div>
+    `).join('');
+
+    const other = otherRows.filter((r) => r.source_type !== 'expense_reimbursement' && r.source_type !== 'paid_leave');
+    document.getElementById('emd-other-list').innerHTML = other.length === 0 ? '<div class="hint">この月のその他申請はありません。</div>' : other.map((r) => `
+      <div class="history-item"><div class="row1"><span>${REQUEST_TYPE_LABEL[r.source_type] || r.source_type}</span><span class="status-badge">${r.status_group}</span></div>
+      <div class="row2">${r.summary || ''}</div></div>
+    `).join('');
+
+    const headcountTotal = siteRows.reduce((s, r) => s + Number(r.total_headcount || 0), 0);
+    document.getElementById('emd-headcount').textContent = `${headcountTotal}人工`;
+    document.getElementById('emd-site-list').innerHTML = siteRows.length === 0 ? '<div class="hint">この月の日報はありません。</div>' : siteRows.map((r) => `
+      <div class="history-item"><div class="row1"><span>${r.site_name}</span><span>${r.total_headcount}人工</span></div></div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('emd-advance-list').innerHTML = `<div class="hint">読み込みに失敗しました: ${e.message}</div>`;
+  }
+}
+
+// ---------- 出面集計(管理者、社員別/外注会社別/現場別マトリクス、月次/年間) ----------
 
 let attendanceView = 'employee';
+let attendancePeriod = 'month'; // 'month' | 'year'
 let attendanceSiteFilter = '';
+let attendanceEmployeeFilter = '';
+let attendanceCompanyFilter = '';
 
 function currentAttendanceMonth() {
   const v = document.getElementById('am-month').value;
@@ -2779,71 +2877,146 @@ function daysInMonth(year, month) {
 async function loadAttendanceFilterOptions() {
   const session = getSession();
   const ym = currentAttendanceMonth();
-  if (!ym) return;
   try {
-    const rows = await rpc('admin_list_attendance_filter_options', { p_admin_employee_code: session.employeeCode, p_year: ym.year, p_month: ym.month });
-    const opts = (rows && rows[0]) || { sites: [], subcontractor_companies: [] };
-    const siteSelect = document.getElementById('am-site-filter');
-    const current = siteSelect.value;
-    siteSelect.innerHTML = '<option value="">すべての現場</option>' + (opts.sites || []).map((s) => `<option value="${s.id}">${s.name}</option>`).join('');
-    siteSelect.value = current;
+    if (ym) {
+      const rows = await rpc('admin_list_attendance_filter_options', { p_admin_employee_code: session.employeeCode, p_year: ym.year, p_month: ym.month });
+      const opts = (rows && rows[0]) || { sites: [], subcontractor_companies: [] };
+      const siteSelect = document.getElementById('am-site-filter');
+      const current = siteSelect.value;
+      siteSelect.innerHTML = '<option value="">すべての現場</option>' + (opts.sites || []).map((s) => `<option value="${s.id}">${s.name}</option>`).join('');
+      siteSelect.value = current;
+    }
+    if (!document.getElementById('am-employee-filter').dataset.loaded) {
+      const emps = await rpc('list_active_employees', { p_admin_employee_code: session.employeeCode });
+      document.getElementById('am-employee-filter').innerHTML = '<option value="">すべての社員</option>' + emps.map((e) => `<option value="${e.employee_code}">${e.employee_name}</option>`).join('');
+      document.getElementById('am-employee-filter').dataset.loaded = '1';
+    }
+    if (!document.getElementById('am-company-filter').dataset.loaded) {
+      const companies = await rpc('admin_list_subcontractor_companies', { p_admin_employee_code: session.employeeCode, p_include_inactive: false });
+      document.getElementById('am-company-filter').innerHTML = '<option value="">すべての外注会社</option>' + companies.map((c) => `<option value="${c.id}">${c.company_name}</option>`).join('');
+      document.getElementById('am-company-filter').dataset.loaded = '1';
+    }
   } catch (e) { /* 無視 */ }
 }
 
+function attendanceViewLabel() {
+  return attendanceView === 'employee' ? '社員' : (attendanceView === 'subcontractor_company' ? '外注会社' : '現場');
+}
+
+// 表示切替(社員別/外注会社別/現場別)やフィルターを素早く連続操作すると、後から出した
+// リクエストより先に古いリクエストの応答が返ってきて、新しい表示を古い結果で
+// 上書きしてしまう競合が起きうる(実機テストで再現した)。呼び出しごとに世代番号を
+// 発行し、応答が返ってきた時点で最新の呼び出しでなければ描画しない。
+let attendanceMatrixRequestSeq = 0;
+
 async function loadAttendanceMatrix() {
   const session = getSession();
-  const ym = currentAttendanceMonth();
+  const mySeq = ++attendanceMatrixRequestSeq;
   const wrapEl = document.getElementById('am-matrix-wrap');
-  if (!ym) return;
+  const filterParams = {
+    p_site_id: attendanceSiteFilter ? Number(attendanceSiteFilter) : null,
+    p_employee_code: attendanceEmployeeFilter || null,
+    p_subcontractor_company_id: attendanceCompanyFilter ? Number(attendanceCompanyFilter) : null,
+  };
   wrapEl.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
-    const rows = await rpc('admin_get_attendance_matrix', {
-      p_admin_employee_code: session.employeeCode, p_year: ym.year, p_month: ym.month, p_view: attendanceView,
-      p_site_id: attendanceSiteFilter ? Number(attendanceSiteFilter) : null,
-    });
-    const dayCount = daysInMonth(ym.year, ym.month);
-    document.getElementById('am-hint').textContent = `${rows.length}件(${ym.year}年${ym.month}月)。行をタップすると内訳を確認できます。`;
-    if (rows.length === 0) { wrapEl.innerHTML = '<div class="hint">この月の出面データはありません。</div>'; return; }
+    let rows; let colCount; let colLabel; let periodLabel;
+    if (attendancePeriod === 'month') {
+      const ym = currentAttendanceMonth();
+      if (!ym) return;
+      rows = await rpc('admin_get_attendance_matrix', { p_admin_employee_code: session.employeeCode, p_year: ym.year, p_month: ym.month, p_view: attendanceView, ...filterParams });
+      colCount = daysInMonth(ym.year, ym.month);
+      colLabel = (i) => `${i}`;
+      periodLabel = `${ym.year}年${ym.month}月`;
+    } else {
+      const year = Number(document.getElementById('am-year').value) || new Date().getFullYear();
+      rows = await rpc('admin_get_attendance_matrix_yearly', { p_admin_employee_code: session.employeeCode, p_year: year, p_view: attendanceView, ...filterParams });
+      colCount = 12;
+      colLabel = (i) => `${i}月`;
+      periodLabel = `${year}年`;
+    }
+    if (mySeq !== attendanceMatrixRequestSeq) return; // より新しいリクエストが既に発行されている
+    document.getElementById('am-hint').textContent = `${rows.length}件(${periodLabel})。${attendancePeriod === 'month' ? 'セルをタップするとその日の内訳、行をタップするとその期間の内訳を確認できます。' : '行をタップすると年間の内訳を確認できます。'}`;
+    if (rows.length === 0) { wrapEl.innerHTML = '<div class="hint">この期間の出面データはありません。</div>'; return; }
 
-    let dayHeaders = '';
-    for (let d = 1; d <= dayCount; d++) dayHeaders += `<th>${d}</th>`;
+    let headers = '';
+    for (let i = 1; i <= colCount; i++) headers += `<th>${colLabel(i)}</th>`;
     const bodyRows = rows.map((r) => {
       let cells = '';
-      for (let d = 1; d <= dayCount; d++) {
-        const v = r.daily[String(d)];
-        cells += v ? `<td class="am-cell-value">${v}</td>` : '<td class="am-cell-empty">-</td>';
+      for (let i = 1; i <= colCount; i++) {
+        const key = attendancePeriod === 'month' ? String(i) : String(i);
+        const v = (attendancePeriod === 'month' ? r.daily : r.monthly)[key];
+        cells += v
+          ? `<td class="am-cell-value" data-col="${i}" data-group-id="${r.group_id}" data-group-label="${r.group_label}">${v}</td>`
+          : '<td class="am-cell-empty">-</td>';
       }
+      const total = attendancePeriod === 'month' ? r.month_total : r.year_total;
       return `<tr class="am-row-clickable" data-group-id="${r.group_id}" data-group-label="${r.group_label}">
-        <td>${r.group_label}</td>${cells}<td class="am-total-col">${r.month_total}</td>
+        <td>${r.group_label}</td>${cells}<td class="am-total-col">${total}</td>
       </tr>`;
     }).join('');
-    const dailyTotals = [];
-    for (let d = 1; d <= dayCount; d++) {
-      dailyTotals.push(rows.reduce((sum, r) => sum + (Number(r.daily[String(d)]) || 0), 0));
+    const colTotals = [];
+    for (let i = 1; i <= colCount; i++) {
+      const key = String(i);
+      colTotals.push(rows.reduce((sum, r) => sum + (Number((attendancePeriod === 'month' ? r.daily : r.monthly)[key]) || 0), 0));
     }
-    const grandTotal = rows.reduce((sum, r) => sum + Number(r.month_total || 0), 0);
-    const totalRow = `<tr><td>合計</td>${dailyTotals.map((t) => `<td class="am-total-col">${t ? t : '-'}</td>`).join('')}<td class="am-total-col">${grandTotal}</td></tr>`;
+    const grandTotal = rows.reduce((sum, r) => sum + Number((attendancePeriod === 'month' ? r.month_total : r.year_total) || 0), 0);
+    const totalRow = `<tr><td>合計</td>${colTotals.map((t) => `<td class="am-total-col">${t ? t : '-'}</td>`).join('')}<td class="am-total-col">${grandTotal}</td></tr>`;
 
     wrapEl.innerHTML = `
       <table class="attendance-matrix-table">
-        <thead><tr><th>${attendanceView === 'employee' ? '社員' : (attendanceView === 'subcontractor_company' ? '外注会社' : '現場')}</th>${dayHeaders}<th>月合計</th></tr></thead>
+        <thead><tr><th>${attendanceViewLabel()}</th>${headers}<th>${attendancePeriod === 'month' ? '月合計' : '年合計'}</th></tr></thead>
         <tbody>${bodyRows}${totalRow}</tbody>
       </table>
     `;
+    if (attendancePeriod === 'month') {
+      wrapEl.querySelectorAll('.am-cell-value').forEach((el) => {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openAttendanceCellDetail(Number(el.dataset.col), el.dataset.groupId, el.dataset.groupLabel);
+        });
+      });
+    }
     wrapEl.querySelectorAll('.am-row-clickable').forEach((el) => {
       el.addEventListener('click', () => openAttendanceDetail(el.dataset.groupId, el.dataset.groupLabel));
     });
   } catch (e) {
-    wrapEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+    if (mySeq === attendanceMatrixRequestSeq) wrapEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function openAttendanceCellDetail(day, groupId, groupLabel) {
+  const session = getSession();
+  const ym = currentAttendanceMonth();
+  showScreen('attendance-cell-detail');
+  const dateLabel = `${ym.year}年${ym.month}月${day}日`;
+  document.getElementById('acd-title').textContent = `${dateLabel} ${groupLabel}`;
+  const listEl = document.getElementById('acd-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_get_attendance_cell_detail', { p_admin_employee_code: session.employeeCode, p_year: ym.year, p_month: ym.month, p_day: day, p_view: attendanceView, p_group_id: String(groupId) });
+    const total = rows.reduce((sum, r) => sum + Number(r.headcount || 0), 0);
+    const catLabel = { employee: '社員', subcontractor: '外注会社', site: '現場' };
+    listEl.innerHTML = (rows.length === 0 ? '<div class="hint">データがありません。</div>' : rows.map((r) => `
+      <div class="history-item"><div class="row1"><span>${catLabel[r.category] || r.category} ${r.label}</span><span>${r.headcount}人工</span></div></div>
+    `).join('')) + `<div class="history-item"><div class="row1"><span><strong>合計</strong></span><span><strong>${total}人工</strong></span></div></div>`;
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }
 }
 
 async function openAttendanceDetail(groupId, groupLabel) {
   const session = getSession();
-  const ym = currentAttendanceMonth();
+  const periodLabel = attendancePeriod === 'month' ? (() => { const ym = currentAttendanceMonth(); return `${ym.year}年${ym.month}月`; })() : `${document.getElementById('am-year').value}年`;
   showScreen('attendance-detail');
   const listEl = document.getElementById('ad-list');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  if (attendancePeriod === 'year') {
+    document.getElementById('ad-title').textContent = `${groupLabel}(${periodLabel})`;
+    listEl.innerHTML = '<div class="hint">年間表示の詳細内訳はマトリクス表(月別)をご確認ください。特定の日の内訳は月次表示に切り替えてセルをタップしてください。</div>';
+    return;
+  }
+  const ym = currentAttendanceMonth();
   try {
     if (attendanceView === 'employee') {
       document.getElementById('ad-title').textContent = `${groupLabel}さんの現場別内訳(${ym.year}年${ym.month}月)`;
@@ -2852,10 +3025,6 @@ async function openAttendanceDetail(groupId, groupLabel) {
         <div class="history-item"><div class="row1"><span>${r.site_name}</span><span>${r.total_headcount}人工</span></div></div>
       `).join('');
     } else {
-      // 外注会社別ビューではgroup_idが会社IDだが、現場×人の内訳は「現場」単位でしか
-      // 提供していないため、外注会社別ビューの行クリックはその会社の月別カレンダーが
-      // 既にマトリクス上で見えているので、ここでは現場別ビューと同じ内訳(社員/外注会社別の
-      // 人工)を出す(site_idとして扱う)。
       document.getElementById('ad-title').textContent = `${groupLabel}の内訳(${ym.year}年${ym.month}月)`;
       if (attendanceView === 'site') {
         const rows = await rpc('admin_get_site_attendance_detail', { p_admin_employee_code: session.employeeCode, p_year: ym.year, p_month: ym.month, p_site_id: Number(groupId) });
@@ -2864,7 +3033,7 @@ async function openAttendanceDetail(groupId, groupLabel) {
           <div class="history-item"><div class="row1"><span>${r.worker_label}</span><span>${r.total_headcount}人工</span></div><div class="row2">${r.worker_type === 'employee' ? '社員' : '外注会社'}</div></div>
         `).join('')) + `<div class="history-item"><div class="row1"><span><strong>総人工</strong></span><span><strong>${total}人工</strong></span></div></div>`;
       } else {
-        listEl.innerHTML = '<div class="hint">外注会社別ビューの日別内訳はマトリクス表をご確認ください。現場ごとの内訳は「現場別」表示から確認できます。</div>';
+        listEl.innerHTML = '<div class="hint">外注会社別ビューの月内訳はマトリクス表(日別)をご確認ください。現場ごとの内訳は「現場別」表示から確認できます。</div>';
       }
     }
   } catch (e) {
@@ -5844,13 +6013,31 @@ function init() {
     const nameEl = document.getElementById('employee-detail-name');
     openLeaveGrant(currentEmployeeDetailCode, nameEl ? nameEl.textContent : '');
   });
+  document.getElementById('employee-detail-leave-policy-save').addEventListener('click', doSaveLeavePolicy);
   document.getElementById('es-month').addEventListener('change', loadEmployeeSummary);
   document.getElementById('am-month').addEventListener('change', () => { loadAttendanceFilterOptions(); loadAttendanceMatrix(); });
+  document.getElementById('am-year').addEventListener('change', loadAttendanceMatrix);
   document.getElementById('am-site-filter').addEventListener('change', (e) => { attendanceSiteFilter = e.target.value; loadAttendanceMatrix(); });
+  document.getElementById('am-employee-filter').addEventListener('change', (e) => { attendanceEmployeeFilter = e.target.value; loadAttendanceMatrix(); });
+  document.getElementById('am-company-filter').addEventListener('change', (e) => { attendanceCompanyFilter = e.target.value; loadAttendanceMatrix(); });
   document.querySelectorAll('#am-view-filter .filter-chip').forEach((btn) => {
     btn.addEventListener('click', () => {
       attendanceView = btn.dataset.view;
       document.querySelectorAll('#am-view-filter .filter-chip').forEach((c) => c.classList.toggle('active', c === btn));
+      loadAttendanceMatrix();
+    });
+  });
+  document.querySelectorAll('#am-period-filter .filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      attendancePeriod = btn.dataset.period;
+      document.querySelectorAll('#am-period-filter .filter-chip').forEach((c) => c.classList.toggle('active', c === btn));
+      document.getElementById('am-month').style.display = attendancePeriod === 'month' ? 'block' : 'none';
+      document.querySelector('label[for="am-month"]').style.display = attendancePeriod === 'month' ? 'block' : 'none';
+      document.getElementById('am-year').style.display = attendancePeriod === 'year' ? 'block' : 'none';
+      document.querySelector('label[for="am-year"]').style.display = attendancePeriod === 'year' ? 'block' : 'none';
+      if (attendancePeriod === 'year' && !document.getElementById('am-year').value) {
+        document.getElementById('am-year').value = new Date(todayJST()).getFullYear();
+      }
       loadAttendanceMatrix();
     });
   });

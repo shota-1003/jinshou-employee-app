@@ -1744,7 +1744,11 @@
       <button type="button" class="filter-chip" data-status="completed">完了</button>
     </div>
     <div class="hint" id="jda-count" style="margin:10px 0;"></div>
+    <div class="checkbox-row"><input type="checkbox" id="jda-select-all"><label>すべて選択</label></div>
     <div id="jda-list"></div>
+    <div id="jda-bulk-bar" style="display:none;">
+      <button type="button" id="jda-bulk-print-btn">選択した伝票をまとめてPDF表示・印刷する</button>
+    </div>
   </section>
 
   <!-- 社内イベント 一覧(社員) -->
@@ -1810,6 +1814,16 @@
     <div class="hint" id="event-responses-summary" style="margin-bottom:12px;"></div>
     <button type="button" class="secondary" id="event-notify-unanswered-btn">未回答者へ通知する</button>
     <div id="event-responses-list"></div>
+  </section>
+
+  <!-- 常用伝票 印刷・PDF表示 -->
+  <section id="screen-joyo-denpyo-print" class="screen">
+    <div class="no-print">
+      <button type="button" class="back-link" data-nav="joyo-denpyo-list">常用伝票一覧に戻る</button>
+      <button type="button" id="jd-print-btn">印刷する / PDFとして保存する</button>
+      <div class="hint" style="margin:8px 0 16px;">スマホでは印刷ボタンから「PDFに保存」を選べます。PCでは印刷、またはPDFとして保存できます。</div>
+    </div>
+    <div id="jd-print-content"></div>
   </section>
 
   <!-- 完了画面 -->

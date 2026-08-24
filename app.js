@@ -94,7 +94,7 @@ const BOTTOM_NAV_MAP = {
   'menu-apply': 'menu-apply', leave: 'menu-apply', expense: 'menu-apply', 'expense-select': 'menu-apply', 'expense-advance': 'menu-apply', 'expense-company': 'menu-apply',
   meeting: 'menu-apply', 'supply-request': 'menu-apply', 'qual-submit': 'menu-apply', 'health-submit': 'menu-apply',
   'entertainment-submit': 'menu-apply', 'daily-report': 'menu-apply',
-  'joyo-denpyo-list': 'menu-apply', 'joyo-denpyo-form': 'menu-apply', 'joyo-denpyo-detail': 'menu-apply',
+  'joyo-denpyo-list': 'menu-apply', 'joyo-denpyo-form': 'menu-apply', 'joyo-denpyo-detail': 'menu-apply', 'joyo-denpyo-print': 'menu-apply',
   announcements: 'announcements',
   history: 'history',
   myinfo: 'myinfo', 'leave-history': 'myinfo', 'my-supply': 'myinfo', 'my-qual': 'myinfo', 'my-health': 'myinfo',
@@ -4598,9 +4598,11 @@ async function openJoyoDenpyoDetail(id) {
     } else {
       html += `<div class="hint">完了済みです。</div>`;
     }
+    html += `<button type="button" class="secondary jd-print-open-btn">PDFで表示・印刷する</button>`;
     actionsEl.innerHTML = html;
     const editBtn = actionsEl.querySelector('.jd-edit-btn');
     if (editBtn) editBtn.addEventListener('click', () => openJoyoDenpyoForm(d));
+    actionsEl.querySelector('.jd-print-open-btn').addEventListener('click', () => openJoyoDenpyoPrint([id]));
     actionsEl.querySelectorAll('.jd-status-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const status = btn.dataset.status;
@@ -4636,34 +4638,110 @@ function openJoyoDenpyoForm(existing) {
   showScreen('joyo-denpyo-form');
 }
 
+let jdaStatusFilter = '';
+let jdaRows = [];
+let jdaSelected = new Set();
+
 async function loadJoyoDenpyoAdminList() {
   const session = getSession();
   const listEl = document.getElementById('jda-list');
   const countEl = document.getElementById('jda-count');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  jdaSelected.clear();
+  updateJdaBulkBar();
   try {
-    const rows = await rpc('admin_search_joyo_denpyo', {
+    jdaRows = await rpc('admin_search_joyo_denpyo', {
       p_admin_employee_code: session.employeeCode, p_date_from: null, p_date_to: null, p_site_id: null,
       p_partner_name: document.getElementById('jda-search-partner').value.trim() || null,
       p_status: jdaStatusFilter || null,
     });
-    countEl.textContent = `${rows.length}件`;
-    if (rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する常用伝票はありません。</div>'; return; }
-    listEl.innerHTML = rows.map((r) => `
+    countEl.textContent = `${jdaRows.length}件`;
+    if (jdaRows.length === 0) { listEl.innerHTML = '<div class="hint">該当する常用伝票はありません。</div>'; return; }
+    listEl.innerHTML = jdaRows.map((r) => `
       <div class="history-item" data-id="${r.id}">
         <div class="row1"><span>${r.site_name}${r.partner_name ? '・' + r.partner_name : ''}</span><span>${r.report_date}</span></div>
         <div class="row2">作成者: ${r.created_by_name || '-'}・作業員${r.worker_count}名</div>
         <span class="status-badge ${r.status === 'completed' ? 'done' : ''}">${JD_STATUS_LABEL[r.status] || r.status}</span>
+        <div class="checkbox-row"><input type="checkbox" class="jda-row-check" data-id="${r.id}"><label>選択</label></div>
       </div>
     `).join('');
     listEl.querySelectorAll('.history-item').forEach((el) => {
-      el.addEventListener('click', () => openJoyoDenpyoDetail(el.dataset.id));
+      el.addEventListener('click', (ev) => {
+        if (ev.target.classList.contains('jda-row-check') || ev.target.tagName === 'LABEL') return;
+        openJoyoDenpyoDetail(el.dataset.id);
+      });
+    });
+    listEl.querySelectorAll('.jda-row-check').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) jdaSelected.add(cb.dataset.id); else jdaSelected.delete(cb.dataset.id);
+        updateJdaBulkBar();
+      });
     });
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }
 }
-let jdaStatusFilter = '';
+
+function updateJdaBulkBar() {
+  document.getElementById('jda-bulk-bar').style.display = jdaSelected.size > 0 ? 'block' : 'none';
+}
+
+// ---------- 常用伝票 PDF・印刷 ----------
+
+function jdPrintPageHtml(d) {
+  const workers = d.workers || [];
+  const workerRows = workers.length === 0 ? '<tr><td colspan="3">-</td></tr>' : workers.map((w) => `
+    <tr><td>${w.worker_type === 'subcontractor' ? '外注' : '社員'}</td><td>${w.worker_name}</td><td>${w.headcount != null ? w.headcount + '人工' : '-'}</td></tr>
+  `).join('');
+  return `
+    <div class="jd-print-page">
+      <div class="jd-print-header">
+        <div>
+          <div class="jd-print-company">株式会社迅翔興業</div>
+          <div class="jd-print-title">常用伝票</div>
+        </div>
+        <div class="jd-print-meta">日付: ${d.report_date}<br>作成者: ${d.created_by_name || '-'}<br>作成日時: ${new Date(d.created_at).toLocaleString('ja-JP')}</div>
+      </div>
+      <table class="jd-print-table">
+        <tr><th>現場</th><td>${d.site_name}</td></tr>
+        <tr><th>取引先</th><td>${d.partner_name || '-'}</td></tr>
+        <tr><th>作業内容</th><td>${(d.work_description || '-').replace(/\n/g, '<br>')}</td></tr>
+        <tr><th>使用車両</th><td>${d.vehicle_info || '-'}</td></tr>
+        <tr><th>使用資材等</th><td>${d.materials_info || '-'}</td></tr>
+        <tr><th>備考</th><td>${(d.notes || '-').replace(/\n/g, '<br>')}</td></tr>
+      </table>
+      <table class="jd-print-workers-table">
+        <thead><tr><th>区分</th><th>作業員名</th><th>人工</th></tr></thead>
+        <tbody>${workerRows}</tbody>
+      </table>
+      <div class="jd-print-signature">
+        <div class="jd-print-signature-box">
+          <div class="jd-print-signature-label">相手先確認欄</div>
+          <div class="jd-print-signature-value">${d.customer_confirmation || ''}</div>
+        </div>
+        <div class="jd-print-signature-box">
+          <div class="jd-print-signature-label">確認日時</div>
+          <div class="jd-print-signature-value">${d.customer_confirmed_at ? new Date(d.customer_confirmed_at).toLocaleString('ja-JP') : ''}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function openJoyoDenpyoPrint(ids) {
+  const session = getSession();
+  showScreen('joyo-denpyo-print');
+  const contentEl = document.getElementById('jd-print-content');
+  contentEl.innerHTML = '<div class="hint no-print">読み込み中...</div>';
+  try {
+    const details = await Promise.all(ids.map((id) => rpc('get_joyo_denpyo_detail', { p_actor_employee_code: session.employeeCode, p_id: Number(id) })));
+    const rows = details.map((r) => r && r[0]).filter(Boolean);
+    if (rows.length === 0) { contentEl.innerHTML = '<div class="hint no-print">表示できる伝票がありませんでした。</div>'; return; }
+    contentEl.innerHTML = rows.map(jdPrintPageHtml).join('');
+  } catch (e) {
+    contentEl.innerHTML = '<div class="hint no-print">読み込みに失敗しました。</div>';
+  }
+}
 
 // ---------- 社内イベント ----------
 
@@ -5330,6 +5408,12 @@ function init() {
       loadJoyoDenpyoAdminList();
     });
   });
+  document.getElementById('jd-print-btn').addEventListener('click', () => window.print());
+  document.getElementById('jda-select-all').addEventListener('change', (e) => {
+    document.querySelectorAll('.jda-row-check').forEach((cb) => { cb.checked = e.target.checked; if (e.target.checked) jdaSelected.add(cb.dataset.id); else jdaSelected.delete(cb.dataset.id); });
+    updateJdaBulkBar();
+  });
+  document.getElementById('jda-bulk-print-btn').addEventListener('click', () => openJoyoDenpyoPrint(Array.from(jdaSelected)));
 
   // ---------- 社内イベント ----------
   SCREEN_ENTER_HOOKS.events = loadEventsList;

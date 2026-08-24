@@ -4605,6 +4605,23 @@ async function doPrefillJoyoDenpyoWorkers() {
   }
 }
 
+let jdPhotoUpload = null; // 常用伝票の原本写真({driveFileId, driveFileUrl})。新しい写真を選んだ時だけ入る。
+
+async function handleJdPhotoFile(file) {
+  if (!file) return;
+  const statusEl = document.getElementById('jd-photo-status');
+  const labelEl = document.getElementById('jd-photo-label');
+  statusEl.textContent = 'アップロード中...';
+  try {
+    const session = getSession();
+    jdPhotoUpload = await uploadReceiptPhoto(session.employeeCode, file);
+    statusEl.textContent = 'アップロード完了';
+    labelEl.textContent = file.name;
+  } catch (e) {
+    statusEl.textContent = 'アップロードに失敗しました。';
+  }
+}
+
 function resetJoyoDenpyoForm() {
   document.getElementById('jd-edit-id').value = '';
   document.getElementById('jd-form-title').textContent = '常用伝票を作成する';
@@ -4617,6 +4634,10 @@ function resetJoyoDenpyoForm() {
   document.getElementById('jd-materials-info').value = '';
   document.getElementById('jd-notes').value = '';
   document.getElementById('jd-workers-list').innerHTML = '';
+  document.getElementById('jd-photo-input').value = '';
+  document.getElementById('jd-photo-label').textContent = '写真を選ぶ';
+  document.getElementById('jd-photo-status').textContent = '';
+  jdPhotoUpload = null;
   hideError('jd-form-error');
 }
 
@@ -4649,6 +4670,8 @@ async function doSubmitJoyoDenpyo(isDraft) {
     p_materials_info: document.getElementById('jd-materials-info').value.trim() || null,
     p_notes: document.getElementById('jd-notes').value.trim() || null,
     p_workers: collectJoyoDenpyoWorkers(), p_is_draft: !!isDraft,
+    p_photo_drive_file_id: jdPhotoUpload ? jdPhotoUpload.driveFileId : null,
+    p_photo_drive_file_url: jdPhotoUpload ? jdPhotoUpload.driveFileUrl : null,
   };
   try {
     if (editId) {
@@ -4679,7 +4702,8 @@ async function openJoyoDenpyoDetail(id) {
       ['備考', d.notes || '-'], ['状態', JD_STATUS_LABEL[d.status] || d.status],
       ['作成者', d.created_by_name || '-'], ['作成日時', new Date(d.created_at).toLocaleString('ja-JP')],
       ['相手先確認', d.customer_confirmation || '-'],
-    ].map(([label, value]) => `<div class="field-row"><span class="field-label">${label}</span><span class="field-value">${value}</span></div>`).join('');
+    ].map(([label, value]) => `<div class="field-row"><span class="field-label">${label}</span><span class="field-value">${value}</span></div>`).join('')
+      + (d.photo_drive_file_url ? `<div class="field-row"><span class="field-label">伝票原本の写真</span><span class="field-value"><a class="file-link" href="${d.photo_drive_file_url}" target="_blank" rel="noopener">写真を見る</a></span></div>` : '');
     const workers = d.workers || [];
     document.getElementById('jd-detail-workers').innerHTML = workers.length === 0 ? '<div class="hint">作業員未登録</div>' : workers.map((w) => `
       <div class="history-item"><div class="row1"><span>${w.worker_name}</span><span>${w.headcount != null ? w.headcount + '人工' : ''}</span></div><div class="row2">${w.worker_type === 'subcontractor' ? '外注' : '社員'}</div></div>
@@ -4733,6 +4757,11 @@ function openJoyoDenpyoForm(existing) {
     document.getElementById('jd-materials-info').value = existing.materials_info || '';
     document.getElementById('jd-notes').value = existing.notes || '';
     (existing.workers || []).forEach((w) => addJoyoDenpyoWorkerRow(w));
+    // 既存の写真を新しく選び直さない限り、送信時にp_photo_drive_file_*はnullのままとなり、
+    // サーバー側(update_joyo_denpyo)のCOALESCEで既存の写真がそのまま維持される。
+    if (existing.photo_drive_file_url) {
+      document.getElementById('jd-photo-label').textContent = '登録済みの写真があります(変更する場合のみ選び直してください)';
+    }
   }
   showScreen('joyo-denpyo-form');
 }
@@ -5485,6 +5514,7 @@ function init() {
   };
   document.getElementById('jd-new-btn').addEventListener('click', () => openJoyoDenpyoForm(null));
   document.getElementById('jd-prefill-btn').addEventListener('click', doPrefillJoyoDenpyoWorkers);
+  document.getElementById('jd-photo-input').addEventListener('change', (e) => handleJdPhotoFile(e.target.files[0]));
   document.getElementById('jd-add-worker-btn').addEventListener('click', () => addJoyoDenpyoWorkerRow(null));
   document.getElementById('jd-submit').addEventListener('click', () => doSubmitJoyoDenpyo(false));
   document.getElementById('jd-save-draft').addEventListener('click', () => doSubmitJoyoDenpyo(true));

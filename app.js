@@ -2333,17 +2333,31 @@ const CHANGE_FIELD_LABEL = {
   emergency_contact_name: '緊急連絡先(氏名)', emergency_contact_relation: '緊急連絡先(続柄)', emergency_contact_phone: '緊急連絡先(電話番号)',
 };
 
+function renderAvatar(elId, name, photoUrl) {
+  const el = document.getElementById(elId);
+  if (photoUrl) {
+    el.style.backgroundImage = `url("${photoUrl}")`;
+    el.textContent = '';
+  } else {
+    el.style.backgroundImage = '';
+    el.textContent = (name || '?').charAt(0);
+  }
+}
+
 async function loadMyInfo() {
   const session = getSession();
-  document.getElementById('myinfo-avatar').textContent = (session.employeeName || '?').charAt(0);
+  renderAvatar('myinfo-avatar', session.employeeName, null);
   document.getElementById('myinfo-name').textContent = session.employeeName;
   document.getElementById('myinfo-code').textContent = `社員番号: ${session.employeeCode}`;
+  document.getElementById('myinfo-photo-status').textContent = '';
   loadHomeLeaveStats('myinfo-leave-balance', 'myinfo-leave-used');
 
   try {
     const rows = await rpc('get_my_profile', { p_employee_code: session.employeeCode });
     const p = rows && rows[0];
     if (!p) return;
+    renderAvatar('myinfo-avatar', p.employee_name, p.profile_photo_url);
+    document.getElementById('myinfo-photo-remove-btn').style.display = p.profile_photo_url ? 'inline' : 'none';
     document.getElementById('myinfo-basic-fields').innerHTML =
       lockedFieldRow('社員番号', p.employee_code) +
       lockedFieldRow('氏名', p.employee_name) +
@@ -2365,6 +2379,32 @@ async function loadMyInfo() {
       btn.addEventListener('click', () => openProfileEdit(btn.dataset.editField, btn.dataset.current));
     });
   } catch (e) { /* プロフィールが読めなくても他の情報は表示され続ける */ }
+}
+
+async function handleMyPhotoFile(file) {
+  if (!file) return;
+  const session = getSession();
+  const statusEl = document.getElementById('myinfo-photo-status');
+  statusEl.textContent = 'アップロード中...';
+  try {
+    const result = await uploadReceiptPhoto(session.employeeCode, file);
+    await rpc('update_my_profile_photo', { p_employee_code: session.employeeCode, p_drive_file_id: result.driveFileId, p_drive_file_url: result.driveFileUrl });
+    statusEl.textContent = '';
+    await loadMyInfo();
+  } catch (e) {
+    statusEl.textContent = e.message || 'アップロードに失敗しました。';
+  }
+}
+
+async function handleMyPhotoRemove() {
+  if (!confirm('プロフィール画像を削除しますか?')) return;
+  const session = getSession();
+  try {
+    await rpc('remove_my_profile_photo', { p_employee_code: session.employeeCode });
+    await loadMyInfo();
+  } catch (e) {
+    document.getElementById('myinfo-photo-status').textContent = e.message || '削除に失敗しました。';
+  }
 }
 
 function openProfileEdit(field, currentValue) {
@@ -2503,6 +2543,9 @@ async function openEmployeeDetail(code, initialTab) {
   document.querySelectorAll('#employee-detail-tabs .tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('#screen-employee-detail .tab-panel').forEach((p) => p.classList.toggle('active', p.id === `employee-detail-panel-${tab}`));
   showScreen('employee-detail');
+  // ヘッダー(アバター・氏名)は全タブ共通で常に表示されるため、basicタブ以外へ
+  // 直接遷移する場合(社員別集計・有給管理の行クリック等)でも必ず読み込む。
+  if (tab !== 'basic') loadEmployeeDetailBasic();
   await switchEmployeeDetailTab(tab);
 }
 
@@ -2560,7 +2603,7 @@ async function loadEmployeeDetailBasic() {
     const rows = await rpc('admin_get_employee_profile', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
     const p = rows && rows[0];
     if (!p) return;
-    document.getElementById('employee-detail-avatar').textContent = (p.employee_name || '?').charAt(0);
+    renderAvatar('employee-detail-avatar', p.employee_name, p.profile_photo_url);
     document.getElementById('employee-detail-name').textContent = p.employee_name;
     document.getElementById('employee-detail-code').textContent = `社員番号: ${p.employee_code}・${p.status === 'active' ? '在籍中' : '在籍外'}`;
     document.getElementById('employee-detail-basic-fields').innerHTML =
@@ -2572,6 +2615,8 @@ async function loadEmployeeDetailBasic() {
   } catch (e) { /* 無視 */ }
 }
 
+const LEAVE_TX_LABEL = { initial_grant: '付与(初回)', accrual: '付与', usage: '使用', adjustment: '調整/取消', carryover_expiry: '失効' };
+
 async function loadEmployeeDetailLeave() {
   const session = getSession();
   const code = currentEmployeeDetailCode;
@@ -2582,7 +2627,246 @@ async function loadEmployeeDetailLeave() {
     const s = rows && rows[0];
     document.getElementById('employee-detail-leave-balance').textContent = s && s.leave_balance != null ? `${s.leave_balance}日` : '未登録';
     document.getElementById('employee-detail-leave-used').textContent = s ? `${s.leave_used_this_year}日` : '-';
-    listEl.innerHTML = '<div class="hint">支給品履歴・詳しい取得履歴は各タブ/画面をご確認ください。</div>';
+
+    const ledger = await rpc('admin_get_employee_leave_ledger', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
+    if (!ledger || ledger.length === 0) { listEl.innerHTML = '<div class="hint">付与・使用履歴はまだありません。</div>'; return; }
+    listEl.innerHTML = ledger.map((tx) => `
+      <div class="history-item">
+        <div class="row1"><span>${LEAVE_TX_LABEL[tx.transaction_type] || tx.transaction_type}</span><span style="color:${tx.amount < 0 ? 'var(--danger)' : 'var(--primary)'};">${tx.amount > 0 ? '+' : ''}${tx.amount}日</span></div>
+        <div class="row2">${new Date(tx.effective_date).toLocaleDateString('ja-JP')}${tx.note ? `・${tx.note}` : ''}</div>
+        ${tx.can_cancel ? `<button type="button" class="link leave-cancel-btn" data-request-id="${tx.related_employee_request_id}">この有給を取消する</button>` : ''}
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.leave-cancel-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const reason = prompt('取消理由を入力してください');
+        if (!reason) return;
+        try {
+          await rpc('admin_cancel_paid_leave', { p_admin_employee_code: session.employeeCode, p_employee_request_id: Number(btn.dataset.requestId), p_reason: reason });
+          await loadEmployeeDetailLeave();
+        } catch (e) { alert(e.message || '取消に失敗しました。'); }
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+let leaveGrantTargetCode = null;
+
+function openLeaveGrant(code, name) {
+  leaveGrantTargetCode = code;
+  document.getElementById('leave-grant-target').textContent = `対象: ${name}さん(${code})`;
+  document.getElementById('leave-grant-amount').value = '';
+  document.getElementById('leave-grant-date').value = todayJST();
+  document.getElementById('leave-grant-note').value = '';
+  hideError('leave-grant-error');
+  showScreen('leave-grant');
+}
+
+async function doSubmitLeaveGrant() {
+  const session = getSession();
+  const amount = Number(document.getElementById('leave-grant-amount').value);
+  const date = document.getElementById('leave-grant-date').value;
+  hideError('leave-grant-error');
+  if (!amount || amount <= 0) { showError('leave-grant-error', '付与日数を入力してください。'); return; }
+  if (!date) { showError('leave-grant-error', '付与日を入力してください。'); return; }
+  try {
+    await rpc('admin_grant_leave', {
+      p_admin_employee_code: session.employeeCode, p_target_employee_code: leaveGrantTargetCode,
+      p_amount: amount, p_effective_date: date, p_note: document.getElementById('leave-grant-note').value.trim() || null,
+    });
+    showDone('有給を付与しました。', 'leave-admin');
+  } catch (e) {
+    showError('leave-grant-error', e.message || '付与に失敗しました。');
+  }
+}
+
+// ---------- 有給管理(管理者、全社員比較) ----------
+
+async function loadLeaveAdmin() {
+  const session = getSession();
+  const search = document.getElementById('la-search').value.trim();
+  const listEl = document.getElementById('la-list');
+  const tbodyEl = document.getElementById('la-table-body');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  tbodyEl.innerHTML = '';
+  try {
+    const rows = await rpc('admin_list_leave_summary', { p_admin_employee_code: session.employeeCode, p_search: search || null });
+    document.getElementById('la-count').textContent = `${rows.length}名`;
+    if (rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する社員がいません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="admin-result-item la-row" data-code="${r.employee_code}" data-name="${r.employee_name}">
+        <div class="row1"><span>${r.employee_name}(${r.employee_code})</span><span>${r.current_balance}日</span></div>
+        <div class="row2">付与累計${r.granted_total}日・使用累計${r.used_total}日・次回付与目安${r.next_grant_estimate ? new Date(r.next_grant_estimate).toLocaleDateString('ja-JP') : '-'}</div>
+      </div>
+    `).join('');
+    tbodyEl.innerHTML = rows.map((r) => `
+      <tr class="la-row" data-code="${r.employee_code}" data-name="${r.employee_name}">
+        <td>${r.employee_code}</td><td>${r.employee_name}</td><td>${r.current_balance}日</td>
+        <td>${r.granted_total}日</td><td>${r.used_total}日</td>
+        <td>${r.next_grant_estimate ? new Date(r.next_grant_estimate).toLocaleDateString('ja-JP') : '-'}</td>
+        <td><button type="button" class="return-btn la-grant-btn" data-code="${r.employee_code}" data-name="${r.employee_name}">付与</button></td>
+      </tr>
+    `).join('');
+    document.querySelectorAll('.la-grant-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); openLeaveGrant(btn.dataset.code, btn.dataset.name); });
+    });
+    document.querySelectorAll('.la-row').forEach((el) => {
+      el.addEventListener('click', () => openEmployeeDetail(el.dataset.code, 'leave'));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+// ---------- 社員別集計(管理者、月次で全社員比較) ----------
+
+async function loadEmployeeSummary() {
+  const session = getSession();
+  const monthInput = document.getElementById('es-month').value;
+  if (!monthInput) return;
+  const [year, month] = monthInput.split('-').map(Number);
+  const listEl = document.getElementById('es-list');
+  const tbodyEl = document.getElementById('es-table-body');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  tbodyEl.innerHTML = '';
+  try {
+    const rows = await rpc('admin_get_employee_monthly_summary', { p_admin_employee_code: session.employeeCode, p_year: year, p_month: month });
+    document.getElementById('es-count').textContent = `${rows.length}名(${year}年${month}月)`;
+    const yen = (n) => `${Number(n).toLocaleString('ja-JP')}円`;
+    if (rows.length === 0) { listEl.innerHTML = '<div class="hint">対象の社員がいません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="admin-result-item es-row" data-code="${r.employee_code}">
+        <div class="row1"><span>${r.employee_name}(${r.employee_code})</span><span>未払${yen(r.unpaid_amount)}</span></div>
+        <div class="row2">経費立替${yen(r.expense_advance_amount)}・会社経費${yen(r.company_expense_amount)}・支払済${yen(r.paid_amount)}</div>
+        <div class="row2">有給付与${r.leave_granted}日・使用${r.leave_used}日・残${r.leave_balance}日・その他申請${r.other_request_count}件</div>
+      </div>
+    `).join('');
+    tbodyEl.innerHTML = rows.map((r) => `
+      <tr class="es-row" data-code="${r.employee_code}">
+        <td>${r.employee_code}</td><td>${r.employee_name}</td>
+        <td>${yen(r.expense_advance_amount)}</td><td>${yen(r.company_expense_amount)}</td>
+        <td>${yen(r.paid_amount)}</td><td>${yen(r.unpaid_amount)}</td>
+        <td>${r.leave_granted}日</td><td>${r.leave_used}日</td><td>${r.leave_balance}日</td>
+        <td>${r.other_request_count}件</td>
+      </tr>
+    `).join('');
+    document.querySelectorAll('.es-row').forEach((el) => {
+      el.addEventListener('click', () => openEmployeeDetail(el.dataset.code, 'requests'));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+// ---------- 出面集計(管理者、社員別/外注会社別/現場別マトリクス) ----------
+
+let attendanceView = 'employee';
+let attendanceSiteFilter = '';
+
+function currentAttendanceMonth() {
+  const v = document.getElementById('am-month').value;
+  if (!v) return null;
+  const [year, month] = v.split('-').map(Number);
+  return { year, month };
+}
+
+function daysInMonth(year, month) {
+  return new Date(year, month, 0).getDate();
+}
+
+async function loadAttendanceFilterOptions() {
+  const session = getSession();
+  const ym = currentAttendanceMonth();
+  if (!ym) return;
+  try {
+    const rows = await rpc('admin_list_attendance_filter_options', { p_admin_employee_code: session.employeeCode, p_year: ym.year, p_month: ym.month });
+    const opts = (rows && rows[0]) || { sites: [], subcontractor_companies: [] };
+    const siteSelect = document.getElementById('am-site-filter');
+    const current = siteSelect.value;
+    siteSelect.innerHTML = '<option value="">すべての現場</option>' + (opts.sites || []).map((s) => `<option value="${s.id}">${s.name}</option>`).join('');
+    siteSelect.value = current;
+  } catch (e) { /* 無視 */ }
+}
+
+async function loadAttendanceMatrix() {
+  const session = getSession();
+  const ym = currentAttendanceMonth();
+  const wrapEl = document.getElementById('am-matrix-wrap');
+  if (!ym) return;
+  wrapEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_get_attendance_matrix', {
+      p_admin_employee_code: session.employeeCode, p_year: ym.year, p_month: ym.month, p_view: attendanceView,
+      p_site_id: attendanceSiteFilter ? Number(attendanceSiteFilter) : null,
+    });
+    const dayCount = daysInMonth(ym.year, ym.month);
+    document.getElementById('am-hint').textContent = `${rows.length}件(${ym.year}年${ym.month}月)。行をタップすると内訳を確認できます。`;
+    if (rows.length === 0) { wrapEl.innerHTML = '<div class="hint">この月の出面データはありません。</div>'; return; }
+
+    let dayHeaders = '';
+    for (let d = 1; d <= dayCount; d++) dayHeaders += `<th>${d}</th>`;
+    const bodyRows = rows.map((r) => {
+      let cells = '';
+      for (let d = 1; d <= dayCount; d++) {
+        const v = r.daily[String(d)];
+        cells += v ? `<td class="am-cell-value">${v}</td>` : '<td class="am-cell-empty">-</td>';
+      }
+      return `<tr class="am-row-clickable" data-group-id="${r.group_id}" data-group-label="${r.group_label}">
+        <td>${r.group_label}</td>${cells}<td class="am-total-col">${r.month_total}</td>
+      </tr>`;
+    }).join('');
+    const dailyTotals = [];
+    for (let d = 1; d <= dayCount; d++) {
+      dailyTotals.push(rows.reduce((sum, r) => sum + (Number(r.daily[String(d)]) || 0), 0));
+    }
+    const grandTotal = rows.reduce((sum, r) => sum + Number(r.month_total || 0), 0);
+    const totalRow = `<tr><td>合計</td>${dailyTotals.map((t) => `<td class="am-total-col">${t ? t : '-'}</td>`).join('')}<td class="am-total-col">${grandTotal}</td></tr>`;
+
+    wrapEl.innerHTML = `
+      <table class="attendance-matrix-table">
+        <thead><tr><th>${attendanceView === 'employee' ? '社員' : (attendanceView === 'subcontractor_company' ? '外注会社' : '現場')}</th>${dayHeaders}<th>月合計</th></tr></thead>
+        <tbody>${bodyRows}${totalRow}</tbody>
+      </table>
+    `;
+    wrapEl.querySelectorAll('.am-row-clickable').forEach((el) => {
+      el.addEventListener('click', () => openAttendanceDetail(el.dataset.groupId, el.dataset.groupLabel));
+    });
+  } catch (e) {
+    wrapEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function openAttendanceDetail(groupId, groupLabel) {
+  const session = getSession();
+  const ym = currentAttendanceMonth();
+  showScreen('attendance-detail');
+  const listEl = document.getElementById('ad-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    if (attendanceView === 'employee') {
+      document.getElementById('ad-title').textContent = `${groupLabel}さんの現場別内訳(${ym.year}年${ym.month}月)`;
+      const rows = await rpc('admin_get_employee_attendance_by_site', { p_admin_employee_code: session.employeeCode, p_year: ym.year, p_month: ym.month, p_employee_code: groupId });
+      listEl.innerHTML = rows.length === 0 ? '<div class="hint">データがありません。</div>' : rows.map((r) => `
+        <div class="history-item"><div class="row1"><span>${r.site_name}</span><span>${r.total_headcount}人工</span></div></div>
+      `).join('');
+    } else {
+      // 外注会社別ビューではgroup_idが会社IDだが、現場×人の内訳は「現場」単位でしか
+      // 提供していないため、外注会社別ビューの行クリックはその会社の月別カレンダーが
+      // 既にマトリクス上で見えているので、ここでは現場別ビューと同じ内訳(社員/外注会社別の
+      // 人工)を出す(site_idとして扱う)。
+      document.getElementById('ad-title').textContent = `${groupLabel}の内訳(${ym.year}年${ym.month}月)`;
+      if (attendanceView === 'site') {
+        const rows = await rpc('admin_get_site_attendance_detail', { p_admin_employee_code: session.employeeCode, p_year: ym.year, p_month: ym.month, p_site_id: Number(groupId) });
+        const total = rows.reduce((sum, r) => sum + Number(r.total_headcount || 0), 0);
+        listEl.innerHTML = (rows.length === 0 ? '<div class="hint">データがありません。</div>' : rows.map((r) => `
+          <div class="history-item"><div class="row1"><span>${r.worker_label}</span><span>${r.total_headcount}人工</span></div><div class="row2">${r.worker_type === 'employee' ? '社員' : '外注会社'}</div></div>
+        `).join('')) + `<div class="history-item"><div class="row1"><span><strong>総人工</strong></span><span><strong>${total}人工</strong></span></div></div>`;
+      } else {
+        listEl.innerHTML = '<div class="hint">外注会社別ビューの日別内訳はマトリクス表をご確認ください。現場ごとの内訳は「現場別」表示から確認できます。</div>';
+      }
+    }
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }
@@ -5408,6 +5692,8 @@ function init() {
     });
   });
 
+  document.getElementById('myinfo-photo-input').addEventListener('change', (e) => handleMyPhotoFile(e.target.files[0]));
+  document.getElementById('myinfo-photo-remove-btn').addEventListener('click', handleMyPhotoRemove);
   document.getElementById('profile-edit-submit').addEventListener('click', doSubmitProfileEdit);
   document.getElementById('info-change-filter').addEventListener('change', loadInfoChangeAdmin);
   document.getElementById('supply-master-submit').addEventListener('click', doSaveSupplyMasterItem);
@@ -5530,6 +5816,43 @@ function init() {
   document.getElementById('site-list-search').addEventListener('input', (e) => {
     clearTimeout(siteListSearchTimer);
     siteListSearchTimer = setTimeout(() => { siteListQuery = e.target.value.trim(); loadAllSitesList(); }, 300);
+  });
+
+  // ---------- 有給管理・社員別集計・出面集計(管理者) ----------
+  SCREEN_ENTER_HOOKS['leave-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    document.getElementById('la-search').value = '';
+    loadLeaveAdmin();
+  };
+  SCREEN_ENTER_HOOKS['employee-summary'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    if (!document.getElementById('es-month').value) document.getElementById('es-month').value = todayJST().slice(0, 7);
+    loadEmployeeSummary();
+  };
+  SCREEN_ENTER_HOOKS['attendance-matrix'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    if (!document.getElementById('am-month').value) document.getElementById('am-month').value = todayJST().slice(0, 7);
+    loadAttendanceFilterOptions();
+    loadAttendanceMatrix();
+  };
+  document.getElementById('la-search').addEventListener('input', () => {
+    clearTimeout(employeeSearchTimer);
+    employeeSearchTimer = setTimeout(loadLeaveAdmin, 300);
+  });
+  document.getElementById('leave-grant-submit').addEventListener('click', doSubmitLeaveGrant);
+  document.getElementById('employee-detail-grant-leave-btn').addEventListener('click', () => {
+    const nameEl = document.getElementById('employee-detail-name');
+    openLeaveGrant(currentEmployeeDetailCode, nameEl ? nameEl.textContent : '');
+  });
+  document.getElementById('es-month').addEventListener('change', loadEmployeeSummary);
+  document.getElementById('am-month').addEventListener('change', () => { loadAttendanceFilterOptions(); loadAttendanceMatrix(); });
+  document.getElementById('am-site-filter').addEventListener('change', (e) => { attendanceSiteFilter = e.target.value; loadAttendanceMatrix(); });
+  document.querySelectorAll('#am-view-filter .filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      attendanceView = btn.dataset.view;
+      document.querySelectorAll('#am-view-filter .filter-chip').forEach((c) => c.classList.toggle('active', c === btn));
+      loadAttendanceMatrix();
+    });
   });
 
   // ---------- 常用伝票 ----------

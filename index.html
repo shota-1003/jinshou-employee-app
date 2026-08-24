@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>迅翔興業 社員ポータル</title>
 <link rel="manifest" href="manifest.json">
-<link rel="icon" href="icons/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
 <link rel="apple-touch-icon" href="icons/app-icon-180.png">
 <meta name="theme-color" content="#12213f">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -831,12 +832,18 @@
        住所・電話番号等は「変更申請」ボタンから本人が変更申請できる(即時反映はせず管理者承認を挟む)。 -->
   <section id="screen-myinfo" class="screen">
     <div class="profile-header">
-      <div class="profile-avatar" id="myinfo-avatar"></div>
+      <label class="profile-avatar-edit">
+        <div class="profile-avatar" id="myinfo-avatar"></div>
+        <span class="profile-avatar-edit-badge"><span class="icon-slot" data-icon="camera"></span></span>
+        <input type="file" accept="image/*" id="myinfo-photo-input" style="display:none;">
+      </label>
       <div>
         <div class="profile-header-name" id="myinfo-name"></div>
         <div class="profile-header-code" id="myinfo-code"></div>
+        <button type="button" class="link" id="myinfo-photo-remove-btn" style="display:none;">写真を削除する</button>
       </div>
     </div>
+    <div class="hint" id="myinfo-photo-status" style="margin-bottom:12px;"></div>
 
     <div class="stat-mini-row">
       <div class="stat-mini"><span class="stat-mini-label">有給残日数</span><span class="stat-mini-value" id="myinfo-leave-balance">-</span></div>
@@ -1049,6 +1056,31 @@
     <div class="form-title">管理者ダッシュボード</div>
     <div class="hint" style="margin-bottom:12px;">今すぐ対応が必要なことをまとめて表示しています。件数をタップすると一覧に移動します。</div>
 
+    <div class="section-title">集計・レポート</div>
+    <div class="hint" style="margin-bottom:10px;">申請を1件ずつ確認する「申請管理」とは別に、社員・現場・外注会社を横断して数字を一目で比較できる画面です。</div>
+    <div class="home-card-grid" style="margin-bottom:20px;">
+      <button type="button" class="home-card" data-nav="employee-summary">
+        <span class="icon-slot" data-icon="users"></span>
+        <span class="home-card-label">社員別集計</span>
+        <span class="home-card-desc">経費・支払・有給を全社員比較</span>
+      </button>
+      <button type="button" class="home-card" data-nav="attendance-matrix">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <span class="home-card-label">出面集計</span>
+        <span class="home-card-desc">社員/外注会社/現場別の日別人工</span>
+      </button>
+      <button type="button" class="home-card" data-nav="leave-admin">
+        <span class="icon-slot" data-icon="calendar"></span>
+        <span class="home-card-label">有給管理</span>
+        <span class="home-card-desc">付与・残日数・履歴</span>
+      </button>
+      <button type="button" class="home-card" data-nav="daily-report-management">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <span class="home-card-label">日報管理</span>
+        <span class="home-card-desc">検索・未提出確認・確認処理</span>
+      </button>
+    </div>
+
     <div class="section-title">よく使う管理機能</div>
     <div class="home-card-grid" style="margin-bottom:20px;">
       <button type="button" class="home-card" data-nav="admin-announce">
@@ -1134,6 +1166,11 @@
       <button type="button" class="menu-item" data-nav="daily-report-management">
         <span class="icon-slot" data-icon="clipboard-list"></span>
         <div class="menu-item-body">日報管理<span class="desc">日付・社員・現場で検索、本日の未提出を確認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item" data-nav="subcontractor-company-admin">
+        <span class="icon-slot" data-icon="users-round"></span>
+        <div class="menu-item-body">外注会社管理<span class="desc">外注会社・所属作業員の追加・停止</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
       <button type="button" class="menu-item" data-nav="category-review">
@@ -1413,6 +1450,87 @@
   </section>
 
   <!-- 社員名簿(管理者) -->
+  <!-- 有給管理: 全社員の残日数・付与/使用累計を一覧比較 -->
+  <section id="screen-leave-admin" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">有給管理</div>
+    <div class="hint" style="margin-bottom:10px;">残日数は元帳(いつ何日付与・使用したか)から自動計算されます。付与はここから記録し、取消は各社員の詳細画面「有給」タブから行えます。</div>
+    <div class="search-bar">
+      <span class="icon-slot" data-icon="search"></span>
+      <input type="text" id="la-search" placeholder="氏名・社員番号で検索...">
+    </div>
+    <div class="hint" id="la-count" style="margin:10px 0;"></div>
+    <div id="la-list" class="areq-cards"></div>
+    <div class="areq-table-wrap">
+      <table class="areq-table">
+        <thead><tr><th>社員番号</th><th>氏名</th><th>残日数</th><th>付与累計</th><th>使用累計</th><th>次回付与目安</th><th></th></tr></thead>
+        <tbody id="la-table-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 有給付与フォーム -->
+  <section id="screen-leave-grant" class="screen">
+    <button type="button" class="back-link" data-nav="leave-admin">有給管理に戻る</button>
+    <div class="form-title">有給を付与する</div>
+    <div class="hint" id="leave-grant-target" style="margin-bottom:10px;"></div>
+    <label for="leave-grant-amount">付与日数<span class="required-mark">(必須)</span></label>
+    <input type="number" id="leave-grant-amount" step="0.5" min="0.5" placeholder="例: 10">
+    <label for="leave-grant-date">付与日<span class="required-mark">(必須)</span></label>
+    <input type="date" id="leave-grant-date">
+    <label for="leave-grant-note">メモ</label>
+    <div class="hint-inline">任意</div>
+    <input type="text" id="leave-grant-note" placeholder="例: 2026年度定期付与">
+    <div class="error" id="leave-grant-error"></div>
+    <button id="leave-grant-submit">付与する</button>
+  </section>
+
+  <!-- 社員別集計: 経費・支払・有給・その他申請を1枚の表で全社員比較 -->
+  <section id="screen-employee-summary" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">社員別集計</div>
+    <label for="es-month">対象月</label>
+    <input type="month" id="es-month">
+    <div class="hint" id="es-count" style="margin:10px 0;"></div>
+    <div id="es-list" class="areq-cards"></div>
+    <div class="areq-table-wrap">
+      <table class="areq-table">
+        <thead>
+          <tr>
+            <th>社員番号</th><th>氏名</th><th>経費立替</th><th>会社経費</th><th>支払済</th><th>未払</th>
+            <th>有給付与</th><th>有給使用</th><th>有給残</th><th>その他申請</th>
+          </tr>
+        </thead>
+        <tbody id="es-table-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 出面集計: 社員別/外注会社別/現場別のマトリクス(サクミル代替) -->
+  <section id="screen-attendance-matrix" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">出面集計</div>
+    <label for="am-month">対象月</label>
+    <input type="month" id="am-month">
+    <div class="filter-row" id="am-view-filter">
+      <button type="button" class="filter-chip active" data-view="employee">社員別</button>
+      <button type="button" class="filter-chip" data-view="subcontractor_company">外注会社別</button>
+      <button type="button" class="filter-chip" data-view="site">現場別</button>
+    </div>
+    <label for="am-site-filter">現場で絞り込み</label>
+    <div class="hint-inline">任意</div>
+    <select id="am-site-filter"><option value="">すべての現場</option></select>
+    <div class="hint" id="am-hint" style="margin:10px 0;"></div>
+    <div class="attendance-matrix-wrap" id="am-matrix-wrap"></div>
+  </section>
+
+  <!-- 出面集計: 個人→現場 / 現場→個人・外注会社 の内訳 -->
+  <section id="screen-attendance-detail" class="screen">
+    <button type="button" class="back-link" data-nav="attendance-matrix">出面集計に戻る</button>
+    <div class="form-title" id="ad-title">内訳</div>
+    <div id="ad-list"></div>
+  </section>
+
   <section id="screen-employee-directory" class="screen">
     <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
     <div class="form-title">社員名簿</div>
@@ -1457,6 +1575,8 @@
         <div class="stat-mini"><span class="stat-mini-label">有給残日数</span><span class="stat-mini-value" id="employee-detail-leave-balance">-</span></div>
         <div class="stat-mini"><span class="stat-mini-label">今年使用</span><span class="stat-mini-value" id="employee-detail-leave-used">-</span></div>
       </div>
+      <button type="button" class="secondary" id="employee-detail-grant-leave-btn">有給を付与する</button>
+      <div class="section-title">付与・使用履歴</div>
       <div id="employee-detail-leave-history"></div>
     </div>
     <div class="tab-panel" id="employee-detail-panel-qual">

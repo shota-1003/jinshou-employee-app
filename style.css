@@ -640,7 +640,15 @@ button.link {
   width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), var(--primary-deep)); color: #fff;
   box-shadow: var(--glow-brand); font-family: var(--font-display);
   display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 19px; flex-shrink: 0;
+  background-size: cover; background-position: center;
 }
+.profile-avatar-edit { position: relative; display: inline-block; cursor: pointer; }
+.profile-avatar-edit-badge {
+  position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--card-bg-solid); border: 2px solid var(--bg); display: flex; align-items: center; justify-content: center;
+  color: var(--primary);
+}
+.profile-avatar-edit-badge .icon { width: 12px; height: 12px; }
 .profile-header-name { font-size: 18px; font-weight: 800; color: var(--text); }
 .profile-header-code { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
 
@@ -862,6 +870,22 @@ button.link {
 .jd-print-workers-table th, .jd-print-workers-table td { border: 1px solid #999; padding: 6px 9px; text-align: left; }
 .jd-print-workers-table th { background: #f0f0f0; }
 .jd-print-total-row td { background: #f7f7f7; }
+
+/* ===== 出面集計マトリクス(縦=社員/外注会社/現場、横=日、右端=月合計) ===== */
+.attendance-matrix-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card-bg); }
+.attendance-matrix-table { border-collapse: collapse; font-size: 12.5px; white-space: nowrap; }
+.attendance-matrix-table th, .attendance-matrix-table td { padding: 7px 9px; text-align: center; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); }
+.attendance-matrix-table thead th { background: var(--card-bg-solid); color: var(--text-muted); font-weight: 700; position: sticky; top: 0; z-index: 1; }
+.attendance-matrix-table th:first-child, .attendance-matrix-table td:first-child {
+  position: sticky; left: 0; z-index: 2; background: var(--card-bg-solid); text-align: left; font-weight: 700; min-width: 120px;
+}
+.attendance-matrix-table thead th:first-child { z-index: 3; }
+.attendance-matrix-table td.am-cell-empty { color: var(--text-muted); opacity: .35; }
+.attendance-matrix-table td.am-cell-value { color: var(--primary); font-weight: 700; cursor: pointer; }
+.attendance-matrix-table td.am-total-col { font-weight: 800; color: var(--text); background: oklch(1 0 0 / 4%); }
+.attendance-matrix-table tbody tr:last-child td { border-bottom: none; }
+.attendance-matrix-table tbody tr.am-row-clickable { cursor: pointer; }
+.attendance-matrix-table tbody tr.am-row-clickable:hover td:first-child { color: var(--primary); }
 .jd-print-signature { display: flex; gap: 16px; margin-top: 20px; }
 .jd-print-signature-box { flex: 1; border: 1px solid #999; border-radius: 4px; padding: 10px 12px; min-height: 70px; }
 .jd-print-signature-label { font-size: 11px; color: #555; font-weight: 700; margin-bottom: 30px; }

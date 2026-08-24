@@ -84,15 +84,25 @@
 
     <div class="section-title">よく使う機能</div>
     <div class="home-card-grid">
+      <button type="button" class="home-card" id="home-daily-report-card" data-nav="daily-report">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <span class="home-card-label" id="home-daily-report-label">日報</span>
+        <span class="home-card-desc" id="home-daily-report-desc">今日の現場・勤務区分</span>
+      </button>
+      <button type="button" class="home-card" data-nav="expense">
+        <span class="icon-slot" data-icon="receipt"></span>
+        <span class="home-card-label">経費</span>
+        <span class="home-card-desc">立替・会社経費</span>
+      </button>
       <button type="button" class="home-card" data-nav="leave">
         <span class="icon-slot" data-icon="calendar"></span>
         <span class="home-card-label">有給休暇</span>
         <span class="home-card-desc">休みを申請する</span>
       </button>
-      <button type="button" class="home-card" data-nav="expense-advance">
-        <span class="icon-slot" data-icon="receipt"></span>
-        <span class="home-card-label">経費</span>
-        <span class="home-card-desc">立替・会社経費</span>
+      <button type="button" class="home-card" data-nav="joyo-denpyo-list">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <span class="home-card-label">常用伝票</span>
+        <span class="home-card-desc">現場伝票を作成・確認</span>
       </button>
       <button type="button" class="home-card" data-nav="supply-request">
         <span class="icon-slot" data-icon="package"></span>
@@ -105,6 +115,8 @@
         <span class="home-card-desc">資格を登録する</span>
       </button>
     </div>
+
+    <div id="home-events-area"></div>
 
     <div class="home-announce-header">
       <div class="section-title">会社からのお知らせ</div>
@@ -120,25 +132,26 @@
   <!-- 「申請」一覧(下部ナビの「申請」タブ) -->
   <section id="screen-menu-apply" class="screen">
     <div class="form-title">申請</div>
-    <div class="stat-mini-row">
-      <div class="stat-mini"><span class="stat-mini-label">有給残日数</span><span class="stat-mini-value" id="home-leave-balance">-</span></div>
-      <div class="stat-mini"><span class="stat-mini-label">今年使用</span><span class="stat-mini-value" id="home-leave-used">-</span></div>
-    </div>
     <div class="home-card-grid">
+      <button type="button" class="home-card" data-nav="daily-report">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <span class="home-card-label">日報</span>
+        <span class="home-card-desc">今日の現場・勤務区分</span>
+      </button>
       <button type="button" class="home-card" data-nav="leave">
         <span class="icon-slot" data-icon="calendar"></span>
         <span class="home-card-label">有給休暇</span>
         <span class="home-card-desc">休みを申請する</span>
       </button>
-      <button type="button" class="home-card" data-nav="expense-advance">
+      <button type="button" class="home-card" data-nav="expense">
         <span class="icon-slot" data-icon="receipt"></span>
-        <span class="home-card-label">経費立替</span>
-        <span class="home-card-desc">自分で払った経費</span>
+        <span class="home-card-label">経費</span>
+        <span class="home-card-desc">立替・会社経費</span>
       </button>
-      <button type="button" class="home-card" data-nav="expense-company">
-        <span class="icon-slot" data-icon="building"></span>
-        <span class="home-card-label">会社経費</span>
-        <span class="home-card-desc">会社払いの領収書</span>
+      <button type="button" class="home-card" data-nav="joyo-denpyo-list">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <span class="home-card-label">常用伝票</span>
+        <span class="home-card-desc">現場伝票を作成・確認</span>
       </button>
       <button type="button" class="home-card" data-nav="meeting">
         <span class="icon-slot" data-icon="users-round"></span>
@@ -646,8 +659,27 @@
   </section>
 
   <!-- 経費立替申請フォーム(複数明細) -->
-  <section id="screen-expense" class="screen">
+  <!-- 経費(申請種類の選択) -->
+  <section id="screen-expense-select" class="screen">
     <button type="button" class="back-link" data-nav="menu-apply">申請一覧に戻る</button>
+    <div class="form-title">経費</div>
+    <div class="hint" style="margin-bottom:12px;">申請の種類を選んでください。</div>
+    <div class="home-card-grid">
+      <button type="button" class="home-card" data-nav="expense-advance">
+        <span class="icon-slot" data-icon="receipt"></span>
+        <span class="home-card-label">経費立替</span>
+        <span class="home-card-desc">自分が立て替えた経費</span>
+      </button>
+      <button type="button" class="home-card" data-nav="expense-company">
+        <span class="icon-slot" data-icon="building"></span>
+        <span class="home-card-label">会社経費</span>
+        <span class="home-card-desc">会社が支払った経費</span>
+      </button>
+    </div>
+  </section>
+
+  <section id="screen-expense" class="screen">
+    <button type="button" class="back-link" data-nav="expense-select">経費に戻る</button>
     <div class="form-title" id="expense-screen-title">経費立替申請</div>
     <div class="hint" style="margin: 0 0 14px;" id="expense-screen-hint">領収書の写真が必要です。複数の領収書をまとめて1回の申請にできます。</div>
 
@@ -1061,6 +1093,16 @@
       <button type="button" class="menu-item" data-nav="qual-admin">
         <span class="icon-slot" data-icon="graduation-cap"></span>
         <div class="menu-item-body">資格・免許管理<span class="desc">確認待ち・期限が近い資格/免許を確認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item" data-nav="joyo-denpyo-admin">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <div class="menu-item-body">常用伝票管理<span class="desc">現場伝票の一覧・詳細確認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item" data-nav="event-admin">
+        <span class="icon-slot" data-icon="users-round"></span>
+        <div class="menu-item-body">社内イベント管理<span class="desc">イベント作成・参加回答の確認</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
       <button type="button" class="menu-item" data-nav="health-admin">
@@ -1624,6 +1666,150 @@
     <textarea id="anon-admin-reply"></textarea>
     <div class="error" id="anon-admin-thread-error"></div>
     <button id="anon-admin-reply-btn">返信する</button>
+  </section>
+
+  <!-- 常用伝票 一覧 -->
+  <section id="screen-joyo-denpyo-list" class="screen">
+    <button type="button" class="back-link" data-nav="menu-apply">申請一覧に戻る</button>
+    <div class="form-title">常用伝票</div>
+    <button type="button" id="jd-new-btn">＋ 新規作成</button>
+    <div class="search-bar" style="margin-top:14px;">
+      <span class="icon-slot" data-icon="search"></span>
+      <input type="text" id="jd-search-partner" placeholder="取引先名で検索...">
+    </div>
+    <div class="filter-row">
+      <input type="date" id="jd-search-date-from">
+      <input type="date" id="jd-search-date-to">
+    </div>
+    <div class="hint" id="jd-count" style="margin:10px 0;"></div>
+    <div id="jd-list"></div>
+  </section>
+
+  <!-- 常用伝票 入力 -->
+  <section id="screen-joyo-denpyo-form" class="screen">
+    <button type="button" class="back-link" data-nav="joyo-denpyo-list">常用伝票一覧に戻る</button>
+    <div class="form-title" id="jd-form-title">常用伝票を作成する</div>
+    <input type="hidden" id="jd-edit-id">
+    <label>日付<span class="required-mark">(必須)</span></label>
+    <input type="date" id="jd-date">
+    <label>現場<span class="required-mark">(必須)</span></label>
+    <input type="text" class="dr-site-search" id="jd-site-search" placeholder="現場名で検索...">
+    <select id="jd-site-select"></select>
+    <label>取引先</label>
+    <input type="text" id="jd-partner-name" placeholder="例: 〇〇株式会社">
+    <label>作業内容</label>
+    <textarea id="jd-work-description" placeholder="実施した作業内容を記入してください"></textarea>
+    <label>使用車両(任意)</label>
+    <input type="text" id="jd-vehicle-info">
+    <label>使用資材等(任意)</label>
+    <input type="text" id="jd-materials-info">
+    <label>備考</label>
+    <input type="text" id="jd-notes">
+
+    <div class="section-title">作業員</div>
+    <button type="button" class="secondary" id="jd-prefill-btn">同じ日・同じ現場の日報から取り込む</button>
+    <div id="jd-workers-list"></div>
+    <button type="button" class="secondary" id="jd-add-worker-btn">＋ 作業員を手動で追加</button>
+
+    <div class="error" id="jd-form-error"></div>
+    <button id="jd-submit">この内容で作成する</button>
+    <button type="button" class="secondary" id="jd-save-draft">下書きとして保存する</button>
+  </section>
+
+  <!-- 常用伝票 詳細 -->
+  <section id="screen-joyo-denpyo-detail" class="screen">
+    <button type="button" class="back-link" data-nav="joyo-denpyo-list">常用伝票一覧に戻る</button>
+    <div class="form-title">常用伝票詳細</div>
+    <div class="card">
+      <div class="field-group" id="jd-detail-fields"></div>
+    </div>
+    <div class="section-title">作業員</div>
+    <div id="jd-detail-workers"></div>
+    <div class="card" id="jd-detail-actions"></div>
+  </section>
+
+  <!-- 常用伝票 管理者検索 -->
+  <section id="screen-joyo-denpyo-admin" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">常用伝票管理</div>
+    <div class="search-bar">
+      <span class="icon-slot" data-icon="search"></span>
+      <input type="text" id="jda-search-partner" placeholder="取引先名で検索...">
+    </div>
+    <div class="filter-row" id="jda-status-filter">
+      <button type="button" class="filter-chip active" data-status="">すべての状態</button>
+      <button type="button" class="filter-chip" data-status="draft">下書き</button>
+      <button type="button" class="filter-chip" data-status="pending_confirm">確認待ち</button>
+      <button type="button" class="filter-chip" data-status="confirmed">確認済み</button>
+      <button type="button" class="filter-chip" data-status="completed">完了</button>
+    </div>
+    <div class="hint" id="jda-count" style="margin:10px 0;"></div>
+    <div id="jda-list"></div>
+  </section>
+
+  <!-- 社内イベント 一覧(社員) -->
+  <section id="screen-events" class="screen">
+    <button type="button" class="back-link" data-nav="menu">ホームに戻る</button>
+    <div class="form-title">社内イベント</div>
+    <div id="events-list"></div>
+  </section>
+
+  <!-- 社内イベント 詳細・回答 -->
+  <section id="screen-event-detail" class="screen">
+    <button type="button" class="back-link" data-nav="events">イベント一覧に戻る</button>
+    <div class="card">
+      <div class="form-title" id="event-detail-title"></div>
+      <div class="field-group" id="event-detail-fields"></div>
+    </div>
+    <div class="card">
+      <div class="form-title" style="font-size:15px;">出欠を回答する</div>
+      <div class="filter-row" id="event-response-chips">
+        <button type="button" class="filter-chip" data-response="attending">参加する</button>
+        <button type="button" class="filter-chip" data-response="not_attending">不参加</button>
+        <button type="button" class="filter-chip" data-response="undecided">未定</button>
+      </div>
+      <label>同伴者人数(任意)</label>
+      <input type="number" id="event-companion-count" min="0" value="0">
+      <label>コメント(任意)</label>
+      <input type="text" id="event-comment">
+      <div class="error" id="event-response-error"></div>
+      <button id="event-response-submit">回答する</button>
+      <div class="hint" id="event-response-hint"></div>
+    </div>
+  </section>
+
+  <!-- 社内イベント 管理者一覧 -->
+  <section id="screen-event-admin" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">社内イベント管理</div>
+    <div class="card">
+      <div class="form-title" style="font-size:15px;">新規イベントを作成</div>
+      <label>タイトル<span class="required-mark">(必須)</span></label>
+      <input type="text" id="event-create-title" placeholder="例: 迅翔興業 BBQ">
+      <label>日時<span class="required-mark">(必須)</span></label>
+      <input type="datetime-local" id="event-create-start">
+      <label>終了日時(任意)</label>
+      <input type="datetime-local" id="event-create-end">
+      <label>場所</label>
+      <input type="text" id="event-create-location">
+      <label>内容</label>
+      <textarea id="event-create-description"></textarea>
+      <label>回答期限(任意)</label>
+      <input type="datetime-local" id="event-create-deadline">
+      <div class="error" id="event-create-error"></div>
+      <button id="event-create-submit">作成して告知する</button>
+    </div>
+    <div class="section-title">開催済み・開催予定のイベント</div>
+    <div id="event-admin-list"></div>
+  </section>
+
+  <!-- 社内イベント 回答状況(管理者) -->
+  <section id="screen-event-responses-admin" class="screen">
+    <button type="button" class="back-link" data-nav="event-admin">社内イベント管理に戻る</button>
+    <div class="form-title" id="event-responses-title">回答状況</div>
+    <div class="hint" id="event-responses-summary" style="margin-bottom:12px;"></div>
+    <button type="button" class="secondary" id="event-notify-unanswered-btn">未回答者へ通知する</button>
+    <div id="event-responses-list"></div>
   </section>
 
   <!-- 完了画面 -->

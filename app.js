@@ -91,9 +91,10 @@ const SCREEN_ENTER_HOOKS = {};
 // 元のタブが点灯したままになるようにマッピングする。
 const BOTTOM_NAV_MAP = {
   menu: 'menu',
-  'menu-apply': 'menu-apply', leave: 'menu-apply', 'expense-advance': 'menu-apply', 'expense-company': 'menu-apply',
+  'menu-apply': 'menu-apply', leave: 'menu-apply', expense: 'menu-apply', 'expense-select': 'menu-apply', 'expense-advance': 'menu-apply', 'expense-company': 'menu-apply',
   meeting: 'menu-apply', 'supply-request': 'menu-apply', 'qual-submit': 'menu-apply', 'health-submit': 'menu-apply',
   'entertainment-submit': 'menu-apply', 'daily-report': 'menu-apply',
+  'joyo-denpyo-list': 'menu-apply', 'joyo-denpyo-form': 'menu-apply', 'joyo-denpyo-detail': 'menu-apply',
   announcements: 'announcements',
   history: 'history',
   myinfo: 'myinfo', 'leave-history': 'myinfo', 'my-supply': 'myinfo', 'my-qual': 'myinfo', 'my-health': 'myinfo',
@@ -317,6 +318,21 @@ function enterMenu() {
   loadHomeAnnouncePreview();
   showScreen('menu');
   renderHomeAdminBanner(session);
+  renderHomeDailyReportCard(session);
+  renderHomeEventsArea(session);
+}
+
+// 日報は社員が最も頻繁に使う機能のため、「よく使う機能」の固定最優先カードとする
+// (利用回数による自動並び替えの対象にはしない)。本日提出済みかどうかでラベル・
+// 遷移先の案内文だけを切り替える(画面自体はdaily-reportのまま。既存のloadDailyReportForDateが
+// 提出済み内容を表示するため、そのまま「確認」の役割も果たす)。
+async function renderHomeDailyReportCard(session) {
+  const descEl = document.getElementById('home-daily-report-desc');
+  try {
+    const rows = await rpc('get_my_daily_report_for_date', { p_employee_code: session.employeeCode, p_report_date: todayJST() });
+    const submitted = (rows || []).some((r) => r.report_status === 'submitted' || r.report_status === 'confirmed');
+    descEl.textContent = submitted ? '本日の日報を確認' : '今日の日報を入力';
+  } catch (e) { /* 取得できなくても遷移自体はできるため無視 */ }
 }
 
 // executiveはadmin-dashboard(全管理メニュー)、日報担当(nippo_admin、executiveではない)は
@@ -4417,6 +4433,421 @@ async function doSavePurpose() {
   }
 }
 
+// ---------- 常用伝票 ----------
+
+let jdFilters = { partner: '', dateFrom: '', dateTo: '' };
+let jdWorkerSeq = 0;
+const JD_STATUS_LABEL = { draft: '下書き', pending_confirm: '確認待ち', confirmed: '確認済み', completed: '完了' };
+
+async function loadJoyoDenpyoList() {
+  const session = getSession();
+  const listEl = document.getElementById('jd-list');
+  const countEl = document.getElementById('jd-count');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('search_my_joyo_denpyo', {
+      p_employee_code: session.employeeCode, p_date_from: jdFilters.dateFrom || null, p_date_to: jdFilters.dateTo || null,
+      p_site_id: null, p_partner_name: jdFilters.partner || null,
+    });
+    countEl.textContent = `${rows.length}件`;
+    if (rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する常用伝票はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="history-item" data-id="${r.id}">
+        <div class="row1"><span>${r.site_name}${r.partner_name ? '・' + r.partner_name : ''}</span><span>${r.report_date}</span></div>
+        <div class="row2">作業員${r.worker_count}名</div>
+        <span class="status-badge ${r.status === 'completed' ? 'done' : ''}">${JD_STATUS_LABEL[r.status] || r.status}</span>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.history-item').forEach((el) => {
+      el.addEventListener('click', () => openJoyoDenpyoDetail(el.dataset.id));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+function jdWorkerRowHtml(prefill) {
+  const id = `jdw-${++jdWorkerSeq}`;
+  const type = (prefill && prefill.worker_type) || 'employee';
+  return `
+    <div class="card jd-worker-row" data-row-id="${id}" data-worker-type="${type}" data-employee-id="${(prefill && prefill.employee_id) || ''}" data-subcontractor-worker-id="${(prefill && prefill.subcontractor_worker_id) || ''}">
+      <div class="row1"><span>${type === 'subcontractor' ? '外注' : '社員'}</span>
+        <button type="button" class="remove-item-btn jd-worker-remove">削除</button>
+      </div>
+      <input type="text" class="jd-worker-name" placeholder="作業員名" value="${(prefill && prefill.worker_name) || ''}">
+      <input type="number" class="jd-worker-headcount" placeholder="人工(任意)" step="0.5" min="0" value="${prefill && prefill.headcount != null ? prefill.headcount : ''}">
+    </div>
+  `;
+}
+
+function addJoyoDenpyoWorkerRow(prefill) {
+  const wrap = document.getElementById('jd-workers-list');
+  wrap.insertAdjacentHTML('beforeend', jdWorkerRowHtml(prefill));
+  wireJdWorkerRow(wrap.lastElementChild);
+}
+
+function wireJdWorkerRow(el) {
+  el.querySelector('.jd-worker-remove').addEventListener('click', () => el.remove());
+}
+
+async function doPrefillJoyoDenpyoWorkers() {
+  const session = getSession();
+  const date = document.getElementById('jd-date').value;
+  const siteId = document.getElementById('jd-site-select').value;
+  if (!date || !siteId || siteId === '__new__') { showError('jd-form-error', '先に日付と現場を選択してください。'); return; }
+  hideError('jd-form-error');
+  try {
+    const rows = await rpc('get_daily_report_workers_for_prefill', { p_employee_code: session.employeeCode, p_report_date: date, p_site_id: Number(siteId) });
+    if (rows.length === 0) { window.alert('その日・その現場の日報が見つかりませんでした。'); return; }
+    document.getElementById('jd-workers-list').innerHTML = '';
+    rows.forEach((r) => addJoyoDenpyoWorkerRow(r));
+  } catch (e) {
+    showError('jd-form-error', e.message || '取り込みに失敗しました。');
+  }
+}
+
+function resetJoyoDenpyoForm() {
+  document.getElementById('jd-edit-id').value = '';
+  document.getElementById('jd-form-title').textContent = '常用伝票を作成する';
+  document.getElementById('jd-date').value = todayJST();
+  document.getElementById('jd-site-search').value = '';
+  populateSiteSelect(document.getElementById('jd-site-select'), '');
+  document.getElementById('jd-partner-name').value = '';
+  document.getElementById('jd-work-description').value = '';
+  document.getElementById('jd-vehicle-info').value = '';
+  document.getElementById('jd-materials-info').value = '';
+  document.getElementById('jd-notes').value = '';
+  document.getElementById('jd-workers-list').innerHTML = '';
+  hideError('jd-form-error');
+}
+
+function collectJoyoDenpyoWorkers() {
+  return Array.from(document.querySelectorAll('.jd-worker-row')).map((el) => ({
+    worker_type: el.dataset.workerType || 'employee',
+    employee_id: el.dataset.employeeId || null,
+    subcontractor_worker_id: el.dataset.subcontractorWorkerId || null,
+    worker_name: el.querySelector('.jd-worker-name').value.trim(),
+    headcount: el.querySelector('.jd-worker-headcount').value || null,
+  })).filter((w) => w.worker_name);
+}
+
+async function doSubmitJoyoDenpyo(isDraft) {
+  const session = getSession();
+  const editId = document.getElementById('jd-edit-id').value;
+  const date = document.getElementById('jd-date').value;
+  const siteSelect = document.getElementById('jd-site-select');
+  const siteId = siteSelect.value && siteSelect.value !== '__new__' ? Number(siteSelect.value) : null;
+  const newSiteName = !siteId ? document.getElementById('jd-site-search').value.trim() : null;
+  hideError('jd-form-error');
+  if (!date) { showError('jd-form-error', '日付を入力してください。'); return; }
+  if (!siteId && !newSiteName) { showError('jd-form-error', '現場を選択または入力してください。'); return; }
+
+  const payload = {
+    p_report_date: date, p_site_id: siteId, p_new_site_name: newSiteName,
+    p_partner_name: document.getElementById('jd-partner-name').value.trim() || null,
+    p_work_description: document.getElementById('jd-work-description').value.trim() || null,
+    p_vehicle_info: document.getElementById('jd-vehicle-info').value.trim() || null,
+    p_materials_info: document.getElementById('jd-materials-info').value.trim() || null,
+    p_notes: document.getElementById('jd-notes').value.trim() || null,
+    p_workers: collectJoyoDenpyoWorkers(), p_is_draft: !!isDraft,
+  };
+  try {
+    if (editId) {
+      await rpc('update_joyo_denpyo', { p_actor_employee_code: session.employeeCode, p_id: Number(editId), ...payload });
+    } else {
+      await rpc('create_joyo_denpyo', { p_actor_employee_code: session.employeeCode, ...payload });
+    }
+    showScreen('joyo-denpyo-list');
+    await loadJoyoDenpyoList();
+  } catch (e) {
+    showError('jd-form-error', e.message || '保存に失敗しました。');
+  }
+}
+
+async function openJoyoDenpyoDetail(id) {
+  const session = getSession();
+  showScreen('joyo-denpyo-detail');
+  document.getElementById('jd-detail-fields').innerHTML = '<div class="hint">読み込み中...</div>';
+  document.getElementById('jd-detail-workers').innerHTML = '';
+  document.getElementById('jd-detail-actions').innerHTML = '';
+  try {
+    const rows = await rpc('get_joyo_denpyo_detail', { p_actor_employee_code: session.employeeCode, p_id: Number(id) });
+    const d = rows && rows[0];
+    if (!d) { document.getElementById('jd-detail-fields').innerHTML = '<div class="hint">見つかりませんでした。</div>'; return; }
+    document.getElementById('jd-detail-fields').innerHTML = [
+      ['日付', d.report_date], ['現場', d.site_name], ['取引先', d.partner_name || '-'],
+      ['作業内容', d.work_description || '-'], ['使用車両', d.vehicle_info || '-'], ['使用資材等', d.materials_info || '-'],
+      ['備考', d.notes || '-'], ['状態', JD_STATUS_LABEL[d.status] || d.status],
+      ['作成者', d.created_by_name || '-'], ['作成日時', new Date(d.created_at).toLocaleString('ja-JP')],
+      ['相手先確認', d.customer_confirmation || '-'],
+    ].map(([label, value]) => `<div class="field-row"><span class="field-label">${label}</span><span class="field-value">${value}</span></div>`).join('');
+    const workers = d.workers || [];
+    document.getElementById('jd-detail-workers').innerHTML = workers.length === 0 ? '<div class="hint">作業員未登録</div>' : workers.map((w) => `
+      <div class="history-item"><div class="row1"><span>${w.worker_name}</span><span>${w.headcount != null ? w.headcount + '人工' : ''}</span></div><div class="row2">${w.worker_type === 'subcontractor' ? '外注' : '社員'}</div></div>
+    `).join('');
+
+    const actionsEl = document.getElementById('jd-detail-actions');
+    let html = `<div class="form-title" style="font-size:15px;">操作</div>`;
+    if (d.status === 'draft') html += `<button type="button" class="jd-edit-btn">編集する</button><button type="button" class="secondary jd-status-btn" data-status="pending_confirm">確認待ちにする</button>`;
+    else if (d.status === 'pending_confirm') {
+      html += `<button type="button" class="jd-edit-btn">編集する</button>
+        <label>相手先確認者名(任意)</label><input type="text" id="jd-customer-confirm-name">
+        <button type="button" class="jd-status-btn" data-status="confirmed">確認済みにする</button>`;
+    } else if (d.status === 'confirmed') {
+      html += `<button type="button" class="jd-status-btn" data-status="completed">完了にする</button>`;
+    } else {
+      html += `<div class="hint">完了済みです。</div>`;
+    }
+    actionsEl.innerHTML = html;
+    const editBtn = actionsEl.querySelector('.jd-edit-btn');
+    if (editBtn) editBtn.addEventListener('click', () => openJoyoDenpyoForm(d));
+    actionsEl.querySelectorAll('.jd-status-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const status = btn.dataset.status;
+        const nameInput = document.getElementById('jd-customer-confirm-name');
+        try {
+          await rpc('set_joyo_denpyo_status', { p_actor_employee_code: session.employeeCode, p_id: Number(id), p_status: status, p_customer_confirmation: nameInput ? nameInput.value.trim() || null : null });
+          await openJoyoDenpyoDetail(id);
+        } catch (e) { window.alert(e.message || '更新に失敗しました。'); }
+      });
+    });
+  } catch (e) {
+    document.getElementById('jd-detail-fields').innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+function openJoyoDenpyoForm(existing) {
+  resetJoyoDenpyoForm();
+  if (existing) {
+    document.getElementById('jd-edit-id').value = existing.id;
+    document.getElementById('jd-form-title').textContent = '常用伝票を編集する';
+    document.getElementById('jd-date').value = existing.report_date;
+    document.getElementById('jd-site-search').value = existing.site_name;
+    populateSiteSelect(document.getElementById('jd-site-select'), existing.site_name).then(() => {
+      document.getElementById('jd-site-select').value = String(existing.site_id);
+    });
+    document.getElementById('jd-partner-name').value = existing.partner_name || '';
+    document.getElementById('jd-work-description').value = existing.work_description || '';
+    document.getElementById('jd-vehicle-info').value = existing.vehicle_info || '';
+    document.getElementById('jd-materials-info').value = existing.materials_info || '';
+    document.getElementById('jd-notes').value = existing.notes || '';
+    (existing.workers || []).forEach((w) => addJoyoDenpyoWorkerRow(w));
+  }
+  showScreen('joyo-denpyo-form');
+}
+
+async function loadJoyoDenpyoAdminList() {
+  const session = getSession();
+  const listEl = document.getElementById('jda-list');
+  const countEl = document.getElementById('jda-count');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_search_joyo_denpyo', {
+      p_admin_employee_code: session.employeeCode, p_date_from: null, p_date_to: null, p_site_id: null,
+      p_partner_name: document.getElementById('jda-search-partner').value.trim() || null,
+      p_status: jdaStatusFilter || null,
+    });
+    countEl.textContent = `${rows.length}件`;
+    if (rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する常用伝票はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="history-item" data-id="${r.id}">
+        <div class="row1"><span>${r.site_name}${r.partner_name ? '・' + r.partner_name : ''}</span><span>${r.report_date}</span></div>
+        <div class="row2">作成者: ${r.created_by_name || '-'}・作業員${r.worker_count}名</div>
+        <span class="status-badge ${r.status === 'completed' ? 'done' : ''}">${JD_STATUS_LABEL[r.status] || r.status}</span>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.history-item').forEach((el) => {
+      el.addEventListener('click', () => openJoyoDenpyoDetail(el.dataset.id));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+let jdaStatusFilter = '';
+
+// ---------- 社内イベント ----------
+
+async function renderHomeEventsArea(session) {
+  const area = document.getElementById('home-events-area');
+  try {
+    const rows = await rpc('get_my_company_events', { p_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { area.innerHTML = ''; return; }
+    area.innerHTML = `
+      <div class="section-title">社内イベント</div>
+      <div id="home-events-list"></div>
+    `;
+    document.getElementById('home-events-list').innerHTML = rows.map((r) => `
+      <div class="history-item" data-id="${r.id}">
+        <div class="row1"><span>${r.title}</span><span>${new Date(r.start_at).toLocaleDateString('ja-JP')}</span></div>
+        <div class="row2">${r.my_response ? '回答済み: ' + EVENT_RESPONSE_LABEL[r.my_response] : '回答受付中です'}</div>
+      </div>
+    `).join('');
+    document.getElementById('home-events-list').querySelectorAll('.history-item').forEach((el) => {
+      el.addEventListener('click', () => openEventDetail(el.dataset.id));
+    });
+  } catch (e) { area.innerHTML = ''; }
+}
+
+const EVENT_RESPONSE_LABEL = { attending: '参加する', not_attending: '不参加', undecided: '未定' };
+
+async function loadEventsList() {
+  const session = getSession();
+  const listEl = document.getElementById('events-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_company_events', { p_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">現在回答受付中のイベントはありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="history-item" data-id="${r.id}">
+        <div class="row1"><span>${r.title}</span><span>${new Date(r.start_at).toLocaleString('ja-JP')}</span></div>
+        <div class="row2">${r.location || ''}</div>
+        <span class="status-badge ${r.my_response ? 'done' : ''}">${r.my_response ? EVENT_RESPONSE_LABEL[r.my_response] : '未回答'}</span>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.history-item').forEach((el) => {
+      el.addEventListener('click', () => openEventDetail(el.dataset.id));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+let currentEventDetail = null;
+async function openEventDetail(id) {
+  const session = getSession();
+  showScreen('event-detail');
+  document.getElementById('event-detail-fields').innerHTML = '<div class="hint">読み込み中...</div>';
+  hideError('event-response-error');
+  document.getElementById('event-response-hint').textContent = '';
+  try {
+    const rows = await rpc('get_my_company_events', { p_employee_code: session.employeeCode });
+    const e = (rows || []).find((r) => String(r.id) === String(id));
+    if (!e) { document.getElementById('event-detail-fields').innerHTML = '<div class="hint">見つかりませんでした(回答期限を過ぎている可能性があります)。</div>'; return; }
+    currentEventDetail = e;
+    document.getElementById('event-detail-title').textContent = e.title;
+    document.getElementById('event-detail-fields').innerHTML = [
+      ['日時', new Date(e.start_at).toLocaleString('ja-JP') + (e.end_at ? ' 〜 ' + new Date(e.end_at).toLocaleString('ja-JP') : '')],
+      ['場所', e.location || '-'], ['内容', e.description || '-'],
+      ['回答期限', e.response_deadline ? new Date(e.response_deadline).toLocaleString('ja-JP') : '-'],
+    ].map(([label, value]) => `<div class="field-row"><span class="field-label">${label}</span><span class="field-value">${value}</span></div>`).join('');
+    document.querySelectorAll('#event-response-chips .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.response === e.my_response));
+    document.getElementById('event-companion-count').value = e.my_companion_count || 0;
+    document.getElementById('event-comment').value = e.my_comment || '';
+    const deadlinePassed = e.response_deadline && new Date(e.response_deadline) < new Date();
+    document.getElementById('event-response-submit').disabled = !!deadlinePassed;
+    if (deadlinePassed) document.getElementById('event-response-hint').textContent = '回答期限を過ぎているため回答できません。';
+  } catch (e2) {
+    document.getElementById('event-detail-fields').innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doRespondToEvent() {
+  const session = getSession();
+  hideError('event-response-error');
+  const activeChip = document.querySelector('#event-response-chips .filter-chip.active');
+  if (!activeChip || !currentEventDetail) { showError('event-response-error', '参加・不参加・未定のいずれかを選択してください。'); return; }
+  const btn = document.getElementById('event-response-submit');
+  btn.disabled = true;
+  try {
+    await rpc('respond_to_company_event', {
+      p_employee_code: session.employeeCode, p_event_id: currentEventDetail.id, p_response: activeChip.dataset.response,
+      p_companion_count: Number(document.getElementById('event-companion-count').value) || 0,
+      p_comment: document.getElementById('event-comment').value.trim() || null,
+    });
+    await openEventDetail(currentEventDetail.id);
+    document.getElementById('event-response-hint').textContent = '回答しました。回答期限までは変更できます。';
+  } catch (e) {
+    showError('event-response-error', e.message || '回答に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadEventAdminList() {
+  const session = getSession();
+  const listEl = document.getElementById('event-admin-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_company_events', { p_admin_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">まだイベントがありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="history-item" data-id="${r.id}">
+        <div class="row1"><span>${r.title}</span><span>${new Date(r.start_at).toLocaleString('ja-JP')}</span></div>
+        <div class="row2">参加${r.attending_count}・不参加${r.not_attending_count}・未定${r.undecided_count}・未回答${r.no_response_count}(同伴${r.total_companion_count}名)</div>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.history-item').forEach((el) => {
+      el.addEventListener('click', () => openEventResponsesAdmin(el.dataset.id));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doCreateEvent() {
+  const session = getSession();
+  hideError('event-create-error');
+  const title = document.getElementById('event-create-title').value.trim();
+  const start = document.getElementById('event-create-start').value;
+  if (!title || !start) { showError('event-create-error', 'タイトルと日時を入力してください。'); return; }
+  const btn = document.getElementById('event-create-submit');
+  btn.disabled = true;
+  try {
+    await rpc('admin_create_company_event', {
+      p_admin_employee_code: session.employeeCode, p_title: title,
+      p_description: document.getElementById('event-create-description').value.trim() || null,
+      p_location: document.getElementById('event-create-location').value.trim() || null,
+      p_start_at: new Date(start).toISOString(),
+      p_end_at: document.getElementById('event-create-end').value ? new Date(document.getElementById('event-create-end').value).toISOString() : null,
+      p_response_deadline: document.getElementById('event-create-deadline').value ? new Date(document.getElementById('event-create-deadline').value).toISOString() : null,
+    });
+    ['event-create-title', 'event-create-start', 'event-create-end', 'event-create-location', 'event-create-description', 'event-create-deadline'].forEach((id) => { document.getElementById(id).value = ''; });
+    await loadEventAdminList();
+  } catch (e) {
+    showError('event-create-error', e.message || '作成に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+let currentEventResponsesId = null;
+async function openEventResponsesAdmin(id) {
+  const session = getSession();
+  currentEventResponsesId = id;
+  showScreen('event-responses-admin');
+  const listEl = document.getElementById('event-responses-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_get_company_event_responses', { p_admin_employee_code: session.employeeCode, p_event_id: Number(id) });
+    const counts = { attending: 0, not_attending: 0, undecided: 0, no_response: 0 };
+    rows.forEach((r) => { counts[r.response || 'no_response'] += 1; });
+    document.getElementById('event-responses-summary').textContent = `参加${counts.attending}・不参加${counts.not_attending}・未定${counts.undecided}・未回答${counts.no_response}`;
+    listEl.innerHTML = rows.map((r) => `
+      <div class="history-item">
+        <div class="row1"><span>${r.employee_name}</span><span>${r.response ? EVENT_RESPONSE_LABEL[r.response] : '未回答'}</span></div>
+        <div class="row2">${r.comment || ''}${r.companion_count ? `(同伴${r.companion_count}名)` : ''}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+async function doNotifyUnansweredEvent() {
+  const session = getSession();
+  if (!currentEventResponsesId) return;
+  const btn = document.getElementById('event-notify-unanswered-btn');
+  btn.disabled = true;
+  try {
+    const count = await rpc('admin_notify_unanswered_company_event', { p_admin_employee_code: session.employeeCode, p_event_id: Number(currentEventResponsesId) });
+    window.alert(`${count}名へ通知を送信しました。`);
+  } catch (e) {
+    window.alert(e.message || '通知の送信に失敗しました。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---------- 初期化 ----------
 
 function init() {
@@ -4770,6 +5201,7 @@ function init() {
       const target = el.getAttribute('data-nav');
       if (el.disabled) return;
       if (target === 'menu') { enterMenu(); return; }
+      if (target === 'expense') { showScreen('expense-select'); return; }
       if (target === 'expense-advance') { enterExpenseScreen('employee_advance'); return; }
       if (target === 'expense-company') { enterExpenseScreen('company_expense'); return; }
       showScreen(target);
@@ -4809,7 +5241,6 @@ function init() {
     loadAnnounceAdminEmployeeSelect();
     loadAnnounceAdminList();
   };
-  SCREEN_ENTER_HOOKS['menu-apply'] = () => loadHomeLeaveStats('home-leave-balance', 'home-leave-used');
   SCREEN_ENTER_HOOKS['qual-submit'] = resetQualForm;
   SCREEN_ENTER_HOOKS['my-qual'] = loadMyQualifications;
   SCREEN_ENTER_HOOKS['qual-admin'] = () => {
@@ -4854,6 +5285,68 @@ function init() {
     clearTimeout(siteListSearchTimer);
     siteListSearchTimer = setTimeout(() => { siteListQuery = e.target.value.trim(); loadAllSitesList(); }, 300);
   });
+
+  // ---------- 常用伝票 ----------
+  SCREEN_ENTER_HOOKS['joyo-denpyo-list'] = () => { jdFilters = { partner: '', dateFrom: '', dateTo: '' }; document.getElementById('jd-search-partner').value = ''; document.getElementById('jd-search-date-from').value = ''; document.getElementById('jd-search-date-to').value = ''; loadJoyoDenpyoList(); };
+  SCREEN_ENTER_HOOKS['joyo-denpyo-form'] = () => { if (!document.getElementById('jd-edit-id').value) resetJoyoDenpyoForm(); };
+  SCREEN_ENTER_HOOKS['joyo-denpyo-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    jdaStatusFilter = '';
+    document.querySelectorAll('#jda-status-filter .filter-chip').forEach((c, i) => c.classList.toggle('active', i === 0));
+    document.getElementById('jda-search-partner').value = '';
+    loadJoyoDenpyoAdminList();
+  };
+  document.getElementById('jd-new-btn').addEventListener('click', () => openJoyoDenpyoForm(null));
+  document.getElementById('jd-prefill-btn').addEventListener('click', doPrefillJoyoDenpyoWorkers);
+  document.getElementById('jd-add-worker-btn').addEventListener('click', () => addJoyoDenpyoWorkerRow(null));
+  document.getElementById('jd-submit').addEventListener('click', () => doSubmitJoyoDenpyo(false));
+  document.getElementById('jd-save-draft').addEventListener('click', () => doSubmitJoyoDenpyo(true));
+  let jdSiteSearchTimer = null;
+  document.getElementById('jd-site-search').addEventListener('input', (e) => {
+    clearTimeout(jdSiteSearchTimer);
+    jdSiteSearchTimer = setTimeout(() => populateSiteSelect(document.getElementById('jd-site-select'), e.target.value.trim()), 250);
+  });
+  let jdSearchTimer = null;
+  document.getElementById('jd-search-partner').addEventListener('input', (e) => {
+    clearTimeout(jdSearchTimer);
+    jdSearchTimer = setTimeout(() => { jdFilters.partner = e.target.value.trim(); loadJoyoDenpyoList(); }, 300);
+  });
+  ['jd-search-date-from', 'jd-search-date-to'].forEach((id) => {
+    document.getElementById(id).addEventListener('change', () => {
+      jdFilters.dateFrom = document.getElementById('jd-search-date-from').value;
+      jdFilters.dateTo = document.getElementById('jd-search-date-to').value;
+      loadJoyoDenpyoList();
+    });
+  });
+  document.getElementById('jda-search-partner').addEventListener('input', () => {
+    clearTimeout(jdSearchTimer);
+    jdSearchTimer = setTimeout(() => loadJoyoDenpyoAdminList(), 300);
+  });
+  document.querySelectorAll('#jda-status-filter .filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#jda-status-filter .filter-chip').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      jdaStatusFilter = btn.dataset.status;
+      loadJoyoDenpyoAdminList();
+    });
+  });
+
+  // ---------- 社内イベント ----------
+  SCREEN_ENTER_HOOKS.events = loadEventsList;
+  SCREEN_ENTER_HOOKS['event-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadEventAdminList();
+  };
+  document.querySelectorAll('#event-response-chips .filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#event-response-chips .filter-chip').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+  document.getElementById('event-response-submit').addEventListener('click', doRespondToEvent);
+  document.getElementById('event-create-submit').addEventListener('click', doCreateEvent);
+  document.getElementById('event-notify-unanswered-btn').addEventListener('click', doNotifyUnansweredEvent);
+
   SCREEN_ENTER_HOOKS['license-admin'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadLicenseTypeAdminList();

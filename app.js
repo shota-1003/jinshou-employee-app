@@ -124,6 +124,7 @@ const SCREEN_ENTER_HOOKS = {};
 const BOTTOM_NAV_MAP = {
   menu: 'menu',
   'menu-apply': 'menu-apply', leave: 'menu-apply', expense: 'menu-apply', 'expense-select': 'menu-apply', 'expense-advance': 'menu-apply', 'expense-company': 'menu-apply',
+  'expense-bulk': 'menu-apply',
   meeting: 'menu-apply', 'supply-request': 'menu-apply', 'qual-submit': 'menu-apply', 'health-submit': 'menu-apply',
   'entertainment-submit': 'menu-apply', 'daily-report': 'menu-apply',
   'joyo-denpyo-list': 'menu-apply', 'joyo-denpyo-form': 'menu-apply', 'joyo-denpyo-detail': 'menu-apply', 'joyo-denpyo-print': 'menu-apply',
@@ -1153,6 +1154,401 @@ async function doSubmitExpense() {
     showError('expense-error', '送信に失敗しました。もう一度お試しください。');
   } finally {
     btn.disabled = false;
+  }
+}
+
+// ---------- まとめて精算(複数画像・複数明細を1回で申請) ----------
+// 「かんたん申請」(写真1枚=明細1件)とは別の入口。1枚の写真に複数の領収書が写っていても
+// AI(receipt-ocr-proxy)は既にreceipts[]を配列で返せる設計になっていたため、ここでは
+// 配列の全要素を消費して明細を自動生成する(既存のrunOcrForItemはreceipts[0]しか
+// 使っていなかった、まとめて精算専用にrunBulkOcrForPhotoを新設する)。
+
+let bulkExpenseCategory = 'employee_advance';
+let bulkItems = []; // { id, date, store, amount, tax, confidence, driveFileId, driveFileUrl, fileHash, siteId, siteName, purposeCategory, note }
+let bulkItemSeq = 0;
+let bulkCoverSheet = null; // { driveFileId, driveFileUrl, declaredTotal, applicantName }
+
+async function computeFileHashHex(file) {
+  try {
+    const buf = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    return null; // 対応環境が無くても重複検知が効かないだけで申請自体は続行できる
+  }
+}
+
+// receipts[]配列の全要素を消費する(既存runOcrForItemとの違いはこの1点)。
+async function runBulkOcrForPhoto(file) {
+  try {
+    const base64 = await fileToBase64(file);
+    const session = getSession();
+    const res = await fetch(`${N8N_BASE_URL}/webhook/receipt-ocr-proxy`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeCode: session.employeeCode, mimeType: file.type || 'image/jpeg', base64 }),
+    });
+    const json = await res.json().catch(() => null);
+    return (json && json.receipts) || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function bulkTotalAmount() {
+  return bulkItems.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+}
+
+function updateBulkExpenseTotal() {
+  document.getElementById('expense-bulk-item-count').textContent = String(bulkItems.length);
+  document.getElementById('expense-bulk-total-count').textContent = `${bulkItems.length}件`;
+  document.getElementById('expense-bulk-total-amount').textContent = `${bulkTotalAmount().toLocaleString('ja-JP')}円`;
+  updateBulkReconciliationPreview();
+}
+
+function updateBulkReconciliationPreview() {
+  const box = document.getElementById('expense-bulk-reconciliation-box');
+  if (!bulkCoverSheet || bulkCoverSheet.declaredTotal == null) { box.style.display = 'none'; return; }
+  const sum = bulkTotalAmount();
+  const matched = Math.abs(sum - bulkCoverSheet.declaredTotal) < 1;
+  box.style.display = 'block';
+  box.innerHTML = matched
+    ? `<div class="mini-tag info">${icon('check-circle')}照合OK: 経費精算書の合計(${bulkCoverSheet.declaredTotal.toLocaleString('ja-JP')}円)と明細合計が一致</div>`
+    : `<div class="mini-tag warn">${icon('alert-triangle')}金額不一致・要確認: 経費精算書は${bulkCoverSheet.declaredTotal.toLocaleString('ja-JP')}円、明細合計は${sum.toLocaleString('ja-JP')}円です</div>`;
+  hydrateIcons(box);
+}
+
+const CONFIDENCE_LABEL = { high: '高', medium: '中', low: '低(要確認)' };
+
+function renderBulkItemRow(item) {
+  const tpl = document.getElementById('expense-bulk-item-template');
+  const row = tpl.content.firstElementChild.cloneNode(true);
+  row.dataset.itemId = item.id;
+  row.querySelector('.item-label').textContent = `${item.date || '日付未読取'}・${item.store || '店舗未読取'}`;
+  row.querySelector('.bulk-item-summary').innerHTML = `${item.amount != null ? Number(item.amount).toLocaleString('ja-JP') + '円' : '金額未読取'} ・ 信頼度: ${CONFIDENCE_LABEL[item.confidence] || '不明'}${item.siteName ? `・現場: ${item.siteName}` : ''}${item.purposeCategory ? `・${item.purposeCategory}` : ''}`;
+
+  row.querySelector('.remove-item-btn').addEventListener('click', () => {
+    bulkItems = bulkItems.filter((it) => it.id !== item.id);
+    row.remove();
+    updateBulkExpenseTotal();
+  });
+
+  const editBox = row.querySelector('.bulk-item-edit');
+  row.querySelector('.bulk-item-edit-toggle').addEventListener('click', async () => {
+    const opening = editBox.style.display === 'none';
+    editBox.style.display = opening ? 'block' : 'none';
+    if (!opening) return;
+    const dateEl = row.querySelector('.bi-date'); dateEl.value = item.date || '';
+    const storeEl = row.querySelector('.bi-store'); storeEl.value = item.store || '';
+    const amountEl = row.querySelector('.bi-amount'); amountEl.value = item.amount != null ? item.amount : '';
+    row.querySelector('.bi-confidence').textContent = `AI読み取り信頼度: ${CONFIDENCE_LABEL[item.confidence] || '不明'}`;
+    const siteEl = row.querySelector('.bi-site');
+    await populateSiteSelect(siteEl, '');
+    if (item.siteId) siteEl.value = String(item.siteId);
+    const purposeEl = row.querySelector('.bi-purpose');
+    await populatePurposeSelect(purposeEl, '');
+    if (item.purposeCategory) purposeEl.value = item.purposeCategory;
+    const noteEl = row.querySelector('.bi-note'); noteEl.value = item.note || '';
+
+    const sync = () => {
+      item.date = dateEl.value || null;
+      item.store = storeEl.value.trim() || null;
+      item.amount = amountEl.value ? Number(amountEl.value) : null;
+      item.siteId = siteEl.value && siteEl.value !== '__new__' ? siteEl.value : null;
+      item.siteName = siteEl.value ? (siteEl.selectedOptions[0] && siteEl.selectedOptions[0].dataset.name) || siteEl.selectedOptions[0].textContent : null;
+      item.purposeCategory = purposeEl.value || null;
+      item.note = noteEl.value.trim() || null;
+      row.querySelector('.item-label').textContent = `${item.date || '日付未読取'}・${item.store || '店舗未読取'}`;
+      row.querySelector('.bulk-item-summary').innerHTML = `${item.amount != null ? Number(item.amount).toLocaleString('ja-JP') + '円' : '金額未読取'} ・ 信頼度: ${CONFIDENCE_LABEL[item.confidence] || '不明'}${item.siteName ? `・現場: ${item.siteName}` : ''}${item.purposeCategory ? `・${item.purposeCategory}` : ''}`;
+      updateBulkExpenseTotal();
+    };
+    [dateEl, storeEl, amountEl, siteEl, purposeEl, noteEl].forEach((el) => el.addEventListener('change', sync));
+    amountEl.addEventListener('input', sync);
+  });
+
+  document.getElementById('expense-bulk-item-list').appendChild(row);
+}
+
+async function handleBulkReceiptFiles(files) {
+  const statusEl = document.getElementById('expense-bulk-receipts-status');
+  const list = Array.from(files || []);
+  if (list.length === 0) return;
+  const session = getSession();
+  for (let i = 0; i < list.length; i += 1) {
+    const file = list[i];
+    statusEl.textContent = `読み取り中... (${i + 1}/${list.length}枚目)`;
+    const [uploadResult, receipts, fileHash] = await Promise.all([
+      uploadReceiptPhoto(session.employeeCode, file).catch(() => null),
+      runBulkOcrForPhoto(file),
+      computeFileHashHex(file),
+    ]);
+    if (!uploadResult) { statusEl.textContent = `${i + 1}枚目のアップロードに失敗しました。もう一度お試しください。`; continue; }
+    if (receipts.length === 0) {
+      // 白紙・判読不能等でAIが1件も検出しなかった場合でも、写真自体は明細として
+      // 1件だけ手入力用に追加する(せっかく撮影した写真を無かったことにしない)。
+      bulkItemSeq += 1;
+      const item = {
+        id: 'bulk-item-' + bulkItemSeq, date: null, store: null, amount: null, tax: null, confidence: 'low',
+        driveFileId: uploadResult.driveFileId, driveFileUrl: uploadResult.driveFileUrl, fileHash,
+        siteId: null, siteName: null, purposeCategory: null, note: null,
+      };
+      bulkItems.push(item);
+      renderBulkItemRow(item);
+    } else {
+      receipts.forEach((r) => {
+        bulkItemSeq += 1;
+        const item = {
+          id: 'bulk-item-' + bulkItemSeq, date: r.document_date || null, store: r.counterparty_raw || null,
+          amount: r.total_amount != null ? Number(r.total_amount) : null, tax: r.tax_amount != null ? Number(r.tax_amount) : null,
+          confidence: r.confidence || 'low',
+          driveFileId: uploadResult.driveFileId, driveFileUrl: uploadResult.driveFileUrl, fileHash,
+          siteId: null, siteName: null, purposeCategory: null, note: r.content_description || null,
+        };
+        bulkItems.push(item);
+        renderBulkItemRow(item);
+      });
+    }
+  }
+  statusEl.textContent = `${list.length}枚の写真から${bulkItems.length}件の明細を読み取りました。内容を確認してください。`;
+  updateBulkExpenseTotal();
+}
+
+async function handleBulkCoverSheetFile(file) {
+  const statusEl = document.getElementById('expense-bulk-cover-status');
+  const session = getSession();
+  statusEl.textContent = 'アップロード・読み取り中...';
+  try {
+    const [uploadResult, receipts] = await Promise.all([
+      uploadReceiptPhoto(session.employeeCode, file),
+      runBulkOcrForPhoto(file),
+    ]);
+    const best = receipts[0];
+    bulkCoverSheet = {
+      driveFileId: uploadResult.driveFileId, driveFileUrl: uploadResult.driveFileUrl,
+      declaredTotal: best && best.total_amount != null ? Number(best.total_amount) : null,
+      applicantName: null,
+    };
+    document.getElementById('expense-bulk-cover-label').textContent = file.name || '経費精算書を撮影・選択する';
+    statusEl.textContent = bulkCoverSheet.declaredTotal != null
+      ? `経費精算書の合計金額を${bulkCoverSheet.declaredTotal.toLocaleString('ja-JP')}円と読み取りました(違っていれば下の照合結果を見て明細を確認してください)。`
+      : '経費精算書の合計金額を自動で読み取れませんでした(添付は保存されます、照合は行われません)。';
+    updateBulkReconciliationPreview();
+  } catch (e) {
+    statusEl.textContent = 'アップロードに失敗しました。もう一度お試しください。';
+    bulkCoverSheet = null;
+  }
+}
+
+function resetExpenseBulkForm() {
+  bulkItems = [];
+  bulkItemSeq = 0;
+  bulkCoverSheet = null;
+  document.getElementById('expense-bulk-item-list').innerHTML = '';
+  document.getElementById('expense-bulk-receipts-status').textContent = '';
+  document.getElementById('expense-bulk-cover-status').textContent = '';
+  document.getElementById('expense-bulk-cover-label').textContent = '経費精算書を撮影・選択する';
+  document.getElementById('expense-bulk-reconciliation-box').style.display = 'none';
+  document.getElementById('expense-bulk-month').value = todayJST().slice(0, 7);
+  document.getElementById('expense-bulk-batch-title').value = '';
+  document.getElementById('expense-bulk-note').value = '';
+  updateBulkExpenseTotal();
+}
+
+function enterExpenseBulkScreen(category) {
+  bulkExpenseCategory = category;
+  document.getElementById('expense-bulk-title').textContent = category === 'company_expense' ? 'まとめて精算(会社経費)' : 'まとめて精算(経費立替)';
+  resetExpenseBulkForm();
+  hideError('expense-bulk-error');
+  populateSiteSelect(document.getElementById('expense-bulk-bulk-site'), '');
+  populatePurposeSelect(document.getElementById('expense-bulk-bulk-purpose'), '');
+  showScreen('expense-bulk');
+}
+
+function applyBulkSiteAndPurposeToAll() {
+  const siteEl = document.getElementById('expense-bulk-bulk-site');
+  const purposeEl = document.getElementById('expense-bulk-bulk-purpose');
+  const siteId = siteEl.value && siteEl.value !== '__new__' ? siteEl.value : null;
+  const siteName = siteEl.value ? (siteEl.selectedOptions[0] && siteEl.selectedOptions[0].dataset.name) || siteEl.selectedOptions[0].textContent : null;
+  const purposeCategory = purposeEl.value || null;
+  bulkItems.forEach((item) => {
+    if (siteId) { item.siteId = siteId; item.siteName = siteName; }
+    if (purposeCategory) item.purposeCategory = purposeCategory;
+  });
+  document.getElementById('expense-bulk-item-list').innerHTML = '';
+  bulkItems.forEach(renderBulkItemRow);
+}
+
+async function doSubmitExpenseBulk() {
+  const session = getSession();
+  hideError('expense-bulk-error');
+  const monthValue = document.getElementById('expense-bulk-month').value;
+  if (!monthValue) { showError('expense-bulk-error', '精算対象月を選択してください。'); return; }
+  if (bulkItems.length === 0) { showError('expense-bulk-error', '領収書の写真を追加してください。'); return; }
+  const missing = bulkItems.find((it) => !it.amount || it.amount <= 0 || !it.siteId || !it.purposeCategory);
+  if (missing) { showError('expense-bulk-error', '金額・現場・使用目的が未入力の明細があります。各明細の「明細を編集」から入力してください。'); return; }
+
+  const items = bulkItems.map((it) => ({
+    document_date: it.date, store: it.store || '(店舗不明)', amount: it.amount, tax_amount: it.tax,
+    site_id: it.siteId, site_name: it.siteName, new_site_name: null,
+    business_partner_id: null, new_business_partner_name: null, vendor_name: it.store,
+    purpose_category: it.purposeCategory, purpose: it.note,
+    payment_method: null, content_description: it.note,
+    drive_file_id: it.driveFileId, drive_file_url: it.driveFileUrl,
+    confidence: it.confidence, file_hash: it.fileHash,
+  }));
+  const coverSheet = bulkCoverSheet ? {
+    drive_file_id: bulkCoverSheet.driveFileId, drive_file_url: bulkCoverSheet.driveFileUrl,
+    declared_total: bulkCoverSheet.declaredTotal, applicant_name: bulkCoverSheet.applicantName,
+  } : null;
+
+  const btn = document.getElementById('expense-bulk-submit');
+  btn.disabled = true;
+  try {
+    const result = await rpc('submit_bulk_expense_claim', {
+      p_employee_code: session.employeeCode, p_expense_category: bulkExpenseCategory,
+      p_target_month: `${monthValue}-01`, p_batch_title: document.getElementById('expense-bulk-batch-title').value.trim() || null,
+      p_items: items, p_cover_sheet: coverSheet,
+    });
+    const r = result && result[0];
+    let msg = `まとめて精算を受け付けました(${r ? r.item_count : items.length}件、合計${r ? Number(r.total_amount).toLocaleString('ja-JP') : ''}円)。承認をお待ちください。`;
+    if (r && r.reconciliation_status === 'mismatch') msg += ' ※経費精算書の合計と明細合計が一致していません。管理者が確認します。';
+    if (r && r.duplicate_warning_count > 0) msg += ' ※過去の申請と重複の可能性がある明細があります。管理者が確認します。';
+    showDone(msg, 'menu-apply');
+    resetExpenseBulkForm();
+  } catch (e) {
+    showError('expense-bulk-error', e.message || '送信に失敗しました。もう一度お試しください。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- まとめ精算管理(管理者) ----------
+
+let bulkExpenseAdminFilter = '';
+
+async function loadBulkExpenseAdminList() {
+  const session = getSession();
+  const listEl = document.getElementById('bea-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  const yen = (n) => `${Number(n).toLocaleString('ja-JP')}円`;
+  const STATUS_BADGE = {
+    waiting_approval: '承認待ち', ready_for_review: '確認中', needs_review: '確認中',
+    approved: '承認済み', waiting_payment: '支払待ち', paid: '支払済み', rejected: '却下',
+  };
+  try {
+    const rows = await rpc('admin_get_bulk_expense_requests', { p_admin_employee_code: session.employeeCode, p_status_group: bulkExpenseAdminFilter || null });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当するまとめ精算申請はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="admin-result-item bea-row" data-id="${r.employee_request_id}">
+        <div class="row1"><span>${r.employee_name}(${r.employee_code})</span><span class="status-badge">${STATUS_BADGE[r.status] || r.status}</span></div>
+        <div class="row2">${r.target_month ? new Date(r.target_month).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long' }) : ''} ${r.batch_title || ''}・領収書${r.item_count}件・合計${yen(r.total_amount)}</div>
+        <div class="row2">承認${yen(r.approved_amount)}・却下${yen(r.rejected_amount)}・未処理${yen(r.pending_amount)}</div>
+        ${r.reconciliation_status === 'mismatch' ? `<div class="mini-tag warn">${icon('alert-triangle')}経費精算書と金額不一致</div>` : ''}
+        ${r.duplicate_warning_count > 0 ? `<div class="mini-tag warn">${icon('alert-triangle')}重複の疑いあり(${r.duplicate_warning_count}件)</div>` : ''}
+      </div>
+    `).join('');
+    hydrateIcons(listEl);
+    listEl.querySelectorAll('.bea-row').forEach((el) => {
+      el.addEventListener('click', () => openBulkExpenseDetail(el.dataset.id));
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+let bulkExpenseDetailRequestId = null;
+const bulkExpenseSelectedItems = new Set();
+
+async function openBulkExpenseDetail(requestId) {
+  const session = getSession();
+  bulkExpenseDetailRequestId = requestId;
+  bulkExpenseSelectedItems.clear();
+  showScreen('bulk-expense-detail');
+  document.getElementById('bed-item-list').innerHTML = '<div class="hint">読み込み中...</div>';
+  hideError('bed-error');
+  document.getElementById('bed-reason-box').style.display = 'none';
+  await loadBulkExpenseDetail();
+}
+
+async function loadBulkExpenseDetail() {
+  const session = getSession();
+  const yen = (n) => `${Number(n).toLocaleString('ja-JP')}円`;
+  try {
+    const [items, list] = await Promise.all([
+      rpc('admin_get_bulk_expense_request_items', { p_admin_employee_code: session.employeeCode, p_employee_request_id: Number(bulkExpenseDetailRequestId) }),
+      rpc('admin_get_bulk_expense_requests', { p_admin_employee_code: session.employeeCode, p_status_group: null }),
+    ]);
+    const head = (list || []).find((r) => String(r.employee_request_id) === String(bulkExpenseDetailRequestId));
+    if (head) {
+      document.getElementById('bed-title').textContent = `${head.employee_name}さん ${head.target_month ? new Date(head.target_month).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long' }) : ''} ${head.batch_title || ''}`;
+      document.getElementById('bed-approved').textContent = yen(head.approved_amount);
+      document.getElementById('bed-rejected').textContent = yen(head.rejected_amount);
+      document.getElementById('bed-pending').textContent = yen(head.pending_amount);
+      document.getElementById('bed-total').textContent = yen(head.total_amount);
+      document.getElementById('bed-reconciliation').textContent = head.reconciliation_status === 'matched' ? '経費精算書との照合: OK'
+        : head.reconciliation_status === 'mismatch' ? '経費精算書との照合: 金額不一致・要確認' : '';
+    }
+
+    const STATUS_LABEL_ITEM = { pending: '未処理', approved: '承認済み', rejected: '却下', on_hold: '保留(差戻し)' };
+    document.getElementById('bed-item-list').innerHTML = (items || []).map((it) => `
+      <div class="history-item bed-item-row" data-id="${it.expense_item_id}">
+        <label class="checkbox-row">
+          <input type="checkbox" class="bed-item-check" data-id="${it.expense_item_id}" ${it.approval_status !== 'pending' ? '' : ''}>
+          <span>
+            <div class="row1"><span>${it.document_date || ''}　${it.vendor_name}</span><span>${yen(it.amount)}</span></div>
+            <div class="row2">${it.site_name || '-'}・${it.purpose_category || '-'}・<span class="status-badge ${it.approval_status === 'rejected' ? 'rejected' : (it.approval_status === 'approved' ? 'done' : '')}">${STATUS_LABEL_ITEM[it.approval_status] || it.approval_status}</span></div>
+            ${it.approval_reason ? `<div class="row2">理由: ${it.approval_reason}</div>` : ''}
+            ${it.duplicate_warning ? `<div class="mini-tag warn">${icon('alert-triangle')}重複の疑いあり</div>` : ''}
+          </span>
+        </label>
+        ${it.receipt_url ? `<a href="${it.receipt_url}" target="_blank" rel="noopener" class="secondary" style="display:inline-block;text-decoration:none;text-align:center;">元画像を見る</a>` : ''}
+      </div>
+    `).join('');
+    hydrateIcons(document.getElementById('bed-item-list'));
+    document.querySelectorAll('.bed-item-check').forEach((cb) => {
+      cb.checked = bulkExpenseSelectedItems.has(cb.dataset.id);
+      cb.addEventListener('change', () => {
+        if (cb.checked) bulkExpenseSelectedItems.add(cb.dataset.id); else bulkExpenseSelectedItems.delete(cb.dataset.id);
+        updateBulkExpenseSelectedCount();
+      });
+    });
+    updateBulkExpenseSelectedCount();
+  } catch (e) {
+    document.getElementById('bed-item-list').innerHTML = `<div class="hint">読み込みに失敗しました: ${e.message}</div>`;
+  }
+}
+
+function updateBulkExpenseSelectedCount() {
+  document.getElementById('bed-selected-count').textContent = `${bulkExpenseSelectedItems.size}件選択中`;
+}
+
+let bulkExpensePendingDecision = null;
+
+async function doDecideBulkExpenseSelected(decision) {
+  hideError('bed-error');
+  if (bulkExpenseSelectedItems.size === 0) { showError('bed-error', '明細を選択してください。'); return; }
+  if (decision === 'approved') {
+    await submitBulkExpenseDecision('approved', null);
+    return;
+  }
+  bulkExpensePendingDecision = decision;
+  document.getElementById('bed-reason-box').style.display = 'block';
+  document.getElementById('bed-reason').value = '';
+  document.getElementById('bed-reason').focus();
+}
+
+async function submitBulkExpenseDecision(decision, reason) {
+  const session = getSession();
+  hideError('bed-error');
+  try {
+    await rpc('admin_decide_expense_items', {
+      p_admin_employee_code: session.employeeCode, p_item_ids: Array.from(bulkExpenseSelectedItems).map(Number),
+      p_decision: decision, p_reason: reason,
+    });
+    bulkExpenseSelectedItems.clear();
+    document.getElementById('bed-reason-box').style.display = 'none';
+    await loadBulkExpenseDetail();
+  } catch (e) {
+    showError('bed-error', e.message || '処理に失敗しました。');
   }
 }
 
@@ -6082,6 +6478,8 @@ function init() {
       if (target === 'expense') { showScreen('expense-select'); return; }
       if (target === 'expense-advance') { enterExpenseScreen('employee_advance'); return; }
       if (target === 'expense-company') { enterExpenseScreen('company_expense'); return; }
+      if (target === 'expense-bulk-advance') { enterExpenseBulkScreen('employee_advance'); return; }
+      if (target === 'expense-bulk-company') { enterExpenseBulkScreen('company_expense'); return; }
       showScreen(target);
     });
   });
@@ -6181,12 +6579,54 @@ function init() {
     loadAttendanceFilterOptions();
     loadAttendanceMatrix();
   };
+  SCREEN_ENTER_HOOKS['bulk-expense-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadBulkExpenseAdminList();
+  };
   document.getElementById('la-search').addEventListener('input', () => {
     clearTimeout(employeeSearchTimer);
     employeeSearchTimer = setTimeout(loadLeaveAdmin, 300);
   });
   document.getElementById('leave-grant-submit').addEventListener('click', doSubmitLeaveGrant);
   document.getElementById('ep-submit').addEventListener('click', doSubmitExpensePayment);
+
+  document.getElementById('expense-bulk-receipts-input').addEventListener('change', (e) => {
+    handleBulkReceiptFiles(e.target.files);
+    e.target.value = '';
+  });
+  document.getElementById('expense-bulk-cover-input').addEventListener('change', (e) => {
+    if (e.target.files[0]) handleBulkCoverSheetFile(e.target.files[0]);
+    e.target.value = '';
+  });
+  document.getElementById('expense-bulk-apply-all').addEventListener('click', applyBulkSiteAndPurposeToAll);
+  document.getElementById('expense-bulk-submit').addEventListener('click', doSubmitExpenseBulk);
+  document.getElementById('expense-bulk-bulk-site').addEventListener('input', (e) => populateSiteSelect(e.target, ''));
+
+  document.querySelectorAll('#bea-status-filter .filter-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('#bea-status-filter .filter-chip').forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      bulkExpenseAdminFilter = chip.dataset.status || '';
+      loadBulkExpenseAdminList();
+    });
+  });
+  document.getElementById('bed-select-all').addEventListener('click', () => {
+    document.querySelectorAll('.bed-item-check').forEach((cb) => { cb.checked = true; bulkExpenseSelectedItems.add(cb.dataset.id); });
+    updateBulkExpenseSelectedCount();
+  });
+  document.getElementById('bed-select-none').addEventListener('click', () => {
+    document.querySelectorAll('.bed-item-check').forEach((cb) => { cb.checked = false; });
+    bulkExpenseSelectedItems.clear();
+    updateBulkExpenseSelectedCount();
+  });
+  document.getElementById('bed-approve-selected').addEventListener('click', () => doDecideBulkExpenseSelected('approved'));
+  document.getElementById('bed-reject-selected').addEventListener('click', () => doDecideBulkExpenseSelected('rejected'));
+  document.getElementById('bed-hold-selected').addEventListener('click', () => doDecideBulkExpenseSelected('on_hold'));
+  document.getElementById('bed-confirm-reason').addEventListener('click', () => {
+    const reason = document.getElementById('bed-reason').value.trim();
+    if (!reason) { showError('bed-error', '理由を入力してください。'); return; }
+    submitBulkExpenseDecision(bulkExpensePendingDecision, reason);
+  });
   document.getElementById('employee-detail-grant-leave-btn').addEventListener('click', () => {
     const nameEl = document.getElementById('employee-detail-name');
     openLeaveGrant(currentEmployeeDetailCode, nameEl ? nameEl.textContent : '');

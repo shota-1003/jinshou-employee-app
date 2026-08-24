@@ -660,17 +660,30 @@
   <section id="screen-expense-select" class="screen">
     <button type="button" class="back-link" data-nav="menu-apply">申請一覧に戻る</button>
     <div class="form-title">経費</div>
-    <div class="hint" style="margin-bottom:12px;">申請の種類を選んでください。</div>
-    <div class="home-card-grid">
+    <div class="hint" style="margin-bottom:6px;">領収書1枚だけをその場で申請する場合</div>
+    <div class="home-card-grid" style="margin-bottom:18px;">
       <button type="button" class="home-card" data-nav="expense-advance">
         <span class="icon-slot" data-icon="receipt"></span>
-        <span class="home-card-label">経費立替</span>
-        <span class="home-card-desc">自分が立て替えた経費</span>
+        <span class="home-card-label">かんたん申請</span>
+        <span class="home-card-desc">経費立替(領収書1枚〜)</span>
       </button>
       <button type="button" class="home-card" data-nav="expense-company">
         <span class="icon-slot" data-icon="building"></span>
         <span class="home-card-label">会社経費</span>
         <span class="home-card-desc">会社が支払った経費</span>
+      </button>
+    </div>
+    <div class="hint" style="margin-bottom:6px;">駐車場代など、複数の領収書を月まとめて1回で申請する場合</div>
+    <div class="home-card-grid">
+      <button type="button" class="home-card" data-nav="expense-bulk-advance">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <span class="home-card-label">まとめて精算</span>
+        <span class="home-card-desc">経費立替・複数枚の領収書をまとめて1件で申請</span>
+      </button>
+      <button type="button" class="home-card" data-nav="expense-bulk-company">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <span class="home-card-label">まとめて精算(会社経費)</span>
+        <span class="home-card-desc">会社経費を複数枚まとめて1件で申請</span>
       </button>
     </div>
   </section>
@@ -796,6 +809,88 @@
       </div>
     </template>
     <datalist id="vendor-list"></datalist>
+  </section>
+
+  <!-- まとめて精算(複数画像・複数明細を1回で申請) -->
+  <section id="screen-expense-bulk" class="screen">
+    <button type="button" class="back-link" data-nav="expense-select">経費に戻る</button>
+    <div class="form-title" id="expense-bulk-title">まとめて精算</div>
+    <div class="hint" style="margin: 0 0 14px;">複数の領収書をまとめて撮影・選択すると、AIが1枚ずつ明細に分けて読み取ります。紙の経費精算書があれば一緒に添付すると、AIが合計金額を照合します。</div>
+
+    <label for="expense-bulk-month">精算対象月<span class="required-mark">(必須)</span></label>
+    <input type="month" id="expense-bulk-month">
+    <label for="expense-bulk-batch-title">タイトル</label>
+    <div class="hint-inline">例: 駐車場代・出張経費</div>
+    <input type="text" id="expense-bulk-batch-title" placeholder="例: 8月分 駐車場代">
+
+    <label class="photo-capture-btn" style="margin:14px 0 6px;">
+      <span class="icon-slot" data-icon="camera"></span>
+      <span>領収書をカメラで連続撮影・写真から複数選択</span>
+      <input type="file" accept="image/*" capture="environment" multiple id="expense-bulk-receipts-input">
+    </label>
+    <div class="hint-inline" id="expense-bulk-receipts-status" style="margin-bottom:14px;"></div>
+
+    <div class="card" style="margin-bottom:14px;">
+      <div class="section-title" style="margin-top:0;">現場・使用目的を全明細へ一括設定</div>
+      <div class="hint-inline">1件ずつ設定する手間を減らせます(後から明細ごとに変更も可能)</div>
+      <label>現場</label>
+      <select id="expense-bulk-bulk-site"></select>
+      <label>使用目的</label>
+      <select id="expense-bulk-bulk-purpose"></select>
+      <button type="button" class="secondary" id="expense-bulk-apply-all">この内容を全明細に適用する</button>
+    </div>
+
+    <div class="section-title">AI読取明細 (<span id="expense-bulk-item-count">0</span>件)</div>
+    <div id="expense-bulk-item-list"></div>
+
+    <div class="card total-card">
+      <div class="total-row"><span>明細件数</span><span id="expense-bulk-total-count">0件</span></div>
+      <div class="total-row total-amount"><span>合計金額</span><span id="expense-bulk-total-amount">0円</span></div>
+    </div>
+
+    <div class="section-title">経費精算書(任意)</div>
+    <div class="hint-inline">紙の集計表があれば撮影して添付すると、AIが読み取った合計と明細合計を照合します</div>
+    <label class="photo-capture-btn">
+      <span class="icon-slot" data-icon="camera"></span>
+      <span id="expense-bulk-cover-label">経費精算書を撮影・選択する</span>
+      <input type="file" accept="image/*" id="expense-bulk-cover-input">
+    </label>
+    <div class="hint-inline" id="expense-bulk-cover-status"></div>
+    <div id="expense-bulk-reconciliation-box" style="display:none;" class="card"></div>
+
+    <label>備考</label>
+    <div class="hint-inline">任意</div>
+    <input type="text" id="expense-bulk-note">
+
+    <div class="error" id="expense-bulk-error"></div>
+    <button id="expense-bulk-submit">まとめて経費精算を申請</button>
+
+    <template id="expense-bulk-item-template">
+      <div class="card expense-bulk-item-row">
+        <div class="item-header">
+          <span class="item-label"></span>
+          <button type="button" class="remove-item-btn">削除</button>
+        </div>
+        <div class="row2 bulk-item-summary"></div>
+        <button type="button" class="secondary bulk-item-edit-toggle">明細を編集</button>
+        <div class="bulk-item-edit" style="display:none;">
+          <label>利用日</label>
+          <input type="date" class="bi-date">
+          <label>支払先</label>
+          <input type="text" class="bi-store">
+          <label>金額(円)</label>
+          <input type="number" class="bi-amount" min="1">
+          <label>読み取り信頼度</label>
+          <div class="hint-inline bi-confidence"></div>
+          <label>現場<span class="required-mark">(必須)</span></label>
+          <select class="bi-site"></select>
+          <label>使用目的<span class="required-mark">(必須)</span></label>
+          <select class="bi-purpose"></select>
+          <label>内容・備考</label>
+          <input type="text" class="bi-note">
+        </div>
+      </div>
+    </template>
   </section>
 
   <!-- 会議申請フォーム -->
@@ -1106,6 +1201,11 @@
       <button type="button" class="menu-item" data-nav="admin-all-requests">
         <span class="icon-slot" data-icon="clipboard-list"></span>
         <div class="menu-item-body">申請管理<span class="desc">全申請を種類横断で検索・確認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item" data-nav="bulk-expense-admin">
+        <span class="icon-slot" data-icon="receipt"></span>
+        <div class="menu-item-body">まとめ精算管理<span class="desc">複数領収書の一括申請を明細単位で承認/却下</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
       <button type="button" class="menu-item" data-nav="info-change-admin">
@@ -1561,6 +1661,53 @@
     <input type="text" id="ep-note" placeholder="例: 8月分まとめて振込">
     <div class="error" id="ep-error"></div>
     <button id="ep-submit">支払を登録する</button>
+  </section>
+
+  <!-- まとめ精算管理(管理者、一覧) -->
+  <section id="screen-bulk-expense-admin" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">まとめ精算管理</div>
+    <div class="filter-row" id="bea-status-filter">
+      <button type="button" class="filter-chip active" data-status="">すべて</button>
+      <button type="button" class="filter-chip" data-status="pending">承認待ち</button>
+      <button type="button" class="filter-chip" data-status="approved">承認済み</button>
+      <button type="button" class="filter-chip" data-status="rejected">却下</button>
+    </div>
+    <div id="bea-list"></div>
+  </section>
+
+  <!-- まとめ精算 明細単位の部分承認(管理者、詳細) -->
+  <section id="screen-bulk-expense-detail" class="screen">
+    <button type="button" class="back-link" data-nav="bulk-expense-admin">まとめ精算管理に戻る</button>
+    <div class="form-title" id="bed-title">まとめ精算 詳細</div>
+    <div class="hint" id="bed-reconciliation" style="margin-bottom:10px;"></div>
+    <div class="stat-mini-row">
+      <div class="stat-mini"><span class="stat-mini-label">承認額</span><span class="stat-mini-value" id="bed-approved">-</span></div>
+      <div class="stat-mini"><span class="stat-mini-label">却下額</span><span class="stat-mini-value" id="bed-rejected">-</span></div>
+    </div>
+    <div class="stat-mini-row">
+      <div class="stat-mini"><span class="stat-mini-label">未処理額</span><span class="stat-mini-value" id="bed-pending">-</span></div>
+      <div class="stat-mini"><span class="stat-mini-label">申請総額</span><span class="stat-mini-value" id="bed-total">-</span></div>
+    </div>
+
+    <div class="filter-row" style="margin:10px 0;">
+      <button type="button" class="secondary" id="bed-select-all">全件選択</button>
+      <button type="button" class="secondary" id="bed-select-none">選択解除</button>
+    </div>
+    <div id="bed-item-list"></div>
+
+    <div class="card total-card" style="position:sticky; bottom:8px;">
+      <div class="hint-inline" id="bed-selected-count">0件選択中</div>
+      <button type="button" id="bed-approve-selected">選択した明細を承認</button>
+      <button type="button" class="secondary" id="bed-reject-selected">選択した明細を却下</button>
+      <button type="button" class="secondary" id="bed-hold-selected">選択した明細を保留(差戻し)</button>
+      <div class="bulk-reject-reason" id="bed-reason-box" style="display:none;">
+        <label>却下/保留理由<span class="required-mark">(必須)</span></label>
+        <textarea id="bed-reason"></textarea>
+        <button type="button" id="bed-confirm-reason">確定する</button>
+      </div>
+    </div>
+    <div class="error" id="bed-error"></div>
   </section>
 
   <!-- 却下された申請の詳細(社員本人視点、通知タップ/申請履歴から遷移) -->

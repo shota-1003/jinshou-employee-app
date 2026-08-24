@@ -120,6 +120,8 @@ main {
 .greeting-block { margin-bottom: 20px; }
 .greeting-hi { font-size: 13px; color: var(--text-muted); font-weight: 600; }
 .greeting-name { font-size: 21px; font-weight: 800; color: var(--text); margin-top: 2px; letter-spacing: -.01em; }
+.greeting-sub { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.greeting-sub:empty { display: none; }
 .greeting { font-size: 15px; color: var(--text-muted); margin-bottom: 18px; }
 
 .stat-mini-row { display: flex; gap: 10px; margin-bottom: 20px; }
@@ -859,6 +861,7 @@ button.link {
 .jd-print-workers-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 12.5px; }
 .jd-print-workers-table th, .jd-print-workers-table td { border: 1px solid #999; padding: 6px 9px; text-align: left; }
 .jd-print-workers-table th { background: #f0f0f0; }
+.jd-print-total-row td { background: #f7f7f7; }
 .jd-print-signature { display: flex; gap: 16px; margin-top: 20px; }
 .jd-print-signature-box { flex: 1; border: 1px solid #999; border-radius: 4px; padding: 10px 12px; min-height: 70px; }
 .jd-print-signature-label { font-size: 11px; color: #555; font-weight: 700; margin-bottom: 30px; }

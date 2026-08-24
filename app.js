@@ -368,14 +368,23 @@ async function loadHomeLeaveStats(balanceElId, usedElId) {
 function greetingWord() {
   const h = new Date().getHours();
   if (h < 11) return 'おはようございます';
-  if (h < 18) return 'こんにちは';
-  return 'お疲れさまです';
+  if (h < 17) return 'こんにちは';
+  return 'お疲れ様でした';
+}
+
+// 季節ごとに一言添える(夏は熱中症注意、冬は防寒を気遣う)。該当しない時期は空文字。
+function seasonalMessage() {
+  const m = new Date().getMonth() + 1;
+  if (m >= 6 && m <= 9) return '熱中症に気をつけて、こまめに水分補給をしてください。';
+  if (m === 12 || m === 1 || m === 2) return '寒い日が続きますが、体調に気をつけて頑張ってください。';
+  return '';
 }
 
 function enterMenu() {
   const session = getSession();
   document.getElementById('menu-greeting-hi').textContent = greetingWord();
   document.getElementById('menu-greeting-name').textContent = `${session.employeeName}さん`;
+  document.getElementById('menu-greeting-sub').textContent = seasonalMessage();
   checkAnonUnreadBadge().then(loadTodayList);
   loadAnnounceBanner();
   loadHomeAnnouncePreview();
@@ -4583,10 +4592,21 @@ function addJoyoDenpyoWorkerRow(prefill) {
   const wrap = document.getElementById('jd-workers-list');
   wrap.insertAdjacentHTML('beforeend', jdWorkerRowHtml(prefill));
   wireJdWorkerRow(wrap.lastElementChild);
+  updateJdWorkersSummary();
 }
 
 function wireJdWorkerRow(el) {
-  el.querySelector('.jd-worker-remove').addEventListener('click', () => el.remove());
+  el.querySelector('.jd-worker-remove').addEventListener('click', () => { el.remove(); updateJdWorkersSummary(); });
+}
+
+// 常用伝票は「何名で作業したか」をお客様へ証明する書類のため、人工(payroll用の
+// 端数を含む作業量)とは別に、実際の人数(合計人数)を常に分かるようにしておく。
+function updateJdWorkersSummary() {
+  const rows = Array.from(document.querySelectorAll('#jd-workers-list .jd-worker-row'));
+  const named = rows.filter((el) => el.querySelector('.jd-worker-name').value.trim());
+  const totalHeadcount = named.reduce((sum, el) => sum + (Number(el.querySelector('.jd-worker-headcount').value) || 0), 0);
+  document.getElementById('jd-workers-summary-count').textContent = `${named.length}名`;
+  document.getElementById('jd-workers-summary-headcount').textContent = totalHeadcount.toFixed(1).replace(/\.0$/, '');
 }
 
 async function doPrefillJoyoDenpyoWorkers() {
@@ -4634,6 +4654,7 @@ function resetJoyoDenpyoForm() {
   document.getElementById('jd-materials-info').value = '';
   document.getElementById('jd-notes').value = '';
   document.getElementById('jd-workers-list').innerHTML = '';
+  updateJdWorkersSummary();
   document.getElementById('jd-photo-input').value = '';
   document.getElementById('jd-photo-label').textContent = '写真を選ぶ';
   document.getElementById('jd-photo-status').textContent = '';
@@ -4705,7 +4726,15 @@ async function openJoyoDenpyoDetail(id) {
     ].map(([label, value]) => `<div class="field-row"><span class="field-label">${label}</span><span class="field-value">${value}</span></div>`).join('')
       + (d.photo_drive_file_url ? `<div class="field-row"><span class="field-label">伝票原本の写真</span><span class="field-value"><a class="file-link" href="${d.photo_drive_file_url}" target="_blank" rel="noopener">写真を見る</a></span></div>` : '');
     const workers = d.workers || [];
-    document.getElementById('jd-detail-workers').innerHTML = workers.length === 0 ? '<div class="hint">作業員未登録</div>' : workers.map((w) => `
+    const totalHeadcount = workers.reduce((sum, w) => sum + (Number(w.headcount) || 0), 0);
+    document.getElementById('jd-detail-workers').innerHTML =
+      (workers.length === 0 ? '<div class="hint">作業員未登録</div>' : `
+        <div class="stat-mini-row">
+          <div class="stat-mini"><span class="stat-mini-label">合計人数</span><span class="stat-mini-value">${workers.length}名</span></div>
+          <div class="stat-mini"><span class="stat-mini-label">合計人工</span><span class="stat-mini-value">${totalHeadcount.toFixed(1).replace(/\.0$/, '')}</span></div>
+        </div>
+      `)
+      + workers.map((w) => `
       <div class="history-item"><div class="row1"><span>${w.worker_name}</span><span>${w.headcount != null ? w.headcount + '人工' : ''}</span></div><div class="row2">${w.worker_type === 'subcontractor' ? '外注' : '社員'}</div></div>
     `).join('');
 
@@ -4818,9 +4847,10 @@ function updateJdaBulkBar() {
 
 function jdPrintPageHtml(d) {
   const workers = d.workers || [];
+  const totalHeadcount = workers.reduce((sum, w) => sum + (Number(w.headcount) || 0), 0);
   const workerRows = workers.length === 0 ? '<tr><td colspan="3">-</td></tr>' : workers.map((w) => `
     <tr><td>${w.worker_type === 'subcontractor' ? '外注' : '社員'}</td><td>${w.worker_name}</td><td>${w.headcount != null ? w.headcount + '人工' : '-'}</td></tr>
-  `).join('');
+  `).join('') + `<tr class="jd-print-total-row"><td colspan="2"><strong>合計人数: ${workers.length}名</strong></td><td><strong>合計 ${totalHeadcount.toFixed(1).replace(/\.0$/, '')}人工</strong></td></tr>`;
   return `
     <div class="jd-print-page">
       <div class="jd-print-header">
@@ -5516,6 +5546,9 @@ function init() {
   document.getElementById('jd-prefill-btn').addEventListener('click', doPrefillJoyoDenpyoWorkers);
   document.getElementById('jd-photo-input').addEventListener('change', (e) => handleJdPhotoFile(e.target.files[0]));
   document.getElementById('jd-add-worker-btn').addEventListener('click', () => addJoyoDenpyoWorkerRow(null));
+  document.getElementById('jd-workers-list').addEventListener('input', (e) => {
+    if (e.target.classList.contains('jd-worker-name') || e.target.classList.contains('jd-worker-headcount')) updateJdWorkersSummary();
+  });
   document.getElementById('jd-submit').addEventListener('click', () => doSubmitJoyoDenpyo(false));
   document.getElementById('jd-save-draft').addEventListener('click', () => doSubmitJoyoDenpyo(true));
   let jdSiteSearchTimer = null;

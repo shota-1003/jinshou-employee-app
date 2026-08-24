@@ -75,6 +75,7 @@
     <div class="greeting-block">
       <div class="greeting-hi" id="menu-greeting-hi"></div>
       <div class="greeting-name" id="menu-greeting-name"></div>
+      <div class="greeting-sub" id="menu-greeting-sub"></div>
     </div>
 
     <div id="announce-banner-area"></div>
@@ -109,10 +110,10 @@
         <span class="home-card-label">支給品</span>
         <span class="home-card-desc">制服・安全用品</span>
       </button>
-      <button type="button" class="home-card" data-nav="qual-submit">
-        <span class="icon-slot" data-icon="graduation-cap"></span>
-        <span class="home-card-label">資格</span>
-        <span class="home-card-desc">資格を登録する</span>
+      <button type="button" class="home-card" data-nav="meeting">
+        <span class="icon-slot" data-icon="users-round"></span>
+        <span class="home-card-label">会議</span>
+        <span class="home-card-desc">会議費を申請</span>
       </button>
     </div>
 
@@ -575,7 +576,7 @@
 
   <!-- 自分の健康診断 受診履歴 -->
   <section id="screen-my-health" class="screen">
-    <button type="button" class="back-link" data-nav="my-qual">戻る</button>
+    <button type="button" class="back-link" data-nav="myinfo">自分の情報に戻る</button>
     <div class="form-title">健康診断 受診履歴</div>
     <div id="my-health-list"></div>
   </section>
@@ -871,6 +872,11 @@
       <button type="button" class="menu-item" data-nav="my-qual">
         <span class="icon-slot" data-icon="graduation-cap"></span>
         <div class="menu-item-body">保有資格<span class="desc">資格の登録・期限を確認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item" data-nav="my-health">
+        <span class="icon-slot" data-icon="check-circle"></span>
+        <div class="menu-item-body">健康診断<span class="desc">受診履歴・次回予定を確認</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
       <button type="button" class="menu-item" data-nav="my-change-requests">
@@ -1719,6 +1725,10 @@
     <div class="section-title">作業員</div>
     <button type="button" class="secondary" id="jd-prefill-btn">同じ日・同じ現場の日報から取り込む</button>
     <div id="jd-workers-list"></div>
+    <div class="stat-mini-row">
+      <div class="stat-mini"><span class="stat-mini-label">合計人数</span><span class="stat-mini-value" id="jd-workers-summary-count">0名</span></div>
+      <div class="stat-mini"><span class="stat-mini-label">合計人工</span><span class="stat-mini-value" id="jd-workers-summary-headcount">0</span></div>
+    </div>
     <button type="button" class="secondary" id="jd-add-worker-btn">＋ 作業員を手動で追加</button>
 
     <div class="error" id="jd-form-error"></div>

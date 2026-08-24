@@ -1391,7 +1391,10 @@ async function doSubmitExpenseBulk() {
     site_id: it.siteId, site_name: it.siteName, new_site_name: null,
     business_partner_id: null, new_business_partner_name: null, vendor_name: it.store,
     purpose_category: it.purposeCategory, purpose: it.note,
-    payment_method: null, content_description: it.note,
+    // 「どの元画像のどの領収書から読み取ったか」を明細の記録として恒久的に残す
+    // (元画像自体はdocuments.related_file_id経由で辿れるが、1枚に複数領収書があった
+    // 場合の「何件目か」はここに記録しないと後から追えなくなるため)。
+    payment_method: null, content_description: [it.note, it.photoLabel ? `[${it.photoLabel}]` : null].filter(Boolean).join(' '),
     drive_file_id: it.driveFileId, drive_file_url: it.driveFileUrl,
     confidence: it.confidence, file_hash: it.fileHash,
   }));

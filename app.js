@@ -1218,13 +1218,29 @@ function updateBulkReconciliationPreview() {
 }
 
 const CONFIDENCE_LABEL = { high: '高', medium: '中', low: '低(要確認)' };
+// 高信頼→自動入力のまま(緑チェック)、中信頼→要本人確認(黄色警告)、低信頼→要手動確認(赤警告)。
+// AIが読めなかった/自信が無いものを推測で確定させないという方針を、色で一目で分かるようにする。
+const CONFIDENCE_BADGE = {
+  high: { cls: 'done', icon: 'check-circle', text: '読取OK' },
+  medium: { cls: '', mini: 'warn', icon: 'alert-triangle', text: '要確認' },
+  low: { cls: 'rejected', icon: 'alert-triangle', text: '要手動確認' },
+};
+
+function bulkItemSummaryHtml(item) {
+  const badge = CONFIDENCE_BADGE[item.confidence] || CONFIDENCE_BADGE.low;
+  const badgeHtml = badge.mini
+    ? `<span class="mini-tag ${badge.mini}">${icon(badge.icon)}${badge.text}</span>`
+    : `<span class="status-badge ${badge.cls}">${icon(badge.icon)}${badge.text}</span>`;
+  const traceHtml = item.photoLabel ? `<div class="hint-inline">元画像: ${item.photoLabel}</div>` : '';
+  return `${item.amount != null ? Number(item.amount).toLocaleString('ja-JP') + '円' : '金額未読取'} ${badgeHtml}${item.siteName ? `・現場: ${item.siteName}` : ''}${item.purposeCategory ? `・${item.purposeCategory}` : ''}${traceHtml}`;
+}
 
 function renderBulkItemRow(item) {
   const tpl = document.getElementById('expense-bulk-item-template');
   const row = tpl.content.firstElementChild.cloneNode(true);
   row.dataset.itemId = item.id;
-  row.querySelector('.item-label').textContent = `${item.date || '日付未読取'}・${item.store || '店舗未読取'}`;
-  row.querySelector('.bulk-item-summary').innerHTML = `${item.amount != null ? Number(item.amount).toLocaleString('ja-JP') + '円' : '金額未読取'} ・ 信頼度: ${CONFIDENCE_LABEL[item.confidence] || '不明'}${item.siteName ? `・現場: ${item.siteName}` : ''}${item.purposeCategory ? `・${item.purposeCategory}` : ''}`;
+  row.querySelector('.item-label').textContent = `${item.date || '日付未読取'}・${item.store || '支払先不明'}`;
+  row.querySelector('.bulk-item-summary').innerHTML = bulkItemSummaryHtml(item);
 
   row.querySelector('.remove-item-btn').addEventListener('click', () => {
     bulkItems = bulkItems.filter((it) => it.id !== item.id);
@@ -1257,8 +1273,11 @@ function renderBulkItemRow(item) {
       item.siteName = siteEl.value ? (siteEl.selectedOptions[0] && siteEl.selectedOptions[0].dataset.name) || siteEl.selectedOptions[0].textContent : null;
       item.purposeCategory = purposeEl.value || null;
       item.note = noteEl.value.trim() || null;
-      row.querySelector('.item-label').textContent = `${item.date || '日付未読取'}・${item.store || '店舗未読取'}`;
-      row.querySelector('.bulk-item-summary').innerHTML = `${item.amount != null ? Number(item.amount).toLocaleString('ja-JP') + '円' : '金額未読取'} ・ 信頼度: ${CONFIDENCE_LABEL[item.confidence] || '不明'}${item.siteName ? `・現場: ${item.siteName}` : ''}${item.purposeCategory ? `・${item.purposeCategory}` : ''}`;
+      // 本人が中身を入力・確認した明細は、AIの当初confidenceが低くても「確認済み」として
+      // 緑表示に切り替える(読めなかったものを本人が確認して埋めた、という状態を表す)。
+      if (item.date && item.store && item.amount && item.siteId && item.purposeCategory) item.confidence = 'high';
+      row.querySelector('.item-label').textContent = `${item.date || '日付未読取'}・${item.store || '支払先不明'}`;
+      row.querySelector('.bulk-item-summary').innerHTML = bulkItemSummaryHtml(item);
       updateBulkExpenseTotal();
     };
     [dateEl, storeEl, amountEl, siteEl, purposeEl, noteEl].forEach((el) => el.addEventListener('change', sync));
@@ -1282,6 +1301,10 @@ async function handleBulkReceiptFiles(files) {
       computeFileHashHex(file),
     ]);
     if (!uploadResult) { statusEl.textContent = `${i + 1}枚目のアップロードに失敗しました。もう一度お試しください。`; continue; }
+    // 「どの元画像のどの領収書から読み取ったか」のトレーサビリティ表示用ラベル
+    // (元画像自体はdocuments.related_file_idで常に辿れるが、1枚に複数領収書がある場合の
+    // 「その写真の何件目か」も本人・管理者が分かるよう画面上に出す)。
+    const photoLabel = `写真${i + 1}枚目`;
     if (receipts.length === 0) {
       // 白紙・判読不能等でAIが1件も検出しなかった場合でも、写真自体は明細として
       // 1件だけ手入力用に追加する(せっかく撮影した写真を無かったことにしない)。
@@ -1289,19 +1312,20 @@ async function handleBulkReceiptFiles(files) {
       const item = {
         id: 'bulk-item-' + bulkItemSeq, date: null, store: null, amount: null, tax: null, confidence: 'low',
         driveFileId: uploadResult.driveFileId, driveFileUrl: uploadResult.driveFileUrl, fileHash,
-        siteId: null, siteName: null, purposeCategory: null, note: null,
+        siteId: null, siteName: null, purposeCategory: null, note: null, photoLabel: `${photoLabel}(自動検出なし・要手動入力)`,
       };
       bulkItems.push(item);
       renderBulkItemRow(item);
     } else {
-      receipts.forEach((r) => {
+      receipts.forEach((r, ri) => {
         bulkItemSeq += 1;
+        const label = receipts.length > 1 ? `${photoLabel}の${ri + 1}件目(全${receipts.length}件中)` : photoLabel;
         const item = {
           id: 'bulk-item-' + bulkItemSeq, date: r.document_date || null, store: r.counterparty_raw || null,
           amount: r.total_amount != null ? Number(r.total_amount) : null, tax: r.tax_amount != null ? Number(r.tax_amount) : null,
           confidence: r.confidence || 'low',
           driveFileId: uploadResult.driveFileId, driveFileUrl: uploadResult.driveFileUrl, fileHash,
-          siteId: null, siteName: null, purposeCategory: null, note: r.content_description || null,
+          siteId: null, siteName: null, purposeCategory: null, note: r.content_description || null, photoLabel: label,
         };
         bulkItems.push(item);
         renderBulkItemRow(item);
@@ -1312,25 +1336,49 @@ async function handleBulkReceiptFiles(files) {
   updateBulkExpenseTotal();
 }
 
+// 経費精算書(紙の集計表)専用のAI読取。領収書用エンドポイント(receipt-ocr-proxy)とは
+// 別のn8nワークフロー(expense-cover-ocr-proxy、scripts/n8n-build-expense-cover-ocr.js)を
+// 呼び、申請者・申請日・明細・合計金額を構造化して受け取る。
+async function runCoverSheetOcr(file) {
+  const base64 = await fileToBase64(file);
+  const session = getSession();
+  const res = await fetch(`${N8N_BASE_URL}/webhook/expense-cover-ocr-proxy`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ employeeCode: session.employeeCode, mimeType: file.type || 'image/jpeg', base64 }),
+  });
+  const json = await res.json().catch(() => null);
+  return json || { is_cover_sheet: false };
+}
+
 async function handleBulkCoverSheetFile(file) {
   const statusEl = document.getElementById('expense-bulk-cover-status');
   const session = getSession();
   statusEl.textContent = 'アップロード・読み取り中...';
   try {
-    const [uploadResult, receipts] = await Promise.all([
+    const [uploadResult, extracted] = await Promise.all([
       uploadReceiptPhoto(session.employeeCode, file),
-      runBulkOcrForPhoto(file),
+      runCoverSheetOcr(file),
     ]);
-    const best = receipts[0];
     bulkCoverSheet = {
       driveFileId: uploadResult.driveFileId, driveFileUrl: uploadResult.driveFileUrl,
-      declaredTotal: best && best.total_amount != null ? Number(best.total_amount) : null,
-      applicantName: null,
+      declaredTotal: extracted.declared_total != null ? Number(extracted.declared_total) : null,
+      applicantName: extracted.applicant_name || null,
+      submissionDate: extracted.submission_date || null,
+      lineItems: extracted.line_items || [],
+      confidence: extracted.confidence || 'low',
     };
     document.getElementById('expense-bulk-cover-label').textContent = file.name || '経費精算書を撮影・選択する';
-    statusEl.textContent = bulkCoverSheet.declaredTotal != null
-      ? `経費精算書の合計金額を${bulkCoverSheet.declaredTotal.toLocaleString('ja-JP')}円と読み取りました(違っていれば下の照合結果を見て明細を確認してください)。`
-      : '経費精算書の合計金額を自動で読み取れませんでした(添付は保存されます、照合は行われません)。';
+    if (!extracted.is_cover_sheet) {
+      statusEl.textContent = '経費精算書として認識できませんでした(添付は保存されます。手動で照合してください)。';
+    } else {
+      const parts = [];
+      if (bulkCoverSheet.applicantName) parts.push(`申請者: ${bulkCoverSheet.applicantName}`);
+      if (bulkCoverSheet.submissionDate) parts.push(`申請日: ${bulkCoverSheet.submissionDate}`);
+      if (bulkCoverSheet.declaredTotal != null) parts.push(`合計: ${bulkCoverSheet.declaredTotal.toLocaleString('ja-JP')}円`);
+      statusEl.textContent = parts.length > 0
+        ? `経費精算書を読み取りました(${parts.join('・')})。内容を確認してください。`
+        : '経費精算書らしき書類ですが、内容をうまく読み取れませんでした。';
+    }
     updateBulkReconciliationPreview();
   } catch (e) {
     statusEl.textContent = 'アップロードに失敗しました。もう一度お試しください。';

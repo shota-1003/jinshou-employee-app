@@ -1750,6 +1750,7 @@ async function openMyRequestDetail(requestId, returnTo) {
         </div>
         ${r.target_date ? `<div class="row2">${r.target_date}</div>` : ''}
         ${r.note ? `<div class="row2">備考: ${r.note}</div>` : ''}
+        ${r.item_approval_status === 'rejected' && r.item_rejection_reason ? `<div class="row2">却下理由: ${r.item_rejection_reason}</div>` : ''}
         ${r.receipt_url ? `<div class="row2"><img class="mrd-receipt-thumb" src="${r.receipt_url}" alt="領収書" data-zoom="${r.receipt_url}"></div>` : ''}
       </div>
     `).join('');

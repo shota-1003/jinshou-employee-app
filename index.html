@@ -823,11 +823,19 @@
     <div class="hint-inline">例: 駐車場代・出張経費</div>
     <input type="text" id="expense-bulk-batch-title" placeholder="例: 8月分 駐車場代">
 
-    <label class="photo-capture-btn" style="margin:14px 0 6px;">
-      <span class="icon-slot" data-icon="camera"></span>
-      <span>領収書をカメラで連続撮影・写真から複数選択</span>
-      <input type="file" accept="image/*" capture="environment" multiple id="expense-bulk-receipts-input">
-    </label>
+    <div class="bulk-receipt-add-row" style="display:flex; gap:10px; margin:14px 0 6px;">
+      <label class="photo-capture-btn" style="flex:1;">
+        <span class="icon-slot" data-icon="camera"></span>
+        <span>カメラで撮る</span>
+        <input type="file" accept="image/*" capture="environment" id="expense-bulk-camera-input">
+      </label>
+      <label class="photo-capture-btn" style="flex:1;">
+        <span class="icon-slot" data-icon="receipt"></span>
+        <span>写真から選ぶ(複数可)</span>
+        <input type="file" accept="image/*" multiple id="expense-bulk-receipts-input">
+      </label>
+    </div>
+    <div id="expense-bulk-receipts-progress"></div>
     <div class="hint-inline" id="expense-bulk-receipts-status" style="margin-bottom:14px;"></div>
 
     <div class="card" style="margin-bottom:14px;">

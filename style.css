@@ -389,6 +389,16 @@ button.link {
 .mrd-item-approval-badge.rejected { background: var(--danger-bg); color: var(--danger); }
 .mrd-item-approval-badge.pending { background: var(--info-bg); color: var(--primary); }
 
+.bulk-photo-progress-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 12px; border-radius: var(--radius-sm); background: var(--card-bg); border: 1px solid var(--border);
+  margin-bottom: 6px; font-size: 12.5px;
+}
+.bulk-photo-progress-row.done { color: var(--success); border-color: var(--success-bg); }
+.bulk-photo-progress-row.failed { color: var(--danger); border-color: var(--danger-bg); background: var(--danger-bg); }
+.bulk-photo-progress-row.processing { color: var(--primary); }
+.bulk-photo-retry-btn { flex: none; padding: 4px 10px; font-size: 11.5px; }
+
 .mrd-payment-card { padding: 16px 18px; border-radius: var(--radius-md); background: var(--card-bg); border: 1px solid var(--border); margin: 12px 0; }
 .mrd-payment-row { display: flex; justify-content: space-between; font-size: 13.5px; padding: 4px 0; }
 .mrd-payment-row.emphasis { font-weight: 700; font-size: 15px; }

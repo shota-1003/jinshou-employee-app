@@ -1186,19 +1186,18 @@ async function computeFileHashHex(file) {
 }
 
 // receipts[]配列の全要素を消費する(既存runOcrForItemとの違いはこの1点)。
+// 通信・サーバーエラーは呼び出し元で「失敗として再試行できる」よう例外を投げる。
+// 「AIが実際に解析して0件だった(白紙等)」場合だけ空配列を返す。
 async function runBulkOcrForPhoto(file) {
-  try {
-    const base64 = await fileToBase64(file);
-    const session = getSession();
-    const res = await fetch(`${N8N_BASE_URL}/webhook/receipt-ocr-proxy`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employeeCode: session.employeeCode, mimeType: file.type || 'image/jpeg', base64 }),
-    });
-    const json = await res.json().catch(() => null);
-    return (json && json.receipts) || [];
-  } catch (e) {
-    return [];
-  }
+  const base64 = await fileToBase64(file);
+  const session = getSession();
+  const res = await fetch(`${N8N_BASE_URL}/webhook/receipt-ocr-proxy`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ employeeCode: session.employeeCode, mimeType: file.type || 'image/jpeg', base64 }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json) throw new Error('領収書の解析に失敗しました');
+  return json.receipts || [];
 }
 
 function bulkTotalAmount() {
@@ -1246,6 +1245,7 @@ function renderBulkItemRow(item) {
   const tpl = document.getElementById('expense-bulk-item-template');
   const row = tpl.content.firstElementChild.cloneNode(true);
   row.dataset.itemId = item.id;
+  if (item.photoQueueId) row.dataset.photoQueueId = item.photoQueueId;
   row.querySelector('.item-label').textContent = `${item.date || '日付未読取'}・${item.store || '支払先不明'}`;
   row.querySelector('.bulk-item-summary').innerHTML = bulkItemSummaryHtml(item);
 
@@ -1294,53 +1294,118 @@ function renderBulkItemRow(item) {
   document.getElementById('expense-bulk-item-list').appendChild(row);
 }
 
-async function handleBulkReceiptFiles(files) {
+// 写真ごとの処理状況(待機中/解析中/完了/失敗)を保持する。1枚ずつ独立して失敗・再試行
+// できるようにするため、選択されたFileListそのものではなくこのキューで状態管理する
+// (失敗した1枚だけを後から再試行できるように、Fileオブジェクト自体をここに保持する)。
+let bulkPhotoQueue = [];
+let bulkPhotoSeq = 0;
+
+function renderBulkPhotoProgress() {
+  const el = document.getElementById('expense-bulk-receipts-progress');
+  if (bulkPhotoQueue.length === 0) { el.innerHTML = ''; return; }
+  const STATUS_LABEL2 = { pending: '待機中', processing: '解析中...', done: '完了', failed: '失敗' };
+  el.innerHTML = bulkPhotoQueue.map((p) => `
+    <div class="bulk-photo-progress-row ${p.status}">
+      <span>${p.photoLabel}: ${STATUS_LABEL2[p.status]}${p.status === 'failed' ? `(${p.error || ''})` : ''}</span>
+      ${p.status === 'failed' ? `<button type="button" class="secondary bulk-photo-retry-btn" data-id="${p.id}">再試行</button>` : ''}
+    </div>
+  `).join('');
+  el.querySelectorAll('.bulk-photo-retry-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const entry = bulkPhotoQueue.find((p) => p.id === btn.dataset.id);
+      if (entry) processBulkPhoto(entry);
+    });
+  });
+  updateBulkReceiptsSummary();
+}
+
+function updateBulkReceiptsSummary() {
   const statusEl = document.getElementById('expense-bulk-receipts-status');
-  const list = Array.from(files || []);
-  if (list.length === 0) return;
-  const session = getSession();
-  for (let i = 0; i < list.length; i += 1) {
-    const file = list[i];
-    statusEl.textContent = `読み取り中... (${i + 1}/${list.length}枚目)`;
-    const [uploadResult, receipts, fileHash] = await Promise.all([
-      uploadReceiptPhoto(session.employeeCode, file).catch(() => null),
-      runBulkOcrForPhoto(file),
-      computeFileHashHex(file),
-    ]);
-    if (!uploadResult) { statusEl.textContent = `${i + 1}枚目のアップロードに失敗しました。もう一度お試しください。`; continue; }
-    // 「どの元画像のどの領収書から読み取ったか」のトレーサビリティ表示用ラベル
-    // (元画像自体はdocuments.related_file_idで常に辿れるが、1枚に複数領収書がある場合の
-    // 「その写真の何件目か」も本人・管理者が分かるよう画面上に出す)。
-    const photoLabel = `写真${i + 1}枚目`;
-    if (receipts.length === 0) {
-      // 白紙・判読不能等でAIが1件も検出しなかった場合でも、写真自体は明細として
-      // 1件だけ手入力用に追加する(せっかく撮影した写真を無かったことにしない)。
+  const total = bulkPhotoQueue.length;
+  const done = bulkPhotoQueue.filter((p) => p.status === 'done').length;
+  const failed = bulkPhotoQueue.filter((p) => p.status === 'failed').length;
+  const stillWorking = bulkPhotoQueue.some((p) => p.status === 'pending' || p.status === 'processing');
+  if (stillWorking) {
+    statusEl.textContent = `解析中... (${done + failed}/${total}枚)`;
+    return;
+  }
+  const highCount = bulkItems.filter((it) => it.confidence === 'high').length;
+  const needsReviewCount = bulkItems.length - highCount;
+  let msg = `${total}枚の写真から領収書${bulkItems.length}件を検出(正常${highCount}件・要確認${needsReviewCount}件)。合計${bulkTotalAmount().toLocaleString('ja-JP')}円`;
+  if (failed > 0) msg += `。${failed}枚の解析に失敗しました。「再試行」を押してください`;
+  statusEl.textContent = msg;
+}
+
+function addBulkItemsFromPhoto(entry, uploadResult, receipts, fileHash) {
+  if (receipts.length === 0) {
+    // 白紙・判読不能等でAIが1件も検出しなかった場合でも、写真自体は明細として
+    // 1件だけ手入力用に追加する(せっかく撮影した写真を無かったことにしない)。
+    bulkItemSeq += 1;
+    const item = {
+      id: 'bulk-item-' + bulkItemSeq, date: null, store: null, amount: null, tax: null, confidence: 'low',
+      driveFileId: uploadResult.driveFileId, driveFileUrl: uploadResult.driveFileUrl, fileHash,
+      siteId: null, siteName: null, purposeCategory: null, note: null, photoLabel: `${entry.photoLabel}(自動検出なし・要手動入力)`,
+      photoQueueId: entry.id,
+    };
+    bulkItems.push(item);
+    renderBulkItemRow(item);
+  } else {
+    receipts.forEach((r, ri) => {
       bulkItemSeq += 1;
+      const label = receipts.length > 1 ? `${entry.photoLabel}の${ri + 1}件目(全${receipts.length}件中)` : entry.photoLabel;
       const item = {
-        id: 'bulk-item-' + bulkItemSeq, date: null, store: null, amount: null, tax: null, confidence: 'low',
+        id: 'bulk-item-' + bulkItemSeq, date: r.document_date || null, store: r.counterparty_raw || null,
+        amount: r.total_amount != null ? Number(r.total_amount) : null, tax: r.tax_amount != null ? Number(r.tax_amount) : null,
+        confidence: r.confidence || 'low',
         driveFileId: uploadResult.driveFileId, driveFileUrl: uploadResult.driveFileUrl, fileHash,
-        siteId: null, siteName: null, purposeCategory: null, note: null, photoLabel: `${photoLabel}(自動検出なし・要手動入力)`,
+        siteId: null, siteName: null, purposeCategory: null, note: r.content_description || null, photoLabel: label,
+        photoQueueId: entry.id,
       };
       bulkItems.push(item);
       renderBulkItemRow(item);
-    } else {
-      receipts.forEach((r, ri) => {
-        bulkItemSeq += 1;
-        const label = receipts.length > 1 ? `${photoLabel}の${ri + 1}件目(全${receipts.length}件中)` : photoLabel;
-        const item = {
-          id: 'bulk-item-' + bulkItemSeq, date: r.document_date || null, store: r.counterparty_raw || null,
-          amount: r.total_amount != null ? Number(r.total_amount) : null, tax: r.tax_amount != null ? Number(r.tax_amount) : null,
-          confidence: r.confidence || 'low',
-          driveFileId: uploadResult.driveFileId, driveFileUrl: uploadResult.driveFileUrl, fileHash,
-          siteId: null, siteName: null, purposeCategory: null, note: r.content_description || null, photoLabel: label,
-        };
-        bulkItems.push(item);
-        renderBulkItemRow(item);
-      });
-    }
+    });
   }
-  statusEl.textContent = `${list.length}枚の写真から${bulkItems.length}件の明細を読み取りました。内容を確認してください。`;
   updateBulkExpenseTotal();
+}
+
+async function processBulkPhoto(entry) {
+  // 同じ写真を「編集して差し替えた」明細が残らないよう、再試行時は前回分の明細を消す。
+  bulkItems = bulkItems.filter((it) => it.photoQueueId !== entry.id);
+  document.querySelectorAll(`.expense-bulk-item-row[data-photo-queue-id="${entry.id}"]`).forEach((el) => el.remove());
+  entry.status = 'processing';
+  entry.error = null;
+  renderBulkPhotoProgress();
+  const session = getSession();
+  try {
+    const [uploadResult, receipts, fileHash] = await Promise.all([
+      uploadReceiptPhoto(session.employeeCode, entry.file),
+      runBulkOcrForPhoto(entry.file),
+      computeFileHashHex(entry.file),
+    ]);
+    entry.status = 'done';
+    addBulkItemsFromPhoto(entry, uploadResult, receipts, fileHash);
+  } catch (e) {
+    entry.status = 'failed';
+    entry.error = e.message || 'アップロードに失敗しました';
+  }
+  renderBulkPhotoProgress();
+}
+
+async function handleBulkReceiptFiles(files) {
+  const list = Array.from(files || []);
+  if (list.length === 0) return;
+  const startIndex = bulkPhotoQueue.length;
+  const newEntries = list.map((file, i) => {
+    bulkPhotoSeq += 1;
+    return { id: 'bulk-photo-' + bulkPhotoSeq, file, photoLabel: `写真${startIndex + i + 1}枚目`, status: 'pending', error: null };
+  });
+  bulkPhotoQueue = bulkPhotoQueue.concat(newEntries);
+  renderBulkPhotoProgress();
+  // 端末・回線への負荷を抑えるため、写真は同時並列ではなく1枚ずつ順番に処理する
+  // (30枚選んでも一気に30リクエストを投げない)。
+  for (const entry of newEntries) {
+    await processBulkPhoto(entry);
+  }
 }
 
 // 経費精算書(紙の集計表)専用のAI読取。領収書用エンドポイント(receipt-ocr-proxy)とは
@@ -1396,8 +1461,11 @@ async function handleBulkCoverSheetFile(file) {
 function resetExpenseBulkForm() {
   bulkItems = [];
   bulkItemSeq = 0;
+  bulkPhotoQueue = [];
+  bulkPhotoSeq = 0;
   bulkCoverSheet = null;
   document.getElementById('expense-bulk-item-list').innerHTML = '';
+  document.getElementById('expense-bulk-receipts-progress').innerHTML = '';
   document.getElementById('expense-bulk-receipts-status').textContent = '';
   document.getElementById('expense-bulk-cover-status').textContent = '';
   document.getElementById('expense-bulk-cover-label').textContent = '経費精算書を撮影・選択する';
@@ -1437,6 +1505,12 @@ async function doSubmitExpenseBulk() {
   hideError('expense-bulk-error');
   const monthValue = document.getElementById('expense-bulk-month').value;
   if (!monthValue) { showError('expense-bulk-error', '精算対象月を選択してください。'); return; }
+  if (bulkPhotoQueue.some((p) => p.status === 'processing' || p.status === 'pending')) {
+    showError('expense-bulk-error', '写真の解析が完了するまでお待ちください。'); return;
+  }
+  if (bulkPhotoQueue.some((p) => p.status === 'failed')) {
+    showError('expense-bulk-error', '解析に失敗した写真があります。「再試行」するか、不要な写真は明細ごと削除してください。'); return;
+  }
   if (bulkItems.length === 0) { showError('expense-bulk-error', '領収書の写真を追加してください。'); return; }
   const missing = bulkItems.find((it) => !it.amount || it.amount <= 0 || !it.siteId || !it.purposeCategory);
   if (missing) { showError('expense-bulk-error', '金額・現場・使用目的が未入力の明細があります。各明細の「明細を編集」から入力してください。'); return; }
@@ -6741,6 +6815,10 @@ function init() {
   document.getElementById('ep-submit').addEventListener('click', doSubmitExpensePayment);
 
   document.getElementById('expense-bulk-receipts-input').addEventListener('change', (e) => {
+    handleBulkReceiptFiles(e.target.files);
+    e.target.value = '';
+  });
+  document.getElementById('expense-bulk-camera-input').addEventListener('change', (e) => {
     handleBulkReceiptFiles(e.target.files);
     e.target.value = '';
   });

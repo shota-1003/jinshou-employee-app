@@ -367,6 +367,33 @@ button.link {
 .status-badge.done, .history-item .status-badge.done { background: var(--success-bg); color: var(--success); }
 .status-badge.rejected, .history-item .status-badge.rejected { background: var(--danger-bg); color: var(--danger); }
 
+/* 領収書・経費精算書の画像タップ拡大表示(申請詳細画面、社員本人・管理者共通) */
+.mrd-receipt-thumb {
+  width: 72px; height: 72px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  cursor: zoom-in; margin-top: 8px; margin-right: 6px; display: inline-block; vertical-align: top;
+}
+.image-zoom-overlay {
+  position: fixed; inset: 0; background: rgba(10, 12, 18, .92); z-index: 200;
+  display: none; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out;
+}
+.image-zoom-overlay.open { display: flex; }
+.image-zoom-overlay img { max-width: 100%; max-height: 100%; border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); }
+.image-zoom-overlay .image-zoom-close {
+  position: absolute; top: 16px; right: 16px; width: 40px; height: 40px; border-radius: 50%;
+  background: rgba(255,255,255,.15); color: #fff; display: flex; align-items: center; justify-content: center; border: none;
+}
+
+.mrd-item-card { padding: 14px 16px; border-radius: var(--radius-md); background: var(--card-bg); border: 1px solid var(--border); margin-bottom: 10px; }
+.mrd-item-approval-badge { display: inline-flex; align-items: center; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: var(--radius-pill); margin-left: 6px; }
+.mrd-item-approval-badge.approved { background: var(--success-bg); color: var(--success); }
+.mrd-item-approval-badge.rejected { background: var(--danger-bg); color: var(--danger); }
+.mrd-item-approval-badge.pending { background: var(--info-bg); color: var(--primary); }
+
+.mrd-payment-card { padding: 16px 18px; border-radius: var(--radius-md); background: var(--card-bg); border: 1px solid var(--border); margin: 12px 0; }
+.mrd-payment-row { display: flex; justify-content: space-between; font-size: 13.5px; padding: 4px 0; }
+.mrd-payment-row.emphasis { font-weight: 700; font-size: 15px; }
+.mrd-receive-btn { margin-top: 10px; }
+
 .summary-card { padding: 18px 20px; }
 .summary-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; font-size: 14px; color: var(--text-muted); }
 .summary-row .summary-value { font-size: 18px; font-weight: 800; color: var(--text); }

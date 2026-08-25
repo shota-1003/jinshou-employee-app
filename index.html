@@ -1597,7 +1597,7 @@
       <table class="areq-table">
         <thead>
           <tr>
-            <th>社員番号</th><th>氏名</th><th>申請総額</th><th>承認済み</th><th>却下</th><th>会社経費</th><th>支払済</th><th>支払待ち</th>
+            <th>社員番号</th><th>氏名</th><th>申請総額</th><th>承認済み</th><th>却下</th><th>会社経費</th><th>支払済</th><th>支払待ち</th><th>受取確認待ち</th>
             <th>有給付与</th><th>有給使用</th><th>有給残</th><th>その他申請</th>
           </tr>
         </thead>
@@ -1710,18 +1710,25 @@
     <div class="error" id="bed-error"></div>
   </section>
 
-  <!-- 却下された申請の詳細(社員本人視点、通知タップ/申請履歴から遷移) -->
+  <!-- 申請の詳細(社員本人視点、通知タップ/お知らせ/申請履歴から遷移。全ステータス共通) -->
   <section id="screen-my-request-detail" class="screen">
-    <button type="button" class="back-link" data-nav="history">申請履歴に戻る</button>
+    <button type="button" class="back-link" id="mrd-back-link" data-nav="history">申請履歴に戻る</button>
     <div class="form-title" id="mrd-title">申請詳細</div>
     <div class="card" id="mrd-reject-box" style="display:none;">
       <div class="section-title" style="margin-top:0;">却下理由</div>
       <div id="mrd-rejection-reason"></div>
       <div class="hint-inline" id="mrd-decided-at"></div>
     </div>
+    <div id="mrd-payment-card"></div>
     <div class="section-title">申請内容</div>
     <div id="mrd-items"></div>
   </section>
+
+  <!-- 領収書・経費精算書画像のタップ拡大表示(全画面共通の単一オーバーレイ) -->
+  <div class="image-zoom-overlay" id="image-zoom-overlay">
+    <button type="button" class="image-zoom-close" id="image-zoom-close">✕</button>
+    <img id="image-zoom-img" src="" alt="拡大画像">
+  </div>
 
   <!-- 出面集計: 社員別/外注会社別/現場別のマトリクス(サクミル代替) -->
   <section id="screen-attendance-matrix" class="screen">
@@ -1918,12 +1925,15 @@
       <div class="checkbox-row"><input type="radio" name="announce-importance" value="normal" id="announce-importance-normal" checked><label for="announce-importance-normal">通常</label></div>
       <div class="checkbox-row"><input type="radio" name="announce-importance" value="important" id="announce-importance-important"><label for="announce-importance-important">重要(ホーム画面上部に表示)</label></div>
       <div class="checkbox-row"><input type="radio" name="announce-importance" value="critical" id="announce-importance-critical"><label for="announce-importance-critical">最重要(ホーム画面上部に強調表示)</label></div>
+      <label>掲載開始日時</label>
+      <div class="hint-inline">空欄なら送信後すぐにホーム・お知らせに表示される。未来の日時を指定すると、その日時になるまで対象社員には表示されない</div>
+      <input type="datetime-local" id="announce-display-from">
       <label>既読後の表示</label>
       <div class="checkbox-row"><input type="radio" name="announce-display-mode" value="hide_after_read" id="announce-display-hide" checked><label for="announce-display-hide">既読になったらホームから消える</label></div>
-      <div class="checkbox-row"><input type="radio" name="announce-display-mode" value="persist_after_read" id="announce-display-persist"><label for="announce-display-persist">既読後もホームに残す</label></div>
-      <div class="checkbox-row"><input type="radio" name="announce-display-mode" value="until_date" id="announce-display-until"><label for="announce-display-until">指定した日付までホームに残す</label></div>
+      <div class="checkbox-row"><input type="radio" name="announce-display-mode" value="persist_after_read" id="announce-display-persist"><label for="announce-display-persist">既読後もホームに残す(終了日なし・固定表示)</label></div>
+      <div class="checkbox-row"><input type="radio" name="announce-display-mode" value="until_date" id="announce-display-until"><label for="announce-display-until">指定した日時までホームに残す</label></div>
       <div id="announce-display-until-box" style="display:none;">
-        <input type="date" id="announce-display-until-date">
+        <input type="datetime-local" id="announce-display-until-date">
       </div>
       <label>添付ファイル</label>
       <div class="hint-inline">任意(画像・PDF)</div>

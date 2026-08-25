@@ -454,11 +454,18 @@ async function loadHomeAnnouncePreview() {
   try {
     const rows = await rpc('get_my_announcements', { p_employee_code: session.employeeCode });
     // 既読済みの通常通知がホームに居座らないようにする(shouldShowOnHome参照)。
-    // 表示順は「最重要/重要 → 通常の未読」(RPC側で同じ順に並んでいるが、フィルタ後も
-    // 崩れないよう明示的に並べ直す)。
-    const rank = { critical: 0, important: 1, normal: 2 };
+    // 表示順: ①重要かつ未読 ②重要かつ掲載期間中(既読でも) ③通常のお知らせで未読
+    // ④個人の申請通知(却下等)で未読。古い個人通知が重要な会社お知らせを埋もれさせないため。
+    const homeRank = (a) => {
+      const important = a.importance !== 'normal';
+      const isPersonal = a.related_type === 'employee_requests';
+      if (important && !a.is_read) return 0;
+      if (important) return 1;
+      if (!isPersonal && !a.is_read) return 2;
+      return 3;
+    };
     const visible = (rows || []).filter(shouldShowOnHome)
-      .sort((a, b) => (rank[a.importance] ?? 2) - (rank[b.importance] ?? 2) || new Date(b.created_at) - new Date(a.created_at));
+      .sort((a, b) => homeRank(a) - homeRank(b) || new Date(b.created_at) - new Date(a.created_at));
     if (visible.length === 0) { area.innerHTML = '<div class="hint">お知らせはありません。</div>'; return; }
     const top = visible.slice(0, 3);
     const TAG_LABEL = { critical: '最重要', important: '重要' };
@@ -1676,16 +1683,18 @@ async function loadHistory() {
       const dateStr = new Date(r.requested_at).toLocaleDateString('ja-JP');
       const amountStr = r.amount != null ? `${Number(r.amount).toLocaleString()}円` : '';
       const statusClass = ['approved', 'paid'].includes(r.status) ? 'done' : (['rejected', 'cancelled'].includes(r.status) ? 'rejected' : '');
-      const clickable = r.status === 'rejected' && detailableTypes.includes(r.request_type);
+      // 却下された申請だけでなく、承認待ち/一部承認/承認済み/支払済み/受取確認済みなど
+      // 全ステータスで詳細を開けるようにする(以前はrejectedのみタップ可能だった不具合の修正)。
+      const clickable = detailableTypes.includes(r.request_type);
       div.innerHTML = `
         <div class="row1"><span>${REQUEST_TYPE_LABEL[r.request_type] || r.request_type}</span><span>${amountStr}</span></div>
         <div class="row2">${dateStr}　${r.summary || ''}</div>
         <span class="status-badge ${statusClass}">${STATUS_LABEL[r.status] || r.status}</span>
-        ${clickable ? '<div class="hint-inline">タップして詳細・却下理由を確認</div>' : ''}
+        ${clickable ? '<div class="hint-inline">タップして詳細を確認</div>' : ''}
       `;
       if (clickable) {
         div.style.cursor = 'pointer';
-        div.addEventListener('click', () => openMyRequestDetail(r.id));
+        div.addEventListener('click', () => openMyRequestDetail(r.id, 'history'));
       }
       listEl.appendChild(div);
     });
@@ -1694,13 +1703,27 @@ async function loadHistory() {
   }
 }
 
-// ---------- 却下された申請の詳細(社員本人視点、通知タップ/申請履歴から遷移) ----------
+// ---------- 申請の詳細(社員本人視点、通知タップ/お知らせ/申請履歴から遷移。全ステータス対応) ----------
 
-async function openMyRequestDetail(requestId) {
+// 詳細画面の「戻る」リンクを、遷移元(申請履歴/お知らせ/ホーム)に応じて出し分ける。
+const MRD_RETURN_LABEL = { history: '申請履歴に戻る', announcements: 'お知らせに戻る', home: 'ホームに戻る' };
+
+function openImageZoom(url) {
+  if (!url) return;
+  document.getElementById('image-zoom-img').src = url;
+  document.getElementById('image-zoom-overlay').classList.add('open');
+}
+
+async function openMyRequestDetail(requestId, returnTo) {
   const session = getSession();
+  returnTo = MRD_RETURN_LABEL[returnTo] ? returnTo : 'history';
   showScreen('my-request-detail');
+  const backLink = document.getElementById('mrd-back-link');
+  backLink.dataset.nav = returnTo;
+  backLink.textContent = MRD_RETURN_LABEL[returnTo];
   document.getElementById('mrd-title').textContent = '申請詳細';
   document.getElementById('mrd-reject-box').style.display = 'none';
+  document.getElementById('mrd-payment-card').innerHTML = '';
   document.getElementById('mrd-items').innerHTML = '<div class="hint">読み込み中...</div>';
   const yen = (n) => `${Number(n).toLocaleString('ja-JP')}円`;
   try {
@@ -1708,25 +1731,91 @@ async function openMyRequestDetail(requestId) {
     if (!rows || rows.length === 0) { document.getElementById('mrd-items').innerHTML = '<div class="hint">申請が見つかりませんでした。</div>'; return; }
     const head = rows[0];
     document.getElementById('mrd-title').textContent = `${REQUEST_TYPE_LABEL[head.request_type] || head.request_type}の詳細`;
-    if (head.status === 'rejected' && head.rejection_reason) {
+    if (head.rejection_reason) {
       document.getElementById('mrd-reject-box').style.display = '';
       document.getElementById('mrd-rejection-reason').textContent = head.rejection_reason;
       document.getElementById('mrd-decided-at').textContent = head.decided_at ? `却下日: ${new Date(head.decided_at).toLocaleDateString('ja-JP')}` : '';
     }
+
+    const ITEM_APPROVAL_LABEL = { approved: '承認', rejected: '却下', pending: '承認待ち', on_hold: '承認待ち' };
     document.getElementById('mrd-items').innerHTML = rows.map((r) => `
-      <div class="history-item">
+      <div class="mrd-item-card">
         <div class="row1"><span>申請日</span><span>${new Date(r.requested_at).toLocaleDateString('ja-JP')}</span></div>
         ${r.site_name ? `<div class="row2">現場: ${r.site_name}</div>` : ''}
         ${r.purpose ? `<div class="row2">使用目的: ${r.purpose}</div>` : ''}
         ${r.partner_name ? `<div class="row2">取引先: ${r.partner_name}</div>` : ''}
-        ${r.amount != null ? `<div class="row2">金額: ${yen(r.amount)}</div>` : ''}
+        <div class="row2">
+          ${r.amount != null ? `金額: ${yen(r.amount)}` : ''}
+          ${r.item_approval_status ? `<span class="mrd-item-approval-badge ${r.item_approval_status}">${ITEM_APPROVAL_LABEL[r.item_approval_status] || r.item_approval_status}</span>` : ''}
+        </div>
         ${r.target_date ? `<div class="row2">${r.target_date}</div>` : ''}
         ${r.note ? `<div class="row2">備考: ${r.note}</div>` : ''}
-        ${r.receipt_url ? `<div class="row2"><a href="${r.receipt_url}" target="_blank" rel="noopener">添付領収書を開く</a></div>` : ''}
+        ${r.receipt_url ? `<div class="row2"><img class="mrd-receipt-thumb" src="${r.receipt_url}" alt="領収書" data-zoom="${r.receipt_url}"></div>` : ''}
       </div>
     `).join('');
+    if (head.cover_sheet_url) {
+      document.getElementById('mrd-items').insertAdjacentHTML('afterbegin', `
+        <div class="mrd-item-card">
+          <div class="row1"><span>経費精算書</span></div>
+          <img class="mrd-receipt-thumb" src="${head.cover_sheet_url}" alt="経費精算書" data-zoom="${head.cover_sheet_url}">
+        </div>
+      `);
+    }
+    document.getElementById('mrd-items').querySelectorAll('[data-zoom]').forEach((img) => {
+      img.addEventListener('click', () => openImageZoom(img.dataset.zoom));
+    });
+
+    // 経費立替のみ支払状況(未払い/受取確認待ち/支払済み)を表示する。承認額そのものが
+    // 無い(=承認済み明細がまだ無い)申請は支払カードを出さない。
+    if (head.request_type === 'expense_reimbursement' && head.approved_total != null) {
+      await renderMyPaymentCard(requestId, head);
+    }
   } catch (e) {
     document.getElementById('mrd-items').innerHTML = `<div class="hint">読み込みに失敗しました: ${e.message}</div>`;
+  }
+}
+
+async function renderMyPaymentCard(requestId, head) {
+  const session = getSession();
+  const yen = (n) => `${Number(n || 0).toLocaleString('ja-JP')}円`;
+  const card = document.getElementById('mrd-payment-card');
+  card.innerHTML = `
+    <div class="mrd-payment-card">
+      <div class="section-title" style="margin-top:0;">支払状況</div>
+      <div class="mrd-payment-row"><span>承認額</span><span>${yen(head.approved_total)}</span></div>
+      <div class="mrd-payment-row"><span>支払済み</span><span>${yen(head.paid_total)}</span></div>
+      <div class="mrd-payment-row emphasis"><span>未払い</span><span>${yen(head.unpaid_total)}</span></div>
+      ${Number(head.unconfirmed_total) > 0 ? `<div class="mrd-payment-row emphasis"><span>受取確認待ち</span><span>${yen(head.unconfirmed_total)}</span></div>` : ''}
+      <div id="mrd-payment-list"></div>
+    </div>
+  `;
+  try {
+    const payments = await rpc('get_my_expense_payments', { p_employee_code: session.employeeCode, p_employee_request_id: Number(requestId) });
+    const listEl = document.getElementById('mrd-payment-list');
+    if (!payments || payments.length === 0) { listEl.innerHTML = ''; return; }
+    listEl.innerHTML = payments.map((p) => `
+      <div class="history-item">
+        <div class="row1"><span>${new Date(p.paid_at).toLocaleDateString('ja-JP')}支払</span><span>${yen(p.paid_amount)}</span></div>
+        ${p.payment_method ? `<div class="row2">${p.payment_method}</div>` : ''}
+        ${p.confirmed_at
+          ? `<span class="status-badge done">受取確認済み(${new Date(p.confirmed_at).toLocaleDateString('ja-JP')})</span>`
+          : `<button type="button" class="secondary mrd-receive-btn" data-payment-id="${p.payment_id}">受け取りました</button>`}
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.mrd-receive-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await rpc('confirm_expense_payment_receipt', { p_employee_code: session.employeeCode, p_payment_id: Number(btn.dataset.paymentId) });
+          await openMyRequestDetail(requestId, document.getElementById('mrd-back-link').dataset.nav);
+        } catch (e) {
+          btn.disabled = false;
+          alert(e.message || '受取確認に失敗しました。');
+        }
+      });
+    });
+  } catch (e) {
+    // 支払記録が無い(未支払)場合はエラーにせず何も表示しない。
   }
 }
 
@@ -2283,7 +2372,7 @@ function shouldShowOnHome(a) {
   if (!a.is_read) return true;
   if (a.display_mode === 'persist_after_read') return true;
   if (a.display_mode === 'until_date' && a.display_until) {
-    return new Date(a.display_until + 'T23:59:59') >= new Date();
+    return new Date(a.display_until) >= new Date();
   }
   return false;
 }
@@ -2327,7 +2416,7 @@ async function loadAnnouncements() {
     listEl.querySelectorAll('.announce-detail-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        openMyRequestDetail(btn.dataset.requestId);
+        openMyRequestDetail(btn.dataset.requestId, 'announcements');
       });
     });
     listEl.querySelectorAll('.announce-ack-btn').forEach((btn) => {
@@ -2535,6 +2624,7 @@ async function doCreateAnnouncement() {
   const importance = document.querySelector('input[name="announce-importance"]:checked').value;
   const displayMode = document.querySelector('input[name="announce-display-mode"]:checked').value;
   const displayUntil = displayMode === 'until_date' ? document.getElementById('announce-display-until-date').value : null;
+  const displayFrom = document.getElementById('announce-display-from').value || null;
   const target = document.querySelector('input[name="announce-target"]:checked').value;
   hideError('announce-error');
   if (!title || !body) { showError('announce-error', 'タイトルと本文を入力してください。'); return; }
@@ -2552,7 +2642,7 @@ async function doCreateAnnouncement() {
       p_importance: importance, p_employee_codes: employeeCodes,
       p_attachment_drive_file_id: announceAttachment ? announceAttachment.driveFileId : null,
       p_attachment_drive_url: announceAttachment ? announceAttachment.driveFileUrl : null,
-      p_display_mode: displayMode, p_display_until: displayUntil,
+      p_display_mode: displayMode, p_display_until: displayUntil, p_display_from: displayFrom,
     });
     document.getElementById('announce-title').value = '';
     document.getElementById('announce-body').value = '';
@@ -2560,6 +2650,7 @@ async function doCreateAnnouncement() {
     document.getElementById('announce-display-hide').checked = true;
     document.getElementById('announce-display-until-box').style.display = 'none';
     document.getElementById('announce-display-until-date').value = '';
+    document.getElementById('announce-display-from').value = '';
     document.getElementById('announce-target-all').checked = true;
     document.getElementById('announce-employee-picker').style.display = 'none';
     announceSelectedCodes.clear();
@@ -3291,6 +3382,7 @@ async function loadEmployeeSummary() {
       <div class="admin-result-item es-row" data-code="${r.employee_code}">
         <div class="row1"><span>${r.employee_name}(${r.employee_code})</span><span>支払待ち${yen(r.unpaid_amount)}</span></div>
         <div class="row2">申請総額${yen(r.expense_advance_amount)}(承認${yen(r.approved_total)}・却下${yen(r.rejected_total)})・会社経費${yen(r.company_expense_amount)}・支払済${yen(r.paid_amount)}</div>
+        ${Number(r.receipt_pending_amount) > 0 ? `<div class="row2">受取確認待ち${yen(r.receipt_pending_amount)}</div>` : ''}
         <div class="row2">有給付与${r.leave_granted}日・使用${r.leave_used}日・残${r.leave_balance}日・その他申請${r.other_request_count}件</div>
       </div>
     `).join('');
@@ -3299,6 +3391,7 @@ async function loadEmployeeSummary() {
         <td>${r.employee_code}</td><td>${r.employee_name}</td>
         <td>${yen(r.expense_advance_amount)}</td><td>${yen(r.approved_total)}</td><td>${yen(r.rejected_total)}</td>
         <td>${yen(r.company_expense_amount)}</td><td>${yen(r.paid_amount)}</td><td>${yen(r.unpaid_amount)}</td>
+        <td>${yen(r.receipt_pending_amount)}</td>
         <td>${r.leave_granted}日</td><td>${r.leave_used}日</td><td>${r.leave_balance}日</td>
         <td>${r.other_request_count}件</td>
       </tr>
@@ -6520,6 +6613,11 @@ function init() {
     clearTimeout(employeeSearchTimer);
     employeeSearchTimer = setTimeout(loadEmployeeDirectory, 300);
   });
+
+  const imageZoomOverlay = document.getElementById('image-zoom-overlay');
+  const closeImageZoom = () => imageZoomOverlay.classList.remove('open');
+  imageZoomOverlay.addEventListener('click', closeImageZoom);
+  document.getElementById('image-zoom-close').addEventListener('click', (e) => { e.stopPropagation(); closeImageZoom(); });
 
   document.querySelectorAll('[data-nav]').forEach((el) => {
     el.addEventListener('click', () => {

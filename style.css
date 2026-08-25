@@ -125,6 +125,17 @@ main {
 #admin-exit-btn { color: var(--danger); }
 #admin-exit-btn .icon { color: var(--danger); }
 
+/* 日報の通勤早出/通勤残業(運転手専用)・現場作業/営業/運搬(職人以外)のグループ枠。 */
+.dr-commute-group, .dr-other-duty-group {
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 12px 14px; margin: 10px 0;
+}
+.dr-commute-item { margin-bottom: 12px; }
+.dr-commute-item:last-child { margin-bottom: 0; }
+.dr-commute-item .hint-inline { margin: -2px 0 6px 26px; }
+.dr-commute-item input[type="number"] { max-width: 160px; margin-left: 26px; }
+.dr-commute-item label .mini-tag { margin-left: 6px; }
+
 .login-wrap { text-align: center; padding-top: 8vh; }
 .login-logo {
   width: 72px; height: 72px; object-fit: contain;

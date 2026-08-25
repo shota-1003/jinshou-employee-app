@@ -171,7 +171,7 @@ const BOTTOM_NAV_MAP = {
   myinfo: 'myinfo', 'leave-history': 'myinfo', 'my-supply': 'myinfo', 'my-qual': 'myinfo', 'my-health': 'myinfo',
   'my-change-requests': 'myinfo', 'profile-edit': 'myinfo', 'anon-consult': 'myinfo', 'anon-submit': 'myinfo',
   'anon-done': 'myinfo', 'anon-thread': 'myinfo', 'my-entertainment': 'myinfo', 'my-daily-reports': 'myinfo',
-  'entertainment-update': 'myinfo',
+  'entertainment-update': 'myinfo', 'entertainment-late-submit': 'myinfo',
 };
 
 // 絵文字を廃止し線画SVG(icons.js)へ統一するための一括反映。静的HTML内の
@@ -4040,6 +4040,7 @@ async function openEmployeeEditBasic() {
       document.getElementById('employee-edit-can-sales').checked = !!p.can_input_sales;
       document.getElementById('employee-edit-can-transport').checked = !!p.can_input_transport;
       document.getElementById('employee-edit-can-qualification').checked = !!p.can_input_qualification;
+      document.getElementById('employee-edit-can-backdate-ent').checked = !!p.can_backdate_entertainment_preapproval;
     }
   } catch (e) { /* 読み込めなくても新規入力は続けられる */ }
 }
@@ -4062,6 +4063,7 @@ async function doSaveEmployeeBasic() {
       p_can_input_sales: document.getElementById('employee-edit-can-sales').checked,
       p_can_input_transport: document.getElementById('employee-edit-can-transport').checked,
       p_can_input_qualification: document.getElementById('employee-edit-can-qualification').checked,
+      p_can_backdate_entertainment_preapproval: document.getElementById('employee-edit-can-backdate-ent').checked,
     });
     showScreen('employee-detail');
     await loadEmployeeDetailBasic();
@@ -4262,6 +4264,11 @@ function resetEntertainmentForm() {
   ['ent-datetime', 'ent-store', 'ent-amount', 'ent-purpose', 'ent-partner', 'ent-partner-participants', 'ent-partner-count', 'ent-note'].forEach((id) => { document.getElementById(id).value = ''; });
   document.getElementById('ent-partner-id').value = '';
   hideError('ent-error');
+  document.getElementById('ent-goto-late-btn').style.display = 'none';
+  // 通常の事前申請フォームでは過去日を選ばせない(実際の防止はサーバー側だが、
+  // ここでは選択の時点で気づけるようにする)。同日(当日事後申請)は引き続き選択可能。
+  const todayStr = new Date().toISOString().slice(0, 10);
+  document.getElementById('ent-datetime').min = `${todayStr}T00:00`;
   entOurParticipantSelect = createParticipantSelect(document.getElementById('ent-our-participants'));
   entOurParticipantSelect.setOnChange(() => { document.getElementById('ent-our-count').textContent = entOurParticipantSelect.getCount(); });
   document.getElementById('ent-our-count').textContent = '0';
@@ -4282,6 +4289,9 @@ async function doSubmitEntertainmentPreapproval() {
   const ourCodes = entOurParticipantSelect ? entOurParticipantSelect.getSelectedCodes() : [];
   if (ourCodes.length === 0) { showError('ent-error', '自社参加者を選択してください。'); return; }
 
+  // 過去日提出の可否(特例許可の有無)は社員ごとに違うため、ここでは判定せずサーバーの
+  // 判定に委ねる(特例許可がある社員は過去日でもこのフォームで正常に送信できる)。
+  // 特例がない社員が過去日を送った場合は、下のcatchでサーバーからの案内メッセージを表示する。
   const partnerId = vendorNameToId.get(partnerText) || null;
 
   const btn = document.getElementById('ent-submit');
@@ -4303,8 +4313,71 @@ async function doSubmitEntertainmentPreapproval() {
     showDone('接待・会食の事前申請を送信しました。管理者の承認をお待ちください。', 'menu-apply');
   } catch (e) {
     showError('ent-error', e.message || '送信に失敗しました。');
+    const gotoLateBtn = document.getElementById('ent-goto-late-btn');
+    gotoLateBtn.style.display = (e.message || '').includes('特別後日申請') ? 'block' : 'none';
   } finally {
     btn.disabled = false;
+  }
+}
+
+// ---------- 接待・会食 特別後日申請(社員、事前申請できなかった過去日分) ----------
+
+let entLateOurParticipantSelect = null;
+
+function resetEntertainmentLateForm() {
+  ['ent-late-datetime', 'ent-late-store', 'ent-late-amount', 'ent-late-purpose', 'ent-late-partner',
+    'ent-late-partner-participants', 'ent-late-partner-count', 'ent-late-reason', 'ent-late-note'].forEach((id) => { document.getElementById(id).value = ''; });
+  document.getElementById('ent-late-partner-id').value = '';
+  document.getElementById('ent-late-ack').checked = false;
+  document.getElementById('ent-late-submit').disabled = true;
+  hideError('ent-late-error');
+  entLateOurParticipantSelect = createParticipantSelect(document.getElementById('ent-late-our-participants'));
+  entLateOurParticipantSelect.setOnChange(() => { document.getElementById('ent-late-our-count').textContent = entLateOurParticipantSelect.getCount(); });
+  document.getElementById('ent-late-our-count').textContent = '0';
+}
+
+async function doSubmitEntertainmentLatePreapproval() {
+  const session = getSession();
+  const datetime = document.getElementById('ent-late-datetime').value;
+  const purpose = document.getElementById('ent-late-purpose').value.trim();
+  const partnerText = document.getElementById('ent-late-partner').value.trim();
+  const partnerCount = Number(document.getElementById('ent-late-partner-count').value || 0);
+  const reason = document.getElementById('ent-late-reason').value.trim();
+  hideError('ent-late-error');
+
+  if (!datetime) { showError('ent-late-error', '接待の実施日時を入力してください。'); return; }
+  if (!purpose) { showError('ent-late-error', '目的を入力してください。'); return; }
+  if (!partnerText) { showError('ent-late-error', '取引先を選択または入力してください。'); return; }
+  if (!partnerCount) { showError('ent-late-error', '取引先の参加人数を入力してください。'); return; }
+  const ourCodes = entLateOurParticipantSelect ? entLateOurParticipantSelect.getSelectedCodes() : [];
+  if (ourCodes.length === 0) { showError('ent-late-error', '自社参加者を選択してください。'); return; }
+  if (reason.length < 15) { showError('ent-late-error', '事前に申請できなかった具体的な理由を15文字以上で入力してください。'); return; }
+  if (!document.getElementById('ent-late-ack').checked) { showError('ent-late-error', '確認のチェックを入れてください。'); return; }
+
+  const partnerId = vendorNameToId.get(partnerText) || null;
+
+  const btn = document.getElementById('ent-late-submit');
+  btn.disabled = true;
+  try {
+    await rpc('submit_entertainment_preapproval', {
+      p_employee_code: session.employeeCode,
+      p_planned_datetime: new Date(datetime).toISOString(),
+      p_planned_store: document.getElementById('ent-late-store').value.trim() || null,
+      p_planned_amount: document.getElementById('ent-late-amount').value ? Number(document.getElementById('ent-late-amount').value) : null,
+      p_purpose: purpose,
+      p_business_partner_id: partnerId,
+      p_new_partner_name: partnerId ? null : partnerText,
+      p_partner_participants: document.getElementById('ent-late-partner-participants').value.trim() || null,
+      p_partner_participant_count: partnerCount,
+      p_our_participant_employee_codes: ourCodes,
+      p_note: document.getElementById('ent-late-note').value.trim() || null,
+      p_is_special_late_application: true,
+      p_late_reason: reason,
+    });
+    showDone('特別後日申請を送信しました。管理者による例外承認をお待ちください。', 'my-entertainment');
+  } catch (e) {
+    showError('ent-late-error', e.message || '送信に失敗しました。');
+    btn.disabled = !document.getElementById('ent-late-ack').checked;
   }
 }
 
@@ -4328,7 +4401,9 @@ async function loadMyEntertainmentList() {
         <div class="employee-row-flags" style="margin-top:6px;">
           <span class="mini-tag ${ENT_TIMING_TAG_CLASS[r.submission_timing] || 'muted'}">${r.submission_timing || ''}</span>
           ${r.requires_special_review ? '<span class="mini-tag danger">事前申請なし(特別承認)</span>' : ''}
+          ${r.used_backdate_exception ? '<span class="mini-tag warn">過去日提出の特例を使用</span>' : ''}
         </div>
+        ${r.late_submission_reason ? `<div class="row2">事前申請できなかった理由: ${r.late_submission_reason}</div>` : ''}
         <div class="qual-verify-btns">
           <button type="button" class="update-actuals-btn">実績を更新する</button>
         </div>
@@ -4438,8 +4513,10 @@ async function loadEntertainmentAdminList() {
         <div class="row2">登録日時: ${new Date(r.created_at).toLocaleString('ja-JP')}</div>
         <div class="employee-row-flags" style="margin-top:6px;">
           <span class="mini-tag ${ENT_TIMING_TAG_CLASS[r.submission_timing] || 'muted'}">${r.submission_timing || ''}</span>
+          ${r.used_backdate_exception ? '<span class="mini-tag warn">本人に過去日提出の特例許可あり</span>' : ''}
         </div>
         ${r.requires_special_review ? `<div class="preapproval-warning">${icon('alert-triangle')}この接待は事前申請されていません。内容を確認のうえ、例外承認または却下してください。</div>` : ''}
+        ${r.late_submission_reason ? `<div class="row2">本人が申告した「事前に申請できなかった理由」: ${r.late_submission_reason}</div>` : ''}
         ${r.exception_reason ? `<div class="row2">例外承認理由: ${r.exception_reason}</div>` : ''}
         ${r.status === 'pending' ? `
           ${r.requires_special_review ? `
@@ -6658,6 +6735,10 @@ function init() {
   document.getElementById('ent-submit').addEventListener('click', doSubmitEntertainmentPreapproval);
   document.getElementById('ent-update-submit').addEventListener('click', doUpdateEntertainmentActuals);
   document.getElementById('entertainment-admin-filter').addEventListener('change', loadEntertainmentAdminList);
+  document.getElementById('ent-late-submit').addEventListener('click', doSubmitEntertainmentLatePreapproval);
+  document.getElementById('ent-late-ack').addEventListener('change', (e) => {
+    document.getElementById('ent-late-submit').disabled = !e.target.checked;
+  });
 
   document.getElementById('license-type-submit').addEventListener('click', doSaveLicenseType);
   document.getElementById('purpose-submit').addEventListener('click', doSavePurpose);
@@ -7033,6 +7114,7 @@ function init() {
   SCREEN_ENTER_HOOKS['my-qual'] = () => { loadMyQualifications(); loadMyHealthSummary(); };
   SCREEN_ENTER_HOOKS['my-health'] = loadMyHealthList;
   SCREEN_ENTER_HOOKS['entertainment-submit'] = resetEntertainmentForm;
+  SCREEN_ENTER_HOOKS['entertainment-late-submit'] = resetEntertainmentLateForm;
   SCREEN_ENTER_HOOKS['my-entertainment'] = loadMyEntertainmentList;
   SCREEN_ENTER_HOOKS['entertainment-admin'] = () => {
     if (!isAdmin()) { enterMenu(); return; }

@@ -1586,6 +1586,7 @@
       <div class="hint-inline">任意</div>
       <textarea id="ent-note"></textarea>
       <div class="error" id="ent-error"></div>
+      <button type="button" id="ent-goto-late-btn" class="secondary danger" style="display:none;" data-nav="entertainment-late-submit">特別後日申請へ進む</button>
       <button id="ent-submit">事前申請を送信する</button>
     </div>
   </section>
@@ -1596,7 +1597,58 @@
     <div class="form-title">接待交際費 事前申請</div>
     <div class="hint" style="margin-bottom:10px;">1回の接待(ゴルフ→食事→2軒目 等)は1つの事前申請にまとめてください。人数や参加者が変わった場合は新規申請ではなく「実績を更新する」から更新してください。</div>
     <button type="button" data-nav="entertainment-submit">＋ 新しく事前申請する</button>
+    <button type="button" class="secondary danger" data-nav="entertainment-late-submit">過去の接待について今から申請する(特別後日申請)</button>
     <div id="my-entertainment-list"></div>
+  </section>
+
+  <!-- 接待・会食 特別後日申請フォーム(社員、事前申請できなかった過去日分) -->
+  <section id="screen-entertainment-late-submit" class="screen">
+    <button type="button" class="back-link" data-nav="my-entertainment">戻る</button>
+    <div class="card warning-card">
+      <div class="form-title" style="color:var(--danger);">特別後日申請</div>
+      <div class="preapproval-warning" style="margin-top:0;">
+        ⚠️ この申請は「事前申請できなかった」ことを前提とする特別な申請です。<br>
+        通常はこの方法を使わず、必ず接待の前に「接待・会食 事前申請」から申請してください。<br>
+        この申請には、事前に申請できなかった具体的な理由の入力が必須です。内容は管理者が個別に確認します。
+      </div>
+      <label for="ent-late-datetime">接待の実施日時<span class="required-mark">(必須)</span></label>
+      <input type="datetime-local" id="ent-late-datetime">
+      <label for="ent-late-store">実施店舗</label>
+      <input type="text" id="ent-late-store" placeholder="例: 〇〇割烹">
+      <label for="ent-late-amount">金額(円)</label>
+      <input type="number" id="ent-late-amount" min="0">
+      <label for="ent-late-purpose">目的<span class="required-mark">(必須)</span></label>
+      <input type="text" id="ent-late-purpose" placeholder="例: 新規案件の受注御礼">
+
+      <label>取引先<span class="required-mark">(必須)</span></label>
+      <input type="text" id="ent-late-partner" list="vendor-list">
+      <input type="hidden" id="ent-late-partner-id">
+
+      <label for="ent-late-partner-participants">取引先参加者</label>
+      <div class="hint-inline">氏名が分かれば入力(任意)</div>
+      <input type="text" id="ent-late-partner-participants" placeholder="例: 山田様、鈴木様">
+      <label for="ent-late-partner-count">取引先参加人数<span class="required-mark">(必須)</span></label>
+      <input type="number" id="ent-late-partner-count" min="1">
+
+      <label>自社参加者<span class="required-mark">(必須)</span></label>
+      <div class="participant-select" id="ent-late-our-participants"></div>
+      <div class="hint-inline">自社人数: <span id="ent-late-our-count">0</span>名(自動計算)</div>
+
+      <label for="ent-late-reason">事前に申請できなかった具体的な理由<span class="required-mark">(必須・15文字以上)</span></label>
+      <div class="hint-inline">「忘れていた」等の簡単な理由ではなく、具体的な事情を記入してください。管理者が承認可否を判断する材料になります。</div>
+      <textarea id="ent-late-reason" placeholder="例: 取引先の急な都合で開催日が当日朝に変更になり、事前申請の時間的余裕がなかったため"></textarea>
+
+      <div class="checkbox-row" style="margin-top:14px;">
+        <input type="checkbox" id="ent-late-ack">
+        <label>通常の事前申請ができなかったことを理解したうえで、特別後日申請として提出します</label>
+      </div>
+
+      <label for="ent-late-note">備考</label>
+      <div class="hint-inline">任意</div>
+      <textarea id="ent-late-note"></textarea>
+      <div class="error" id="ent-late-error"></div>
+      <button id="ent-late-submit" class="danger-submit" disabled>特別後日申請として送信する</button>
+    </div>
   </section>
 
   <!-- 接待事前申請: 実績の更新(参加者・人数の変更) -->
@@ -1955,6 +2007,10 @@
       <div class="checkbox-row"><input type="checkbox" id="employee-edit-can-sales"><label>営業の入力可</label></div>
       <div class="checkbox-row"><input type="checkbox" id="employee-edit-can-transport"><label>運搬の入力可</label></div>
       <div class="checkbox-row"><input type="checkbox" id="employee-edit-can-qualification"><label>日報からの資格取得登録を許可</label></div>
+
+      <div class="section-title">接待事前申請の特例</div>
+      <div class="hint-inline">通常、接待事前申請は過去日を選ぶと送信できません(「特別後日申請」への案内になります)。この特例を許可すると、この社員だけは過去日でも通常の申請フォームから直接送信できます。</div>
+      <div class="checkbox-row"><input type="checkbox" id="employee-edit-can-backdate-ent"><label>接待事前申請の過去日提出を許可(特例)</label></div>
 
       <div class="error" id="employee-edit-error"></div>
       <button id="employee-edit-submit">保存する</button>

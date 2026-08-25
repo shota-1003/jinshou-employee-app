@@ -186,6 +186,14 @@ main {
   margin-bottom: 16px;
 }
 
+/* 特別後日申請など「クリックする前に一呼吸置いてほしい」画面用。カード全体を
+   警告色の枠で囲み、通常の申請フォームと視覚的に混同しないようにする。 */
+.warning-card { border: 2px solid var(--danger); }
+button.danger-submit {
+  background: linear-gradient(135deg, var(--danger), #a12b2b);
+  box-shadow: none;
+}
+
 /* フロストガラス質感: カード状の要素すべてに一括適用(個別ルールを書き換えずに済むよう
    backdrop-filterだけをここでまとめて追加する) */
 .card, .home-card, .stat-mini, .menu-item, .history-item, .supply-item, .admin-result-item,

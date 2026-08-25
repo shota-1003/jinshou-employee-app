@@ -1060,7 +1060,23 @@ function addExpenseItem(initialFile) {
     photoAttached.style.display = 'block';
     details.style.display = 'block';
     updateExpenseTotal(); // 空明細ではなくなったので明細件数の表示に反映する
-    preview.src = URL.createObjectURL(file);
+
+    // iPhone写真ライブラリのHEIC等、ブラウザによっては<img src>へ元ファイルを
+    // そのまま渡しても正しく描画できない(実機で、領収書ではなく画面全体が単色の
+    // 矩形になって表示される不具合を確認した)。アップロード時と同じcanvas経由の
+    // 再エンコード(compressImageForUpload)を先に通してから、その結果をプレビューにも
+    // 使うことで、実際にアップロードされる内容と同じ・確実に描画できるJPEGを表示する。
+    let previewFile;
+    try {
+      previewFile = await compressImageForUpload(file);
+    } catch (e) {
+      previewFile = file;
+    }
+    preview.onerror = () => {
+      status.textContent = 'プレビューを表示できませんでした(この端末で非対応の画像形式の可能性があります)。アップロードは続行されます。';
+      status.className = 'photo-status err';
+    };
+    preview.src = URL.createObjectURL(previewFile);
     status.textContent = 'アップロード中...';
     status.className = 'photo-status uploading';
     const state = expenseItemState.get(itemId);

@@ -79,10 +79,43 @@ function fileToBase64(file) {
   });
 }
 
+// iPhone等で撮影した写真(HEIC/HEIF含む、実測で3〜10MB超)をそのままbase64化してn8nへ
+// 送ると、JSONペイロードが10MBを超えることがあり、n8n側の「To Binary」ノードが
+// メモリ不足でクラッシュして「アップロードに失敗しました」になることを、実際のn8n実行
+// ログ(NodeCrashedError, jsonSizeBytes=10317078)で確認した。領収書の文字が読み取れれば
+// 十分なため、長辺1600px・JPEG品質0.82程度まで縮小してからアップロードする
+// (画像以外のPDF等はそのまま、canvasが使えない/失敗した場合も元ファイルのまま送る
+// フォールバックにする)。
+async function compressImageForUpload(file) {
+  if (!file || !file.type || !file.type.startsWith('image/')) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const maxSide = 1920; // 複数領収書が1枚に写っている場合の文字も読める解像度を残しつつ、
+    // 元のiPhone写真(4000px超)よりは十分小さくしてn8n側のメモリ不足クラッシュを防ぐ。
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+    const w = Math.round(bitmap.width * scale);
+    const h = Math.round(bitmap.height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close && bitmap.close();
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+    if (!blob) return file;
+    // HEIC等の入力でも、出力は必ずJPEGになる(iOS Safariのcanvasは常にJPEG/PNGでエンコードできる)。
+    const newName = (file.name || 'photo').replace(/\.\w+$/, '') + '.jpg';
+    return new File([blob], newName, { type: 'image/jpeg' });
+  } catch (e) {
+    // 圧縮できなくても、元のファイルでアップロード自体は試みる(圧縮は最善努力)。
+    return file;
+  }
+}
+
 // 領収書写真をn8n「App Receipt Upload」経由でDriveへアップロードする。このワークフローは
 // 秘密情報(Gateway Shared Secret)を要求せず、内部でemployee_codeをSupabaseへ照会して
 // 本人確認する(ブラウザに秘密情報を埋め込まないための設計、詳細はn8n/app-receipt-upload.json)。
 async function uploadReceiptPhoto(employeeCode, file) {
+  file = await compressImageForUpload(file);
   const base64 = await fileToBase64(file);
   const res = await fetch(`${N8N_BASE_URL}/webhook/app-receipt-upload`, {
     method: 'POST',
@@ -90,7 +123,12 @@ async function uploadReceiptPhoto(employeeCode, file) {
     body: JSON.stringify({ employeeCode, fileName: file.name || 'receipt.jpg', mimeType: file.type || 'image/jpeg', base64 }),
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok || !json || json.error || !json.driveFileId) throw new Error((json && json.error) || 'アップロードに失敗しました');
+  // 原因を後から追えるよう、サーバー側のエラー内容・HTTPステータスをそのままメッセージに含める
+  // (「アップロードに失敗しました」とだけ表示すると、通信エラーなのかサーバー側の処理失敗なのか
+  // 区別できず実機での原因調査ができなかったため)。
+  if (!res.ok || !json || json.error || !json.driveFileId) {
+    throw new Error((json && json.error) || `アップロードに失敗しました(status:${res.status})`);
+  }
   return json;
 }
 
@@ -891,6 +929,7 @@ async function runOcrForItem(card, file) {
   const ocrStatus = card.querySelector('.ocr-status');
   ocrStatus.textContent = 'AIが内容を読み取っています...';
   try {
+    file = await compressImageForUpload(file);
     const base64 = await fileToBase64(file);
     const session = getSession();
     const res = await fetch(`${N8N_BASE_URL}/webhook/receipt-ocr-proxy`, {
@@ -1210,6 +1249,7 @@ async function computeFileHashHex(file) {
 // 通信・サーバーエラーは呼び出し元で「失敗として再試行できる」よう例外を投げる。
 // 「AIが実際に解析して0件だった(白紙等)」場合だけ空配列を返す。
 async function runBulkOcrForPhoto(file) {
+  file = await compressImageForUpload(file);
   const base64 = await fileToBase64(file);
   const session = getSession();
   const res = await fetch(`${N8N_BASE_URL}/webhook/receipt-ocr-proxy`, {
@@ -1433,6 +1473,7 @@ async function handleBulkReceiptFiles(files) {
 // 別のn8nワークフロー(expense-cover-ocr-proxy、scripts/n8n-build-expense-cover-ocr.js)を
 // 呼び、申請者・申請日・明細・合計金額を構造化して受け取る。
 async function runCoverSheetOcr(file) {
+  file = await compressImageForUpload(file);
   const base64 = await fileToBase64(file);
   const session = getSession();
   const res = await fetch(`${N8N_BASE_URL}/webhook/expense-cover-ocr-proxy`, {
@@ -4720,6 +4761,8 @@ function addDailyReportEntry(prefill) {
   if (prefill && prefill.overtime_hours != null) clone.querySelector('.dr-overtime-hours').value = prefill.overtime_hours;
   if (prefill && prefill.is_early_commute) clone.querySelector('.dr-is-early-commute').checked = true;
   if (prefill && prefill.is_commute_overtime) clone.querySelector('.dr-is-commute-overtime').checked = true;
+  if (prefill && prefill.early_commute_hours != null) clone.querySelector('.dr-early-commute-hours').value = prefill.early_commute_hours;
+  if (prefill && prefill.commute_overtime_hours != null) clone.querySelector('.dr-commute-overtime-hours').value = prefill.commute_overtime_hours;
   if (prefill && prefill.is_over_100km) clone.querySelector('.dr-is-over-100km').checked = true;
   if (prefill && prefill.is_transport) clone.querySelector('.dr-is-transport').checked = true;
   if (prefill && prefill.is_field_duty) clone.querySelector('.dr-is-field-duty').checked = true;
@@ -4728,6 +4771,8 @@ function addDailyReportEntry(prefill) {
   // (氏名のハードコードではなく社員マスタの権限フラグで判定する)。
   clone.querySelector('.dr-driver-fields').style.display = dailyReportTargetIsDriver ? 'block' : 'none';
   clone.querySelector('.dr-overtime-wrap').style.display = dailyReportPermissions.can_overtime ? 'block' : 'none';
+  const canOtherDuty = dailyReportPermissions.can_input_site_duty || dailyReportPermissions.can_input_sales || dailyReportPermissions.can_input_transport;
+  clone.querySelector('.dr-other-duty-group').style.display = canOtherDuty ? 'block' : 'none';
   clone.querySelector('.dr-site-duty-wrap').style.display = dailyReportPermissions.can_input_site_duty ? 'block' : 'none';
   clone.querySelector('.dr-sales-wrap').style.display = dailyReportPermissions.can_input_sales ? 'block' : 'none';
   clone.querySelector('.dr-transport-wrap').style.display = dailyReportPermissions.can_input_transport ? 'block' : 'none';
@@ -4806,6 +4851,7 @@ async function fetchDailyReportForTarget(dateStr) {
     overtime_hours: r.overtime_hours, is_early_commute: r.is_early_commute, is_commute_overtime: r.is_commute_overtime,
     is_over_100km: r.is_over_100km, is_transport: r.is_transport,
     is_field_duty: r.is_field_duty, is_sales: r.is_sales,
+    early_commute_hours: r.early_commute_hours, commute_overtime_hours: r.commute_overtime_hours,
   }));
 }
 
@@ -4892,13 +4938,22 @@ async function doSubmitDailyReport(isDraft) {
       showError('daily-report-error', '現場を選択してください。'); return;
     }
     const overtimeVal = el.querySelector('.dr-overtime-hours').value;
+    const earlyCommuteChecked = el.querySelector('.dr-is-early-commute').checked;
+    const commuteOvertimeChecked = el.querySelector('.dr-is-commute-overtime').checked;
+    const earlyCommuteHoursVal = el.querySelector('.dr-early-commute-hours').value;
+    const commuteOvertimeHoursVal = el.querySelector('.dr-commute-overtime-hours').value;
+    if (earlyCommuteChecked && !earlyCommuteHoursVal) { showError('daily-report-error', '通勤早出の時間を入力してください。'); return; }
+    if (commuteOvertimeChecked && !commuteOvertimeHoursVal) { showError('daily-report-error', '通勤残業の時間を入力してください。'); return; }
     entries.push({
       site_id: siteId, new_site_name: newSiteName, work_type: el.querySelector('.dr-work-type').value,
       is_leader: el.querySelector('.dr-is-leader').checked, is_night_shift: el.querySelector('.dr-is-night-shift').checked,
       notes: el.querySelector('.dr-notes').value.trim() || null,
       overtime_hours: overtimeVal ? Number(overtimeVal) : null,
-      is_early_commute: el.querySelector('.dr-is-early-commute').checked,
-      is_commute_overtime: el.querySelector('.dr-is-commute-overtime').checked,
+      // 通勤早出・通勤残業は「チェックしたのに時間が0/未入力」を防ぐため、チェックされている
+      // 場合だけ時間を送る(サーバー側もis_early_commute等をhours>0から再計算するため、
+      // ここで矛盾した値を送っても最終的にはサーバー側の値が優先される)。
+      early_commute_hours: earlyCommuteChecked && earlyCommuteHoursVal ? Number(earlyCommuteHoursVal) : null,
+      commute_overtime_hours: commuteOvertimeChecked && commuteOvertimeHoursVal ? Number(commuteOvertimeHoursVal) : null,
       is_over_100km: el.querySelector('.dr-is-over-100km').checked,
       is_transport: el.querySelector('.dr-is-transport').checked,
       is_field_duty: el.querySelector('.dr-is-field-duty').checked,

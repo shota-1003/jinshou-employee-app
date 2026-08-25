@@ -261,6 +261,26 @@
         <input type="checkbox" class="dr-is-night-shift">
         <label>夜勤</label>
       </div>
+      <label>残業時間(任意)</label>
+      <input type="number" class="dr-overtime-hours" min="0" step="0.5" placeholder="例: 1.5">
+      <div class="dr-driver-fields" style="display:none;">
+        <div class="checkbox-row">
+          <input type="checkbox" class="dr-is-early-commute">
+          <label>通勤早出(現場移動のため朝6:00より前に出発した)</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" class="dr-is-commute-overtime">
+          <label>通勤残業(通勤・移動で2時間以上運転した)</label>
+        </div>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" class="dr-is-over-100km">
+        <label>通勤100km超(現場までの移動が100kmを超える)</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" class="dr-is-transport">
+        <label>運搬あり</label>
+      </div>
       <label>備考(任意)</label>
       <input type="text" class="dr-notes" placeholder="例: 早退・遅刻・特記事項など">
       <button type="button" class="dr-remove-entry-btn link">この現場を削除</button>

@@ -4568,6 +4568,15 @@ let dailyReportEntrySeq = 0;
 // 代理入力の対象(本人以外の社員、または外注作業員)。self以外はnippo_admin/executiveのみ選べる。
 let dailyReportTarget = { type: 'self', employeeCode: null, employeeName: null, subcontractorWorkerId: null, workerName: null };
 let dailyReportIsNippoAdmin = false;
+let dailyReportTargetIsDriver = false;
+
+async function refreshDailyReportTargetIsDriver() {
+  const session = getSession();
+  if (dailyReportTarget.type === 'subcontractor') { dailyReportTargetIsDriver = false; return; }
+  const code = dailyReportTarget.type === 'employee' ? dailyReportTarget.employeeCode : session.employeeCode;
+  if (!code) { dailyReportTargetIsDriver = false; return; }
+  try { dailyReportTargetIsDriver = await rpc('check_is_driver', { p_employee_code: code }); } catch (e) { dailyReportTargetIsDriver = false; }
+}
 
 function addDailyReportEntry(prefill) {
   const template = document.getElementById('daily-report-entry-template');
@@ -4600,6 +4609,13 @@ function addDailyReportEntry(prefill) {
   if (prefill && prefill.is_leader) clone.querySelector('.dr-is-leader').checked = true;
   if (prefill && prefill.is_night_shift) clone.querySelector('.dr-is-night-shift').checked = true;
   if (prefill && prefill.notes) clone.querySelector('.dr-notes').value = prefill.notes;
+  if (prefill && prefill.overtime_hours != null) clone.querySelector('.dr-overtime-hours').value = prefill.overtime_hours;
+  if (prefill && prefill.is_early_commute) clone.querySelector('.dr-is-early-commute').checked = true;
+  if (prefill && prefill.is_commute_overtime) clone.querySelector('.dr-is-commute-overtime').checked = true;
+  if (prefill && prefill.is_over_100km) clone.querySelector('.dr-is-over-100km').checked = true;
+  if (prefill && prefill.is_transport) clone.querySelector('.dr-is-transport').checked = true;
+  // 運転手として登録されている社員(または代理入力対象)にだけ、通勤早出・通勤残業を表示する。
+  clone.querySelector('.dr-driver-fields').style.display = dailyReportTargetIsDriver ? 'block' : 'none';
 
   clone.querySelector('.dr-remove-entry-btn').addEventListener('click', () => {
     document.querySelector(`[data-entry-id="${entryId}"]`).remove();
@@ -4672,6 +4688,8 @@ async function fetchDailyReportForTarget(dateStr) {
   return filtered.map((r) => ({
     site_id: r.site_id, work_type: r.work_type, reflected: !!r.reflected_to_sheet_at,
     report_status: r.report_status, is_leader: r.is_leader, is_night_shift: r.is_night_shift, notes: r.notes,
+    overtime_hours: r.overtime_hours, is_early_commute: r.is_early_commute, is_commute_overtime: r.is_commute_overtime,
+    is_over_100km: r.is_over_100km, is_transport: r.is_transport,
   }));
 }
 
@@ -4684,6 +4702,7 @@ async function loadDailyReportForDate(dateStr) {
   addBtn.disabled = false;
   document.getElementById('daily-report-entry-list').innerHTML = '';
   dailyReportEntrySeq = 0;
+  await refreshDailyReportTargetIsDriver();
   loadDailyReportRecentSites();
 
   let existing = [];
@@ -4748,10 +4767,16 @@ async function doSubmitDailyReport(isDraft) {
     } else if (!siteId) {
       showError('daily-report-error', '現場を選択してください。'); return;
     }
+    const overtimeVal = el.querySelector('.dr-overtime-hours').value;
     entries.push({
       site_id: siteId, new_site_name: newSiteName, work_type: el.querySelector('.dr-work-type').value,
       is_leader: el.querySelector('.dr-is-leader').checked, is_night_shift: el.querySelector('.dr-is-night-shift').checked,
       notes: el.querySelector('.dr-notes').value.trim() || null,
+      overtime_hours: overtimeVal ? Number(overtimeVal) : null,
+      is_early_commute: el.querySelector('.dr-is-early-commute').checked,
+      is_commute_overtime: el.querySelector('.dr-is-commute-overtime').checked,
+      is_over_100km: el.querySelector('.dr-is-over-100km').checked,
+      is_transport: el.querySelector('.dr-is-transport').checked,
     });
   }
 

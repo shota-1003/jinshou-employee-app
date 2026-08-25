@@ -4518,6 +4518,7 @@ async function loadMyEntertainmentList() {
           ${r.used_backdate_exception ? '<span class="mini-tag warn">過去日提出の特例を使用</span>' : ''}
         </div>
         ${r.late_submission_reason ? `<div class="row2">事前申請できなかった理由: ${r.late_submission_reason}</div>` : ''}
+        ${r.status === 'rejected' && r.rejection_reason ? `<div class="row2">却下理由: ${r.rejection_reason}</div>` : ''}
         <div class="qual-verify-btns">
           <button type="button" class="update-actuals-btn">実績を更新する</button>
         </div>
@@ -4632,11 +4633,14 @@ async function loadEntertainmentAdminList() {
         ${r.requires_special_review ? `<div class="preapproval-warning">${icon('alert-triangle')}この接待は事前申請されていません。内容を確認のうえ、例外承認または却下してください。</div>` : ''}
         ${r.late_submission_reason ? `<div class="row2">本人が申告した「事前に申請できなかった理由」: ${r.late_submission_reason}</div>` : ''}
         ${r.exception_reason ? `<div class="row2">例外承認理由: ${r.exception_reason}</div>` : ''}
+        ${r.status === 'rejected' && r.rejection_reason ? `<div class="row2">却下理由: ${r.rejection_reason}</div>` : ''}
         ${r.status === 'pending' ? `
           ${r.requires_special_review ? `
             <label>例外承認の理由<span class="required-mark">(必須)</span></label>
             <textarea class="ent-exception-reason" placeholder="例: 先方都合で急遽実施、事前に把握はしていた"></textarea>
           ` : ''}
+          <label>却下理由<span class="hint-inline" style="display:inline;">(任意、入力すると申請者に伝わります)</span></label>
+          <textarea class="ent-reject-reason" placeholder="例: 業務関連性が確認できないため"></textarea>
           <div class="qual-verify-btns">
             <button type="button" class="approve-btn">${r.requires_special_review ? '例外承認する' : '承認する'}</button>
             <button type="button" class="reject-btn">却下する</button>
@@ -4652,7 +4656,11 @@ async function loadEntertainmentAdminList() {
       });
     });
     listEl.querySelectorAll('.reject-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => doDecideEntertainment(e.target.closest('.qual-item').dataset.id, 'rejected', null));
+      btn.addEventListener('click', (e) => {
+        const item = e.target.closest('.qual-item');
+        const reasonEl = item.querySelector('.ent-reject-reason');
+        doDecideEntertainment(item.dataset.id, 'rejected', reasonEl ? reasonEl.value.trim() : null);
+      });
     });
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
@@ -5457,6 +5465,11 @@ function renderRequestDetailActions(sourceType, r) {
         <textarea id="rdetail-ent-reason"></textarea>` : ''}
       <button type="button" id="rdetail-ent-approve">${special ? '例外承認する' : '承認する'}</button>
       <button type="button" class="secondary" id="rdetail-ent-reject">却下する</button>
+      <div id="rdetail-ent-reject-box" style="display:none;">
+        <label>却下理由<span class="hint-inline" style="display:inline;">(任意、入力すると申請者に伝わります)</span></label>
+        <textarea id="rdetail-ent-reject-reason"></textarea>
+        <button type="button" id="rdetail-ent-reject-confirm">却下を確定する</button>
+      </div>
     `;
     document.getElementById('rdetail-ent-approve').addEventListener('click', async () => {
       const session = getSession();
@@ -5466,10 +5479,14 @@ function renderRequestDetailActions(sourceType, r) {
         showScreen('admin-all-requests');
       } catch (e) { showError('rdetail-error', e.message || '処理に失敗しました。'); }
     });
-    document.getElementById('rdetail-ent-reject').addEventListener('click', async () => {
+    document.getElementById('rdetail-ent-reject').addEventListener('click', () => {
+      revealReasonBox(document.getElementById('rdetail-ent-reject-box'));
+    });
+    document.getElementById('rdetail-ent-reject-confirm').addEventListener('click', async () => {
       const session = getSession();
+      const reason = document.getElementById('rdetail-ent-reject-reason').value.trim();
       try {
-        await rpc('admin_decide_entertainment_preapproval', { p_admin_employee_code: session.employeeCode, p_id: currentRequestDetail.sourceId, p_action: 'rejected', p_exception_reason: null });
+        await rpc('admin_decide_entertainment_preapproval', { p_admin_employee_code: session.employeeCode, p_id: currentRequestDetail.sourceId, p_action: 'rejected', p_exception_reason: reason || null });
         showScreen('admin-all-requests');
       } catch (e) { showError('rdetail-error', e.message || '処理に失敗しました。'); }
     });

@@ -11,7 +11,7 @@
 // ネットワークが使える限り常に最新のファイルを取得し、オフライン時だけキャッシュへ
 // フォールバックする方式にすることで、この種の「古いキャッシュに固定される」問題を
 // 自己修復できるようにした。
-const CACHE_NAME = 'jinshou-employee-app-v39';
+const CACHE_NAME = 'jinshou-employee-app-v40';
 const SHELL_FILES = [
   './', './index.html', './style.css', './app.js', './icons.js', './manifest.json',
   './icons/app-icon-180-v2.png', './icons/icon-192-v2.png', './icons/icon-512-v2.png', './icons/icon-512-maskable-v2.png',
@@ -42,8 +42,12 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return; // Supabase API等の外部通信はキャッシュしない
   if (event.request.method !== 'GET') return;
 
+  // {cache: 'reload'}でブラウザのHTTPキャッシュ(GitHub Pagesのmax-age等)を無視して
+  // 必ずネットワークへ再取得しにいく。これを指定しないと、SW自体はnetwork-firstでも
+  // 内部のfetch()がブラウザのHTTPキャッシュから「新鮮」と判定された古い応答を返して
+  // しまい、結局古い内容が表示され続けることがある(実機で確認)。
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'reload' })
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();

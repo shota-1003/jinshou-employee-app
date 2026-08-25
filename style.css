@@ -565,7 +565,36 @@ button.link {
 .dash-card-top .icon { width: 18px; height: 18px; color: var(--text-faint); }
 .dash-card-count { font-size: 25px; font-weight: 800; color: var(--text); letter-spacing: -.02em; }
 .dash-card-count.zero { color: var(--text-faint); }
+/* 管理画面共通のステータスカラールール: 赤=今すぐ対応が必要、緑=正常に完了、
+   オレンジ=処理済みだが却下・差し戻し等、灰=0件、neutral=単なる件数(常に強調しない)。 */
 .dash-card-count.alert { color: var(--danger); }
+.dash-card-count.good { color: var(--success); }
+.dash-card-count.warn { color: var(--warn); }
+.dash-card-count.neutral { color: var(--text); }
+
+/* 出面集計等の「対象月」を、白いinputではなく月切替ナビゲーションとして見せる
+   (ダークカード + 中央に大きく月表示 + 左右に前月/翌月ボタン)。 */
+#am-month-group { margin: 14px 0 10px; }
+.month-nav {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 10px 8px; box-shadow: var(--shadow-sm); max-width: 340px; margin: 0 auto;
+}
+.month-nav-arrow {
+  flex: none; width: 40px; height: 40px; border-radius: var(--radius-pill); border: none;
+  background: var(--info-bg); color: var(--primary); display: flex; align-items: center; justify-content: center;
+}
+.month-nav-arrow:active { background: var(--primary); color: #fff; }
+.month-nav-arrow .icon { width: 20px; height: 20px; }
+.month-nav-display { flex: 1; text-align: center; font-size: 19px; font-weight: 800; color: var(--text); letter-spacing: .01em; font-family: var(--font-display); }
+.month-nav-today {
+  display: block; margin: 8px auto 0; padding: 4px 16px; border-radius: var(--radius-pill);
+  background: none; border: 1px solid var(--border); color: var(--primary); font-size: 12px; font-weight: 700;
+}
+@media (min-width: 768px) {
+  .month-nav { max-width: 420px; padding: 12px 10px; }
+  .month-nav-display { font-size: 22px; }
+}
 .dash-card-label { font-size: 12.5px; color: var(--text-muted); font-weight: 600; }
 
 /* お知らせ管理(admin) */

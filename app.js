@@ -2549,29 +2549,41 @@ async function loadAnnouncements() {
 
 // ---------- 管理者ダッシュボード ----------
 
+// status: 'pending'(未処理・要対応→赤) / 'good'(処理済み・正常完了→緑) /
+// 'warn'(処理済みだが却下・差し戻し等→オレンジ) / 'neutral'(単なる件数表示→強調しない)。
+// 0件は常にstatusに関わらずグレー。管理画面全体で今後追加するカードもこのルールに従う。
 const DASH_CARDS = [
-  { key: 'pending_expense_approvals', filter: 'expense', label: '経費立替 承認待ち', icon: 'receipt' },
-  { key: 'pending_leave_approvals', filter: 'leave', label: '有給申請 承認待ち', icon: 'calendar' },
-  { key: 'pending_meeting_approvals', filter: 'meeting', label: '会議申請 承認待ち', icon: 'users-round' },
-  { key: 'pending_supply_requests', filter: 'supply', label: '支給品申請 確認待ち', icon: 'package' },
-  { key: 'needs_correction_count', filter: 'needs_correction', label: '確認・修正が必要な申請', icon: 'edit' },
-  { key: 'unanswered_consultations', filter: null, label: '未対応の匿名相談', icon: 'message-circle', nav: 'anon-admin' },
-  { key: 'pending_qualifications', filter: null, label: '資格の確認待ち', icon: 'graduation-cap', nav: 'qual-admin' },
-  { key: 'qualification_expiring_count', filter: null, label: '期限が近い資格', icon: 'clock', nav: 'qual-admin' },
-  { key: 'category_review_needed_count', filter: null, label: '勘定科目の確認待ち', icon: 'hash', nav: 'category-review' },
-  { key: 'pending_info_change_requests', filter: null, label: '個人情報の変更申請', icon: 'user', nav: 'info-change-admin' },
-  { key: 'pending_sites', filter: null, label: '新規現場の確認待ち', icon: 'map-pin', nav: 'site-admin' },
-  { key: 'pending_entertainment_preapprovals', filter: null, label: '接待事前申請 承認待ち', icon: 'users-round', nav: 'entertainment-admin' },
-  { key: 'health_checkup_overdue_count', filter: null, label: '健診 期限超過', icon: 'check-circle', nav: 'health-admin', healthFilter: 'overdue' },
-  { key: 'health_checkup_due_soon_count', filter: null, label: '健診 期限間近', icon: 'clock', nav: 'health-admin', healthFilter: 'due_soon' },
-  { key: 'health_checkup_retest_pending_count', filter: null, label: '再検査確認待ち', icon: 'alert-triangle', nav: 'health-admin', healthFilter: 'retest' },
-  { key: 'today_submissions_count', filter: null, label: '本日の申請', icon: 'clock', nav: 'admin-all-requests', areqFilter: { type: '', status: '' } },
-  { key: 'approved_recent_count', filter: null, label: '承認済み(30日)', icon: 'check-circle', nav: 'admin-all-requests', areqFilter: { type: '', status: 'approved' } },
-  { key: 'rejected_recent_count', filter: null, label: '却下(30日)', icon: 'x-circle', nav: 'admin-all-requests', areqFilter: { type: '', status: 'rejected' } },
-  { key: 'entertainment_special_review_count', filter: null, label: '接待: 後日申請(特別承認待ち)', icon: 'alert-triangle', nav: 'admin-all-requests', areqFilter: { type: 'entertainment_preapproval', status: 'special_review' } },
-  { key: 'entertainment_override_count', filter: null, label: '接待: 事前申請なし(例外承認累計)', icon: 'users-round', nav: 'entertainment-admin' },
-  { key: 'daily_report_exception_count', filter: null, label: '日報: 特殊ケース未対応', icon: 'clipboard-list', nav: 'daily-report-admin' },
+  { key: 'pending_expense_approvals', filter: 'expense', label: '経費立替 承認待ち', icon: 'receipt', status: 'pending' },
+  { key: 'pending_leave_approvals', filter: 'leave', label: '有給申請 承認待ち', icon: 'calendar', status: 'pending' },
+  { key: 'pending_meeting_approvals', filter: 'meeting', label: '会議申請 承認待ち', icon: 'users-round', status: 'pending' },
+  { key: 'pending_supply_requests', filter: 'supply', label: '支給品申請 確認待ち', icon: 'package', status: 'pending' },
+  { key: 'needs_correction_count', filter: 'needs_correction', label: '確認・修正が必要な申請', icon: 'edit', status: 'pending' },
+  { key: 'unanswered_consultations', filter: null, label: '未対応の匿名相談', icon: 'message-circle', nav: 'anon-admin', status: 'pending' },
+  { key: 'pending_qualifications', filter: null, label: '資格の確認待ち', icon: 'graduation-cap', nav: 'qual-admin', status: 'pending' },
+  { key: 'qualification_expiring_count', filter: null, label: '期限が近い資格', icon: 'clock', nav: 'qual-admin', status: 'pending' },
+  { key: 'category_review_needed_count', filter: null, label: '勘定科目の確認待ち', icon: 'hash', nav: 'category-review', status: 'pending' },
+  { key: 'pending_info_change_requests', filter: null, label: '個人情報の変更申請', icon: 'user', nav: 'info-change-admin', status: 'pending' },
+  { key: 'pending_sites', filter: null, label: '新規現場の確認待ち', icon: 'map-pin', nav: 'site-admin', status: 'pending' },
+  { key: 'pending_entertainment_preapprovals', filter: null, label: '接待事前申請 承認待ち', icon: 'users-round', nav: 'entertainment-admin', status: 'pending' },
+  { key: 'health_checkup_overdue_count', filter: null, label: '健診 期限超過', icon: 'check-circle', nav: 'health-admin', healthFilter: 'overdue', status: 'pending' },
+  { key: 'health_checkup_due_soon_count', filter: null, label: '健診 期限間近', icon: 'clock', nav: 'health-admin', healthFilter: 'due_soon', status: 'pending' },
+  { key: 'health_checkup_retest_pending_count', filter: null, label: '再検査確認待ち', icon: 'alert-triangle', nav: 'health-admin', healthFilter: 'retest', status: 'pending' },
+  { key: 'today_submissions_count', filter: null, label: '本日の申請', icon: 'clock', nav: 'admin-all-requests', areqFilter: { type: '', status: '' }, status: 'neutral' },
+  { key: 'approved_recent_count', filter: null, label: '承認済み(30日)', icon: 'check-circle', nav: 'admin-all-requests', areqFilter: { type: '', status: 'approved' }, status: 'good' },
+  { key: 'rejected_recent_count', filter: null, label: '却下(30日)', icon: 'x-circle', nav: 'admin-all-requests', areqFilter: { type: '', status: 'rejected' }, status: 'warn' },
+  { key: 'entertainment_special_review_count', filter: null, label: '接待: 後日申請(特別承認待ち)', icon: 'alert-triangle', nav: 'admin-all-requests', areqFilter: { type: 'entertainment_preapproval', status: 'special_review' }, status: 'pending' },
+  { key: 'entertainment_override_count', filter: null, label: '接待: 事前申請なし(例外承認累計)', icon: 'users-round', nav: 'entertainment-admin', status: 'neutral' },
+  { key: 'daily_report_exception_count', filter: null, label: '日報: 特殊ケース未対応', icon: 'clipboard-list', nav: 'daily-report-admin', status: 'pending' },
 ];
+
+// カードのstatus+件数から表示クラスを決める共通ルール(今後追加するカードもこの関数を使う)。
+function dashCardColorClass(status, count) {
+  if (!count) return 'zero';
+  if (status === 'good') return 'good';
+  if (status === 'warn') return 'warn';
+  if (status === 'neutral') return 'neutral';
+  return 'alert';
+}
 
 async function loadAdminDashboard() {
   const session = getSession();
@@ -2584,7 +2596,7 @@ async function loadAdminDashboard() {
       const count = d ? d[c.key] : 0;
       return `
         <button type="button" class="dash-card" data-idx="${i}">
-          <span class="dash-card-top">${icon(c.icon)}<span class="dash-card-count ${count === 0 ? 'zero' : 'alert'}">${count}</span></span>
+          <span class="dash-card-top">${icon(c.icon)}<span class="dash-card-count ${dashCardColorClass(c.status, count)}">${count}</span></span>
           <span class="dash-card-label">${c.label}</span>
         </button>
       `;
@@ -3339,7 +3351,10 @@ async function loadEmployeeDetailBasic() {
       fieldRow('入社日', p.hire_date ? new Date(p.hire_date).toLocaleDateString('ja-JP') : null) + fieldRow('所属/役割', p.department) +
       fieldRow('権限', p.request_role === 'executive' ? '管理者' : '一般社員') +
       fieldRow('メールアドレス', p.email) + fieldRow('電話番号', p.phone) + fieldRow('郵便番号', p.postal_code) + fieldRow('住所', p.address) +
-      fieldRow('緊急連絡先(氏名)', p.emergency_contact_name) + fieldRow('緊急連絡先(続柄)', p.emergency_contact_relation) + fieldRow('緊急連絡先(電話番号)', p.emergency_contact_phone);
+      fieldRow('緊急連絡先(氏名)', p.emergency_contact_name) + fieldRow('緊急連絡先(続柄)', p.emergency_contact_relation) + fieldRow('緊急連絡先(電話番号)', p.emergency_contact_phone) +
+      fieldRow('日報: 運転手', p.is_driver ? '対象' : null) + fieldRow('日報: 残業入力', p.can_overtime ? '対象' : null) +
+      fieldRow('日報: 現場入力', p.can_input_site_duty ? '対象' : null) + fieldRow('日報: 営業入力', p.can_input_sales ? '対象' : null) +
+      fieldRow('日報: 運搬入力', p.can_input_transport ? '対象' : null) + fieldRow('日報: 資格取得登録', p.can_input_qualification ? '対象' : null);
   } catch (e) { /* 無視 */ }
 }
 
@@ -3733,6 +3748,22 @@ function attendanceViewLabel() {
 // 発行し、応答が返ってきた時点で最新の呼び出しでなければ描画しない。
 let attendanceMatrixRequestSeq = 0;
 
+// 「対象月」を< 2026年8月 >のようなナビゲーション表示にする(集計ロジック自体は
+// 変更せず、既存の#am-month(type=month)の値をそのまま使う。見た目だけの変更)。
+function updateAmMonthDisplay() {
+  const v = document.getElementById('am-month').value;
+  if (!v) return;
+  const [y, m] = v.split('-').map(Number);
+  document.getElementById('am-month-display').textContent = `${y}年${m}月`;
+}
+function shiftAmMonth(delta) {
+  const input = document.getElementById('am-month');
+  const [y, m] = (input.value || todayJST().slice(0, 7)).split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  input.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  input.dispatchEvent(new Event('change'));
+}
+
 async function loadAttendanceMatrix() {
   const session = getSession();
   const mySeq = ++attendanceMatrixRequestSeq;
@@ -3941,12 +3972,30 @@ async function loadEmployeeDetailRequests() {
   }
 }
 
-function openEmployeeEditBasic() {
+async function openEmployeeEditBasic() {
   document.getElementById('employee-edit-furigana').value = '';
   document.getElementById('employee-edit-birth').value = '';
   document.getElementById('employee-edit-department').value = '';
   hideError('employee-edit-error');
   showScreen('employee-edit-basic');
+  // 日報の対象者フラグは現在値を読み込んでチェック状態を反映する(社員詳細の
+  // admin_get_employee_profileと同じデータをここでも取得する)。
+  try {
+    const session = getSession();
+    const rows = await rpc('admin_get_employee_profile', { p_admin_employee_code: session.employeeCode, p_target_employee_code: currentEmployeeDetailCode });
+    const p = rows && rows[0];
+    if (p) {
+      document.getElementById('employee-edit-furigana').value = p.furigana || '';
+      document.getElementById('employee-edit-birth').value = p.birth_date ? p.birth_date.slice(0, 10) : '';
+      document.getElementById('employee-edit-department').value = p.department || '';
+      document.getElementById('employee-edit-is-driver').checked = !!p.is_driver;
+      document.getElementById('employee-edit-can-overtime').checked = !!p.can_overtime;
+      document.getElementById('employee-edit-can-site-duty').checked = !!p.can_input_site_duty;
+      document.getElementById('employee-edit-can-sales').checked = !!p.can_input_sales;
+      document.getElementById('employee-edit-can-transport').checked = !!p.can_input_transport;
+      document.getElementById('employee-edit-can-qualification').checked = !!p.can_input_qualification;
+    }
+  } catch (e) { /* 読み込めなくても新規入力は続けられる */ }
 }
 
 async function doSaveEmployeeBasic() {
@@ -3961,6 +4010,12 @@ async function doSaveEmployeeBasic() {
     await rpc('admin_update_employee_basic', {
       p_admin_employee_code: session.employeeCode, p_target_employee_code: currentEmployeeDetailCode,
       p_furigana: furigana || null, p_birth_date: birth || null, p_department: department || null,
+      p_is_driver: document.getElementById('employee-edit-is-driver').checked,
+      p_can_overtime: document.getElementById('employee-edit-can-overtime').checked,
+      p_can_input_site_duty: document.getElementById('employee-edit-can-site-duty').checked,
+      p_can_input_sales: document.getElementById('employee-edit-can-sales').checked,
+      p_can_input_transport: document.getElementById('employee-edit-can-transport').checked,
+      p_can_input_qualification: document.getElementById('employee-edit-can-qualification').checked,
     });
     showScreen('employee-detail');
     await loadEmployeeDetailBasic();
@@ -4603,17 +4658,32 @@ async function doSaveAdminHealthRecord() {
 
 const DR_HEADCOUNT_BY_WORK_TYPE = { '終日': 1.0, '午前': 0.5, '午後': 0.5 };
 let dailyReportEntrySeq = 0;
+let dailyReportQualAttachment = null; // { driveFileId, driveFileUrl } (資格証の写真/PDF、任意)
 // 代理入力の対象(本人以外の社員、または外注作業員)。self以外はnippo_admin/executiveのみ選べる。
 let dailyReportTarget = { type: 'self', employeeCode: null, employeeName: null, subcontractorWorkerId: null, workerName: null };
 let dailyReportIsNippoAdmin = false;
 let dailyReportTargetIsDriver = false;
+// 通勤早出・残業・現場・営業・運搬・資格取得を、社員名をコードへ埋め込まず社員マスタの
+// フラグ(employees.can_overtime等)で対象者制御するための現在値。
+let dailyReportPermissions = { is_driver: false, can_overtime: false, can_input_site_duty: false, can_input_sales: false, can_input_transport: false, can_input_qualification: false };
 
 async function refreshDailyReportTargetIsDriver() {
   const session = getSession();
-  if (dailyReportTarget.type === 'subcontractor') { dailyReportTargetIsDriver = false; return; }
+  if (dailyReportTarget.type === 'subcontractor') {
+    dailyReportTargetIsDriver = false;
+    dailyReportPermissions = { is_driver: false, can_overtime: false, can_input_site_duty: false, can_input_sales: false, can_input_transport: false, can_input_qualification: false };
+    return;
+  }
   const code = dailyReportTarget.type === 'employee' ? dailyReportTarget.employeeCode : session.employeeCode;
   if (!code) { dailyReportTargetIsDriver = false; return; }
-  try { dailyReportTargetIsDriver = await rpc('check_is_driver', { p_employee_code: code }); } catch (e) { dailyReportTargetIsDriver = false; }
+  try {
+    const rows = await rpc('get_my_daily_report_permissions', { p_employee_code: session.employeeCode, p_target_employee_code: code });
+    dailyReportPermissions = (rows && rows[0]) || dailyReportPermissions;
+    dailyReportTargetIsDriver = !!dailyReportPermissions.is_driver;
+  } catch (e) {
+    dailyReportTargetIsDriver = false;
+    dailyReportPermissions = { is_driver: false, can_overtime: false, can_input_site_duty: false, can_input_sales: false, can_input_transport: false, can_input_qualification: false };
+  }
 }
 
 function addDailyReportEntry(prefill) {
@@ -4652,8 +4722,15 @@ function addDailyReportEntry(prefill) {
   if (prefill && prefill.is_commute_overtime) clone.querySelector('.dr-is-commute-overtime').checked = true;
   if (prefill && prefill.is_over_100km) clone.querySelector('.dr-is-over-100km').checked = true;
   if (prefill && prefill.is_transport) clone.querySelector('.dr-is-transport').checked = true;
-  // 運転手として登録されている社員(または代理入力対象)にだけ、通勤早出・通勤残業を表示する。
+  if (prefill && prefill.is_field_duty) clone.querySelector('.dr-is-field-duty').checked = true;
+  if (prefill && prefill.is_sales) clone.querySelector('.dr-is-sales').checked = true;
+  // 対象者フラグに基づき、該当する社員(または代理入力対象)にだけ各項目を表示する
+  // (氏名のハードコードではなく社員マスタの権限フラグで判定する)。
   clone.querySelector('.dr-driver-fields').style.display = dailyReportTargetIsDriver ? 'block' : 'none';
+  clone.querySelector('.dr-overtime-wrap').style.display = dailyReportPermissions.can_overtime ? 'block' : 'none';
+  clone.querySelector('.dr-site-duty-wrap').style.display = dailyReportPermissions.can_input_site_duty ? 'block' : 'none';
+  clone.querySelector('.dr-sales-wrap').style.display = dailyReportPermissions.can_input_sales ? 'block' : 'none';
+  clone.querySelector('.dr-transport-wrap').style.display = dailyReportPermissions.can_input_transport ? 'block' : 'none';
 
   clone.querySelector('.dr-remove-entry-btn').addEventListener('click', () => {
     document.querySelector(`[data-entry-id="${entryId}"]`).remove();
@@ -4728,6 +4805,7 @@ async function fetchDailyReportForTarget(dateStr) {
     report_status: r.report_status, is_leader: r.is_leader, is_night_shift: r.is_night_shift, notes: r.notes,
     overtime_hours: r.overtime_hours, is_early_commute: r.is_early_commute, is_commute_overtime: r.is_commute_overtime,
     is_over_100km: r.is_over_100km, is_transport: r.is_transport,
+    is_field_duty: r.is_field_duty, is_sales: r.is_sales,
   }));
 }
 
@@ -4741,6 +4819,14 @@ async function loadDailyReportForDate(dateStr) {
   document.getElementById('daily-report-entry-list').innerHTML = '';
   dailyReportEntrySeq = 0;
   await refreshDailyReportTargetIsDriver();
+  document.getElementById('daily-report-qual-wrap').style.display = dailyReportPermissions.can_input_qualification ? 'block' : 'none';
+  document.getElementById('daily-report-has-qualification').checked = false;
+  document.getElementById('daily-report-qual-fields').style.display = 'none';
+  document.getElementById('daily-report-qual-name').value = '';
+  document.getElementById('daily-report-qual-date').value = dateStr;
+  document.getElementById('daily-report-qual-file-label').textContent = '撮影・選択する';
+  document.getElementById('daily-report-qual-file-status').textContent = '';
+  dailyReportQualAttachment = null;
   loadDailyReportRecentSites();
 
   let existing = [];
@@ -4815,8 +4901,17 @@ async function doSubmitDailyReport(isDraft) {
       is_commute_overtime: el.querySelector('.dr-is-commute-overtime').checked,
       is_over_100km: el.querySelector('.dr-is-over-100km').checked,
       is_transport: el.querySelector('.dr-is-transport').checked,
+      is_field_duty: el.querySelector('.dr-is-field-duty').checked,
+      is_sales: el.querySelector('.dr-is-sales').checked,
     });
   }
+
+  // 資格取得(対象者のみ表示される欄。チェックされていれば必須項目を確認する)。
+  const hasQualification = dailyReportPermissions.can_input_qualification && document.getElementById('daily-report-has-qualification').checked;
+  const qualName = document.getElementById('daily-report-qual-name').value.trim();
+  const qualDate = document.getElementById('daily-report-qual-date').value;
+  if (hasQualification && !qualName) { showError('daily-report-error', '資格名を入力してください。'); return; }
+  if (hasQualification && !qualDate) { showError('daily-report-error', '資格取得日を選択してください。'); return; }
 
   const btn = document.getElementById('daily-report-submit');
   btn.disabled = true;
@@ -4828,10 +4923,29 @@ async function doSubmitDailyReport(isDraft) {
       p_target_subcontractor_worker_id: dailyReportTarget.type === 'subcontractor' ? dailyReportTarget.subcontractorWorkerId : null,
     });
     const r = result && result[0];
+
+    let qualWarning = '';
+    if (hasQualification && !isDraft) {
+      // 資格・免許は既存の社員マスタ側と同じ仕組み(submit_qualification)へそのまま登録する
+      // (日報専用の別テーブルを新設しない。将来「資格・免許」画面と同じ一覧に出てくる)。
+      try {
+        await rpc('submit_qualification', {
+          p_employee_code: dailyReportTarget.type === 'employee' ? dailyReportTarget.employeeCode : session.employeeCode,
+          p_qualification_name: qualName, p_qualification_number: null, p_obtained_date: qualDate,
+          p_expiry_date: null, p_renewal_deadline: null, p_note: `日報(${dateStr})から登録`,
+          p_photo_drive_file_id: dailyReportQualAttachment ? dailyReportQualAttachment.driveFileId : null,
+          p_photo_drive_file_url: dailyReportQualAttachment ? dailyReportQualAttachment.driveFileUrl : null,
+          p_pdf_drive_file_id: null, p_pdf_drive_file_url: null, p_category: 'qualification', p_license_type_id: null,
+        });
+      } catch (e2) {
+        qualWarning = ' ※資格取得の登録には失敗しました。「資格・免許」画面から改めて登録してください。';
+      }
+    }
+
     if (isDraft) { showDone(`日報を下書き保存しました(${dateStr})。提出は完了していません。`, 'menu-apply'); return; }
-    const msg = r && r.is_special
+    const msg = (r && r.is_special
       ? `日報を受け付けました(${dateStr}、${r.entry_count}現場)。3現場以上のため特殊日報として管理者が確認します。`
-      : `日報を受け付けました(${dateStr}、合計${r ? Number(r.total_headcount).toFixed(1) : ''}人工)。`;
+      : `日報を受け付けました(${dateStr}、合計${r ? Number(r.total_headcount).toFixed(1) : ''}人工)。`) + qualWarning;
     showDone(msg, 'menu-apply');
   } catch (e) {
     showError('daily-report-error', e.message || '送信に失敗しました。もう一度お試しください。');
@@ -6657,6 +6771,25 @@ function init() {
   document.getElementById('daily-report-add-special-entry').addEventListener('click', () => addDailyReportEntry());
   document.getElementById('daily-report-submit').addEventListener('click', () => doSubmitDailyReport(false));
   document.getElementById('daily-report-save-draft').addEventListener('click', () => doSubmitDailyReport(true));
+  document.getElementById('daily-report-has-qualification').addEventListener('change', (e) => {
+    document.getElementById('daily-report-qual-fields').style.display = e.target.checked ? 'block' : 'none';
+  });
+  document.getElementById('daily-report-qual-file-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const statusEl = document.getElementById('daily-report-qual-file-status');
+    statusEl.textContent = 'アップロード中...';
+    try {
+      const session = getSession();
+      const result = await uploadReceiptPhoto(session.employeeCode, file);
+      dailyReportQualAttachment = { driveFileId: result.driveFileId, driveFileUrl: result.driveFileUrl };
+      document.getElementById('daily-report-qual-file-label').textContent = file.name;
+      statusEl.textContent = 'アップロード完了';
+    } catch (e2) {
+      statusEl.textContent = 'アップロードに失敗しました。もう一度お試しください。';
+      dailyReportQualAttachment = null;
+    }
+  });
 
   document.getElementById('daily-report-target-type').addEventListener('change', (e) => {
     const session = getSession();
@@ -6868,6 +7001,7 @@ function init() {
   SCREEN_ENTER_HOOKS['attendance-matrix'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     if (!document.getElementById('am-month').value) document.getElementById('am-month').value = todayJST().slice(0, 7);
+    updateAmMonthDisplay();
     loadAttendanceFilterOptions();
     loadAttendanceMatrix();
   };
@@ -6929,7 +7063,13 @@ function init() {
   });
   document.getElementById('employee-detail-leave-policy-save').addEventListener('click', doSaveLeavePolicy);
   document.getElementById('es-month').addEventListener('change', loadEmployeeSummary);
-  document.getElementById('am-month').addEventListener('change', () => { loadAttendanceFilterOptions(); loadAttendanceMatrix(); });
+  document.getElementById('am-month').addEventListener('change', () => { updateAmMonthDisplay(); loadAttendanceFilterOptions(); loadAttendanceMatrix(); });
+  document.getElementById('am-month-prev').addEventListener('click', () => shiftAmMonth(-1));
+  document.getElementById('am-month-next').addEventListener('click', () => shiftAmMonth(1));
+  document.getElementById('am-month-today').addEventListener('click', () => {
+    document.getElementById('am-month').value = todayJST().slice(0, 7);
+    document.getElementById('am-month').dispatchEvent(new Event('change'));
+  });
   document.getElementById('am-year').addEventListener('change', loadAttendanceMatrix);
   document.getElementById('am-site-filter').addEventListener('change', (e) => { attendanceSiteFilter = e.target.value; loadAttendanceMatrix(); });
   document.getElementById('am-employee-filter').addEventListener('change', (e) => { attendanceEmployeeFilter = e.target.value; loadAttendanceMatrix(); });
@@ -6945,8 +7085,7 @@ function init() {
     btn.addEventListener('click', () => {
       attendancePeriod = btn.dataset.period;
       document.querySelectorAll('#am-period-filter .filter-chip').forEach((c) => c.classList.toggle('active', c === btn));
-      document.getElementById('am-month').style.display = attendancePeriod === 'month' ? 'block' : 'none';
-      document.querySelector('label[for="am-month"]').style.display = attendancePeriod === 'month' ? 'block' : 'none';
+      document.getElementById('am-month-group').style.display = attendancePeriod === 'month' ? 'block' : 'none';
       document.getElementById('am-year').style.display = attendancePeriod === 'year' ? 'block' : 'none';
       document.querySelector('label[for="am-year"]').style.display = attendancePeriod === 'year' ? 'block' : 'none';
       if (attendancePeriod === 'year' && !document.getElementById('am-year').value) {

@@ -231,6 +231,26 @@
         <div class="stat-mini"><span class="stat-mini-label">合計人工(自動計算)</span><span class="stat-mini-value" id="daily-report-total-headcount">0</span></div>
       </div>
 
+      <div id="daily-report-qual-wrap" style="display:none;">
+        <div class="checkbox-row">
+          <input type="checkbox" id="daily-report-has-qualification">
+          <label>資格取得</label>
+        </div>
+        <div id="daily-report-qual-fields" style="display:none;">
+          <label for="daily-report-qual-name">資格名<span class="required-mark">(必須)</span></label>
+          <input type="text" id="daily-report-qual-name" placeholder="例: 玉掛け技能講習">
+          <label for="daily-report-qual-date">資格取得日<span class="required-mark">(必須)</span></label>
+          <input type="date" id="daily-report-qual-date">
+          <label>資格証の写真・PDF(任意)</label>
+          <label class="photo-capture-btn">
+            <span class="icon-slot" data-icon="camera"></span>
+            <span id="daily-report-qual-file-label">撮影・選択する</span>
+            <input type="file" accept="image/*,application/pdf" id="daily-report-qual-file-input">
+          </label>
+          <div class="hint-inline" id="daily-report-qual-file-status"></div>
+        </div>
+      </div>
+
       <div class="error" id="daily-report-error"></div>
       <button id="daily-report-submit">日報を提出する</button>
       <button type="button" class="secondary" id="daily-report-save-draft">下書きとして保存する</button>
@@ -261,8 +281,10 @@
         <input type="checkbox" class="dr-is-night-shift">
         <label>夜勤</label>
       </div>
-      <label>残業時間(任意)</label>
-      <input type="number" class="dr-overtime-hours" min="0" step="0.5" placeholder="例: 1.5">
+      <div class="dr-overtime-wrap" style="display:none;">
+        <label>残業時間(任意)</label>
+        <input type="number" class="dr-overtime-hours" min="0" step="0.5" placeholder="例: 1.5">
+      </div>
       <div class="dr-driver-fields" style="display:none;">
         <div class="checkbox-row">
           <input type="checkbox" class="dr-is-early-commute">
@@ -277,9 +299,23 @@
         <input type="checkbox" class="dr-is-over-100km">
         <label>通勤100km超(現場までの移動が100kmを超える)</label>
       </div>
-      <div class="checkbox-row">
-        <input type="checkbox" class="dr-is-transport">
-        <label>運搬あり</label>
+      <div class="dr-site-duty-wrap" style="display:none;">
+        <div class="checkbox-row">
+          <input type="checkbox" class="dr-is-field-duty">
+          <label>現場作業</label>
+        </div>
+      </div>
+      <div class="dr-sales-wrap" style="display:none;">
+        <div class="checkbox-row">
+          <input type="checkbox" class="dr-is-sales">
+          <label>営業</label>
+        </div>
+      </div>
+      <div class="dr-transport-wrap" style="display:none;">
+        <div class="checkbox-row">
+          <input type="checkbox" class="dr-is-transport">
+          <label>運搬あり</label>
+        </div>
       </div>
       <label>備考(任意)</label>
       <input type="text" class="dr-notes" placeholder="例: 早退・遅刻・特記事項など">
@@ -1766,8 +1802,15 @@
       <button type="button" class="filter-chip active" data-period="month">月次</button>
       <button type="button" class="filter-chip" data-period="year">年間</button>
     </div>
-    <label for="am-month">対象月</label>
-    <input type="month" id="am-month">
+    <div id="am-month-group">
+      <div class="month-nav">
+        <button type="button" class="month-nav-arrow" id="am-month-prev" aria-label="前月"><span class="icon-slot" data-icon="chevron-left"></span></button>
+        <div class="month-nav-display" id="am-month-display">2026年8月</div>
+        <button type="button" class="month-nav-arrow" id="am-month-next" aria-label="翌月"><span class="icon-slot" data-icon="chevron-right"></span></button>
+      </div>
+      <button type="button" class="month-nav-today" id="am-month-today">今月</button>
+      <input type="month" id="am-month" style="display:none;">
+    </div>
     <label for="am-year" style="display:none;">対象年</label>
     <input type="number" id="am-year" style="display:none;" min="2020" max="2100">
     <div class="filter-row" id="am-view-filter">
@@ -1890,6 +1933,16 @@
       <input type="date" id="employee-edit-birth">
       <label for="employee-edit-department">所属/役割</label>
       <input type="text" id="employee-edit-department">
+
+      <div class="section-title">日報の入力項目(対象者だけに表示されます)</div>
+      <div class="hint-inline">氏名ではなくこの設定で対象者を判定します。ここで許可した社員だけ、日報にその項目が表示されます。</div>
+      <div class="checkbox-row"><input type="checkbox" id="employee-edit-is-driver"><label>運転手として登録(通勤早出・通勤残業の入力対象)</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="employee-edit-can-overtime"><label>残業時間の入力可</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="employee-edit-can-site-duty"><label>現場(日報)の入力可</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="employee-edit-can-sales"><label>営業の入力可</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="employee-edit-can-transport"><label>運搬の入力可</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="employee-edit-can-qualification"><label>日報からの資格取得登録を許可</label></div>
+
       <div class="error" id="employee-edit-error"></div>
       <button id="employee-edit-submit">保存する</button>
     </div>

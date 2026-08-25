@@ -6751,7 +6751,7 @@ async function doNotifyUnansweredEvent() {
   }
 }
 
-// ---------- 案内AI「迅翔くん」 ----------
+// ---------- 案内AI「ポッくん」 ----------
 //
 // v1はルールベースの意図マッチング(外部AI APIは呼ばない)。理由:
 // (1) 経費申請/日報/接待事前申請/有給申請/アプリの使い方など、聞かれる内容は
@@ -6878,7 +6878,7 @@ function openAiGuidePanel() {
   const panel = document.getElementById('ai-guide-panel');
   panel.classList.add('open');
   if (aiGuideHistory.length === 0) {
-    aiGuideHistory.push({ role: 'bot', text: 'こんにちは、迅翔くんです。申請の仕方やアプリの使い方について何でも聞いてください。' });
+    aiGuideHistory.push({ role: 'bot', text: 'こんにちは、ポッくんです。申請の仕方やアプリの使い方について何でも聞いてください。' });
     renderAiGuideMessages();
   }
   document.getElementById('ai-guide-input').focus();

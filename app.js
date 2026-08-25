@@ -965,6 +965,21 @@ async function runOcrForItem(card, file) {
   }
 }
 
+// カードがまだ写真を選んでいない「空の初期枠」かどうか。撮影/写真選択ボタン
+// (item-photo-step)がまだ表示されたまま=handlePhotoFileが一度も呼ばれていない状態。
+function isExpenseItemEmpty(card) {
+  const photoStep = card.querySelector('.item-photo-step');
+  return !!photoStep && photoStep.style.display !== 'none';
+}
+
+// 明細ラベル(明細1,2,3...)を、内部の連番カウンタではなく実際のDOM順で振り直す。
+// 追加・削除のたびに呼ぶことで、削除後や複数選択後も番号が1から連番のまま保たれる。
+function renumberExpenseItems() {
+  document.querySelectorAll('#expense-item-list .expense-item-card').forEach((card, idx) => {
+    card.querySelector('.item-label').textContent = `明細${idx + 1}`;
+  });
+}
+
 function addExpenseItem(initialFile) {
   const template = document.getElementById('expense-item-template');
   const clone = template.content.cloneNode(true);
@@ -972,7 +987,6 @@ function addExpenseItem(initialFile) {
   const itemId = `item-${++expenseItemSeq}`;
   const card = clone.querySelector('.expense-item-card');
   card.dataset.itemId = itemId;
-  clone.querySelector('.item-label').textContent = `明細${expenseItemSeq}`;
   expenseItemState.set(itemId, { driveFileId: null, driveFileUrl: null, uploading: false });
 
   const paymentSelect = clone.querySelector('.item-payment');
@@ -1030,6 +1044,7 @@ function addExpenseItem(initialFile) {
     document.querySelector(`[data-item-id="${itemId}"]`).remove();
     expenseItemState.delete(itemId);
     participantSelects.delete(itemId);
+    renumberExpenseItems();
     updateExpenseTotal();
   });
 
@@ -1044,6 +1059,7 @@ function addExpenseItem(initialFile) {
     photoStep.style.display = 'none';
     photoAttached.style.display = 'block';
     details.style.display = 'block';
+    updateExpenseTotal(); // 空明細ではなくなったので明細件数の表示に反映する
     preview.src = URL.createObjectURL(file);
     status.textContent = 'アップロード中...';
     status.className = 'photo-status uploading';
@@ -1078,6 +1094,7 @@ function addExpenseItem(initialFile) {
     const state = expenseItemState.get(itemId);
     state.driveFileId = null;
     state.driveFileUrl = null;
+    updateExpenseTotal(); // 再び空明細に戻るので明細件数の表示に反映する
   });
 
   clone.querySelector('.item-amount').addEventListener('input', updateExpenseTotal);
@@ -1087,24 +1104,42 @@ function addExpenseItem(initialFile) {
   });
 
   document.getElementById('expense-item-list').appendChild(clone);
+  renumberExpenseItems();
   updateExpenseTotal();
   if (initialFile) handlePhotoFile(initialFile);
 }
 
 // 複数の領収書写真を一度に選択したとき、写真1枚ごとに明細を1件自動作成してOCRを走らせる
 // (写真1→OCR→明細1、写真2→OCR→明細2、…という流れ。1枚ずつ手作業で追加する必要をなくす)。
+// 画面を開いた直後は常に空の明細1が1件だけ存在する(手動での単発撮影に備えた初期枠)。
+// これを残したまま複数選択分を明細2以降へ積み増すと、選んだ枚数と番号がズレて
+// 空の明細1だけが取り残されてしまうため、複数選択時はまだ写真を選んでいない
+// 空の明細をすべて削除してから、選んだ枚数ぶんを1から連番で作り直す。
 function addExpenseItemsBatch(files) {
-  Array.from(files || []).forEach((file) => addExpenseItem(file));
+  const fileArr = Array.from(files || []);
+  if (fileArr.length === 0) return;
+  document.querySelectorAll('#expense-item-list .expense-item-card').forEach((card) => {
+    if (isExpenseItemEmpty(card)) {
+      const itemId = card.dataset.itemId;
+      card.remove();
+      expenseItemState.delete(itemId);
+      participantSelects.delete(itemId);
+    }
+  });
+  fileArr.forEach((file) => addExpenseItem(file));
 }
 
 function updateExpenseTotal() {
   const cards = document.querySelectorAll('.expense-item-card');
   let total = 0;
+  let validCount = 0;
   cards.forEach((card) => {
+    if (isExpenseItemEmpty(card)) return;
+    validCount += 1;
     const amount = Number(card.querySelector('.item-amount').value || 0);
     total += amount;
   });
-  document.getElementById('expense-total-count').textContent = `${cards.length}件`;
+  document.getElementById('expense-total-count').textContent = `${validCount}件`;
   document.getElementById('expense-total-amount').textContent = `${total.toLocaleString()}円`;
 }
 

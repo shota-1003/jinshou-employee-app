@@ -407,6 +407,57 @@ button.link {
   width: 72px; height: 72px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border);
   cursor: zoom-in; margin-top: 8px; margin-right: 6px; display: inline-block; vertical-align: top;
 }
+/* 案内AI「迅翔くん」: 常時右下に小さく常駐するボタンと、タップで開くチャットパネル。
+   下部ナビと同じ「fixed + max-width480pxで中央寄せ」の技法で、デスクトップ幅でも
+   アプリの表示カラムの右下に正しく収まるようにする(ラッパーはクリックを透過させ、
+   中の丸ボタン自体だけをクリック可能にする)。 */
+.ai-guide-fab-wrap {
+  position: fixed; left: 0; right: 0; bottom: 78px; max-width: 480px; margin: 0 auto;
+  z-index: 25; pointer-events: none;
+}
+.ai-guide-fab {
+  position: absolute; right: 14px; bottom: 0; width: 48px; height: 48px; margin: 0; padding: 0;
+  border-radius: 50%; background: linear-gradient(135deg, var(--primary), var(--primary-deep));
+  box-shadow: var(--glow-brand); pointer-events: auto;
+}
+.ai-guide-fab .icon { width: 22px; height: 22px; }
+.ai-guide-panel {
+  position: fixed; left: 0; right: 0; bottom: 0; max-width: 480px; margin: 0 auto;
+  z-index: 210; background: var(--card-bg-solid); border-radius: 18px 18px 0 0;
+  box-shadow: var(--shadow-md); display: none; flex-direction: column;
+  height: min(70vh, 560px); border: 1px solid var(--border); border-bottom: none;
+}
+.ai-guide-panel.open { display: flex; }
+.ai-guide-panel-header {
+  display: flex; align-items: center; justify-content: space-between; padding: 14px 16px;
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.ai-guide-panel-title { font-family: var(--font-display); font-weight: 700; font-size: 15px; }
+.ai-guide-panel-close { width: auto; background: none; box-shadow: none; margin: 0; padding: 4px; color: var(--text-muted); }
+.ai-guide-panel-close .icon { width: 22px; height: 22px; }
+.ai-guide-messages { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.ai-guide-msg { max-width: 84%; padding: 10px 13px; border-radius: var(--radius-md); font-size: 13.5px; line-height: 1.6; }
+.ai-guide-msg.bot { align-self: flex-start; background: var(--info-bg); color: var(--text); border-bottom-left-radius: 4px; }
+.ai-guide-msg.user { align-self: flex-end; background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+.ai-guide-msg-action {
+  align-self: flex-start; width: auto; margin: -2px 0 0; padding: 8px 14px; font-size: 12.5px;
+  background: var(--card-bg); border: 1px solid var(--border); color: var(--primary); box-shadow: none;
+}
+.ai-guide-quick-replies { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 10px; flex-shrink: 0; }
+.ai-guide-quick-replies button {
+  width: auto; margin: 0; padding: 7px 12px; font-size: 12px; font-weight: 600;
+  background: var(--info-bg); color: var(--primary); box-shadow: none; border-radius: var(--radius-pill);
+}
+.ai-guide-input-row { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.ai-guide-input-row input {
+  flex: 1; margin: 0; border-radius: var(--radius-pill); padding: 10px 14px; font-size: 13.5px;
+}
+.ai-guide-input-row button {
+  width: 40px; height: 40px; padding: 0; margin: 0; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.ai-guide-input-row button .icon { width: 18px; height: 18px; }
+
 .image-zoom-overlay {
   position: fixed; inset: 0; background: rgba(10, 12, 18, .92); z-index: 200;
   display: none; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out;

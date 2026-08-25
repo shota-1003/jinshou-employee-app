@@ -39,6 +39,8 @@ const ICON_PATHS = {
   info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><path d="M12 7.6v.1"/>',
   'sort-desc': '<path d="M6 5v13"/><path d="m3 15 3 3 3-3"/><path d="M12 6h8M12 11h5M12 16h3"/>',
   lock: '<rect x="5" y="10.5" width="14" height="9" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
+  'heart-pulse': '<path d="M12 20s-7-4.4-9.5-9A5.5 5.5 0 0 1 12 6a5.5 5.5 0 0 1 9.5 5c-.6 1-1.3 2-2.2 3H16l-1.8-3-2 5-1.6-3H8.5"/>',
+  'sparkles': '<path d="M12 3v3M12 18v3M4.5 5.5l2 2M17.5 16.5l2 2M3 12h3M18 12h3M4.5 18.5l2-2M17.5 7.5l2-2"/><circle cx="12" cy="12" r="3"/>',
 };
 
 function icon(name, cls) {

@@ -2409,6 +2409,26 @@
   <button type="button" class="admin-bottom-nav-item" id="admin-exit-btn"><span class="icon-slot" data-icon="user"></span><span>社員画面に戻る</span></button>
 </nav>
 
+<!-- 案内AI「迅翔くん」: 画面右下に常駐する小さなボタン。タップでチャットパネルを開く。
+     名称・見た目は今後変更可能(仮称)。全画面共通で表示される(下部ナビと同じ持ち方)。 -->
+<div class="ai-guide-fab-wrap" id="ai-guide-fab-wrap">
+  <button type="button" class="ai-guide-fab" id="ai-guide-fab" aria-label="迅翔くんに質問する">
+    <span class="icon-slot" data-icon="sparkles"></span>
+  </button>
+</div>
+<div class="ai-guide-panel" id="ai-guide-panel">
+  <div class="ai-guide-panel-header">
+    <span class="ai-guide-panel-title">迅翔くん</span>
+    <button type="button" class="ai-guide-panel-close" id="ai-guide-close" aria-label="閉じる"><span class="icon-slot" data-icon="x-circle"></span></button>
+  </div>
+  <div class="ai-guide-messages" id="ai-guide-messages"></div>
+  <div class="ai-guide-quick-replies" id="ai-guide-quick-replies"></div>
+  <div class="ai-guide-input-row">
+    <input type="text" id="ai-guide-input" placeholder="質問を入力(例: 経費申請したい)">
+    <button type="button" id="ai-guide-send" aria-label="送信"><span class="icon-slot" data-icon="chevron-right"></span></button>
+  </div>
+</div>
+
 <script src="icons.js"></script>
 <script src="app.js"></script>
 </body>

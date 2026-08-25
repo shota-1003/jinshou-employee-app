@@ -220,6 +220,9 @@ function showScreen(id, opts) {
   }
   document.getElementById('bottom-nav').style.display = (!preAuthScreens.includes(id) && !inAdminMode) ? 'flex' : 'none';
   document.getElementById('admin-bottom-nav').style.display = (!preAuthScreens.includes(id) && inAdminMode) ? 'flex' : 'none';
+  // ログイン前・管理者モード中は案内AIを表示しない(下部ナビと同じ扱い)。
+  document.getElementById('ai-guide-fab-wrap').style.display = (!preAuthScreens.includes(id) && !inAdminMode) ? '' : 'none';
+  if (preAuthScreens.includes(id) || inAdminMode) document.getElementById('ai-guide-panel').classList.remove('open');
   document.querySelectorAll('.bottom-nav-item').forEach((btn) => {
     btn.classList.toggle('active', btn.getAttribute('data-nav') === (BOTTOM_NAV_MAP[id] || id));
   });
@@ -428,26 +431,70 @@ async function loadHomeLeaveStats(balanceElId, usedElId) {
   } catch (e) { /* 表示できなくても致命的ではないため無視 */ }
 }
 
-function greetingWord() {
-  const h = new Date().getHours();
-  if (h < 11) return 'おはようございます';
-  if (h < 17) return 'こんにちは';
-  return 'お疲れ様でした';
+// ホームの挨拶・声かけ。以前は時刻を3区分・季節を2区分だけで判定し、深夜0時台でも
+// 「おはようございます」「熱中症に気をつけて」が出てしまう不自然な固定文だった。
+// 朝/昼/夕方/夜/深夜の5区分×複数の言い回しをランダムに選び、季節(暑い時期/寒い時期)・
+// 曜日(月曜/金曜)も加味することで、会社から自然に声をかけられている感覚を目指す。
+//
+// 天候条件との連動は今回実装しない(外部APIの継続課金判断が必要なため、コスト面の承認を
+// 得てから対応する)。getWeatherHint()を拡張点として用意しておき、将来天候データを
+// 取得できるようになった時点で、この関数の中身を実装するだけで声かけへ反映できる設計にする。
+function getWeatherHint() {
+  return null; // 将来の拡張点(天候API連携)。現時点では常にnull。
 }
 
-// 季節ごとに一言添える(夏は熱中症注意、冬は防寒を気遣う)。該当しない時期は空文字。
-function seasonalMessage() {
-  const m = new Date().getMonth() + 1;
-  if (m >= 6 && m <= 9) return '熱中症に気をつけて、こまめに水分補給をしてください。';
-  if (m === 12 || m === 1 || m === 2) return '寒い日が続きますが、体調に気をつけて頑張ってください。';
-  return '';
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function buildHomeGreeting() {
+  const now = new Date();
+  const h = now.getHours();
+  const day = now.getDay(); // 0=日, 1=月, ... 6=土
+  const month = now.getMonth() + 1;
+  const isHotSeason = month >= 6 && month <= 9;
+  const isColdSeason = month === 12 || month === 1 || month === 2;
+  const weatherHint = getWeatherHint();
+
+  let band;
+  if (h >= 5 && h < 11) band = 'morning';
+  else if (h >= 11 && h < 17) band = 'afternoon';
+  else if (h >= 17 && h < 19) band = 'evening';
+  else if (h >= 19 && h < 23) band = 'night';
+  else band = 'lateNight';
+
+  const GREETINGS = {
+    morning: ['おはようございます。今日も安全第一でいきましょう', 'おはようございます。今日も一日よろしくお願いします',
+      ...(day === 1 ? ['おはようございます。今週も一週間よろしくお願いします'] : [])],
+    afternoon: ['お疲れさまです。午後からも安全第一でいきましょう', 'お疲れさまです。残りの時間も無理のないように'],
+    evening: ['今日もお疲れさまでした', ...(day === 5 ? ['今週もお疲れさまでした。よい週末を'] : ['今日も一日ありがとうございました'])],
+    night: ['今日も一日お疲れさまでした', 'お疲れさまです。今日もありがとうございました'],
+    lateNight: ['遅い時間までお疲れさまです', '夜遅くまでお疲れさまです'],
+  };
+
+  const SUBS = {
+    morning: [
+      ...(isHotSeason ? ['今日は暑くなりそうです。こまめに水分補給してください'] : []),
+      ...(isColdSeason ? ['冷え込む朝です。暖かくしてお出かけください'] : []),
+      '今日も気をつけて行ってらっしゃい', '無理のない範囲で今日も頑張りましょう',
+    ],
+    afternoon: [
+      ...(isHotSeason ? ['暑い時間帯です。水分と休憩をしっかり取ってください'] : []),
+      '午後もこまめに休憩を取ってください', 'あと少し、無理せずいきましょう',
+    ],
+    evening: ['日報の入力忘れがないか確認してください', '帰り道も気をつけてお帰りください'],
+    night: ['明日に備えて、今日はゆっくり休んでください', '今日も一日、お疲れさまでした'],
+    lateNight: ['明日に備えて、無理せず早めに休んでください', '体調を崩さないよう、今日はゆっくり休んでください'],
+  };
+
+  const sub = weatherHint || pick(SUBS[band]);
+  return { greeting: pick(GREETINGS[band]), sub };
 }
 
 function enterMenu() {
   const session = getSession();
-  document.getElementById('menu-greeting-hi').textContent = greetingWord();
+  const { greeting, sub } = buildHomeGreeting();
+  document.getElementById('menu-greeting-hi').textContent = greeting;
   document.getElementById('menu-greeting-name').textContent = `${session.employeeName}さん`;
-  document.getElementById('menu-greeting-sub').textContent = seasonalMessage();
+  document.getElementById('menu-greeting-sub').textContent = sub;
   checkAnonUnreadBadge().then(loadTodayList);
   loadAnnounceBanner();
   loadHomeAnnouncePreview();
@@ -2498,20 +2545,33 @@ async function doAdminChangeAnonStatus() {
 
 // ---------- 今日やること・お知らせ(社員側) ----------
 
+// 外注日報タスクをタップしたときは、日報入力画面を開いてから「誰の日報を入力しますか」を
+// 外注作業員モードへ自動で切り替える(担当者が毎回手動でプルダウンを操作しなくて済むように)。
+async function navigateToTodayTask(nav, taskKey) {
+  showScreen(nav);
+  if (taskKey === 'subcontractor_daily_report' && nav === 'daily-report') {
+    await resetDailyReportForm();
+    const typeSelect = document.getElementById('daily-report-target-type');
+    typeSelect.value = 'subcontractor';
+    typeSelect.dispatchEvent(new Event('change'));
+  }
+}
+
+// 「今日やること」はDBの実状態(未提出の日報・担当している外注日報・差戻し・承認待ち・
+// 資格/健診期限等)から動的に生成する。get_my_today_tasksが対象社員ごとに該当する
+// タスクだけを個別行として返すため、ここでは受け取った行をそのまま表示するだけでよい
+// (固定文言の組み立てはサーバー側に一本化)。
 async function loadTodayList() {
   const session = getSession();
   const listEl = document.getElementById('today-list');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
-    const rows = await rpc('get_my_dashboard', { p_employee_code: session.employeeCode });
-    const d = rows && rows[0];
-    const items = [];
-    if (d) {
-      if (d.unread_announcements > 0) items.push({ icon: 'bell', label: '未読のお知らせがあります', count: `${d.unread_announcements}件`, nav: 'announcements' });
-      if (d.needs_info_count > 0) items.push({ icon: 'edit', label: '確認・修正が必要な申請があります', count: `${d.needs_info_count}件`, nav: 'history', urgent: true });
-      if (d.waiting_approval_count > 0) items.push({ icon: 'clock', label: '承認待ちの申請があります', count: `${d.waiting_approval_count}件`, nav: 'history' });
-      if (d.qualification_expiring_count > 0) items.push({ icon: 'graduation-cap', label: '期限が近い資格があります', count: `${d.qualification_expiring_count}件`, nav: 'my-qual', urgent: true });
-    }
+    const tasks = await rpc('get_my_today_tasks', { p_employee_code: session.employeeCode });
+    const items = (tasks || []).map((t) => ({
+      icon: t.icon, label: t.label,
+      count: t.detail || (t.item_count != null ? `${t.item_count}件` : ''),
+      nav: t.nav_screen, urgent: t.urgent, taskKey: t.task_key,
+    }));
     const anonBadgeEl = document.getElementById('home-anon-badge');
     const anonUnread = anonBadgeEl && anonBadgeEl.style.display !== 'none';
     if (anonUnread) {
@@ -2529,7 +2589,10 @@ async function loadTodayList() {
       </button>
     `).join('');
     listEl.querySelectorAll('.today-item').forEach((el) => {
-      el.addEventListener('click', () => showScreen(items[Number(el.dataset.idx)].nav));
+      el.addEventListener('click', () => {
+        const it = items[Number(el.dataset.idx)];
+        navigateToTodayTask(it.nav, it.taskKey);
+      });
     });
   } catch (e) {
     listEl.innerHTML = '';
@@ -6688,6 +6751,139 @@ async function doNotifyUnansweredEvent() {
   }
 }
 
+// ---------- 案内AI「迅翔くん」 ----------
+//
+// v1はルールベースの意図マッチング(外部AI APIは呼ばない)。理由:
+// (1) 経費申請/日報/接待事前申請/有給申請/アプリの使い方など、聞かれる内容は
+//     ある程度あらかじめ列挙できる範囲であり、案内先の画面へ直接遷移させることが
+//     目的の中心のため、固定の意図テーブル+複数の言い回しパターンで十分自然に対応できる。
+// (2) 外部LLM APIの従量課金は、迅翔興業の共通運用ルール(COST-001/COST-002、
+//     system_rules)により人間の明示承認なしに自律導入してはならない。
+// (3) このv1はDBへの問い合わせを一切行わないため、権限違反(他社員の情報や給与・人事情報の
+//     漏洩)が構造的に発生しない設計になっている。
+//
+// 将来、会社制度への質問や仕事相談など「本当のAIアシスタント」へ育てる場合は、
+// handleAiGuideMessage()の中身をLLM API呼び出しに差し替えるだけで良いように、
+// UI・意図判定・画面遷移(action)の3層を分離してある。ただしその際もCOST-001の
+// 人間承認、および社員ごとの閲覧権限を超えないサーバー側チェックが必須。
+
+let aiGuideHistory = []; // { role: 'user'|'bot', text }[] (画面をリロードすると消える、永続化はしない)
+
+// 給与・人事考課・経営情報など、この案内が答えるべきでない話題は最優先で弾く
+// (社員ごとの閲覧権限を超えないようにするための境界線、DBには一切問い合わせない)。
+const AI_GUIDE_BOUNDARY = {
+  patterns: [/給料/, /給与/, /賞与/, /年収/, /人事考課/, /評価/, /他の社員/, /他人の/, /経営/, /決算/, /利益/],
+  responses: ['給与・人事・経営に関わることは、この案内では回答できません。担当者に直接ご確認ください。'],
+};
+
+const AI_GUIDE_INTENTS = [
+  {
+    key: 'expense',
+    patterns: [/経費/, /立替/, /領収書/, /レシート/],
+    responses: [
+      '経費の立替申請は「経費」→「立替・会社経費」から、領収書の写真をアップロードするだけでOKです。日付・金額はAIが自動で読み取ります。',
+      '領収書は「経費」画面の「複数の領収書をまとめて選ぶ」から、まとめて選択することもできますよ。',
+    ],
+    action: { label: '経費申請を開く', nav: 'expense-select' },
+  },
+  {
+    key: 'daily_report',
+    patterns: [/日報/],
+    responses: ['今日の日報はホーム画面の「日報」から入力できます。現場と勤務区分(終日・午前・午後)を選ぶだけで人工は自動計算されます。'],
+    action: { label: '日報を開く', nav: 'daily-report' },
+  },
+  {
+    key: 'entertainment',
+    patterns: [/接待/, /会食/],
+    responses: [
+      '接待・会食は、実施前に「接待・会食 事前申請」から申請してください。もし事前申請が間に合わなかった場合は「特別後日申請」から、理由を書いて申請できます。',
+    ],
+    action: { label: '接待事前申請を開く', nav: 'my-entertainment' },
+  },
+  {
+    key: 'leave',
+    patterns: [/有給/, /休み/, /休暇/],
+    responses: ['有給休暇の申請は「有給休暇」から、希望日を選んで送信するだけです。残日数もその画面で確認できます。'],
+    action: { label: '有給申請を開く', nav: 'leave' },
+  },
+  {
+    key: 'joyo_denpyo',
+    patterns: [/常用伝票/, /現場伝票/],
+    responses: ['現場の常用伝票は「常用伝票」から作成・確認できます。'],
+    action: { label: '常用伝票を開く', nav: 'joyo-denpyo-list' },
+  },
+  {
+    key: 'supply',
+    patterns: [/支給品/, /制服/, /安全用品/],
+    responses: ['制服や安全用品の支給申請は「支給品」からできます。'],
+    action: { label: '支給品を開く', nav: 'supply-request' },
+  },
+  {
+    key: 'qualification',
+    patterns: [/資格/, /免許/],
+    responses: ['資格・免許の登録や期限確認は「自分の情報」→「資格・免許」からできます。'],
+    action: { label: '資格・免許を開く', nav: 'my-qual' },
+  },
+  {
+    key: 'meeting',
+    patterns: [/会議費/, /会議/],
+    responses: ['会議費の申請は「会議」から申請できます。'],
+    action: { label: '会議費申請を開く', nav: 'meeting' },
+  },
+];
+
+const AI_GUIDE_QUICK_REPLIES = ['経費申請したい', '日報の入力方法', '接待の事前申請ってどうする？', '有給申請したい'];
+
+const AI_GUIDE_FALLBACK = [
+  'すみません、うまく理解できませんでした。経費申請・日報・有給・接待の事前申請などは下のボタンからも選べます。',
+  'その内容はまだお答えできません。下のボタンからよく聞かれる内容を選ぶか、担当者に直接お尋ねください。',
+];
+
+function matchAiGuideIntent(text) {
+  if (AI_GUIDE_BOUNDARY.patterns.some((p) => p.test(text))) return { responses: AI_GUIDE_BOUNDARY.responses, action: null };
+  const hit = AI_GUIDE_INTENTS.find((intent) => intent.patterns.some((p) => p.test(text)));
+  if (hit) return { responses: hit.responses, action: hit.action || null };
+  return { responses: AI_GUIDE_FALLBACK, action: null };
+}
+
+function renderAiGuideMessages() {
+  const el = document.getElementById('ai-guide-messages');
+  el.innerHTML = aiGuideHistory.map((m, i) => {
+    if (m.role === 'action') {
+      return `<button type="button" class="ai-guide-msg-action" data-nav="${m.nav}">${m.label}${icon('chevron-right')}</button>`;
+    }
+    return `<div class="ai-guide-msg ${m.role === 'user' ? 'user' : 'bot'}">${m.text}</div>`;
+  }).join('');
+  hydrateIcons(el);
+  el.querySelectorAll('.ai-guide-msg-action').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.getElementById('ai-guide-panel').classList.remove('open');
+      showScreen(btn.dataset.nav);
+    });
+  });
+  el.scrollTop = el.scrollHeight;
+}
+
+function handleAiGuideMessage(text) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  aiGuideHistory.push({ role: 'user', text: trimmed });
+  const { responses, action } = matchAiGuideIntent(trimmed);
+  aiGuideHistory.push({ role: 'bot', text: pick(responses) });
+  if (action) aiGuideHistory.push({ role: 'action', label: action.label, nav: action.nav });
+  renderAiGuideMessages();
+}
+
+function openAiGuidePanel() {
+  const panel = document.getElementById('ai-guide-panel');
+  panel.classList.add('open');
+  if (aiGuideHistory.length === 0) {
+    aiGuideHistory.push({ role: 'bot', text: 'こんにちは、迅翔くんです。申請の仕方やアプリの使い方について何でも聞いてください。' });
+    renderAiGuideMessages();
+  }
+  document.getElementById('ai-guide-input').focus();
+}
+
 // ---------- 初期化 ----------
 
 function init() {
@@ -7081,6 +7277,20 @@ function init() {
   const closeImageZoom = () => imageZoomOverlay.classList.remove('open');
   imageZoomOverlay.addEventListener('click', closeImageZoom);
   document.getElementById('image-zoom-close').addEventListener('click', (e) => { e.stopPropagation(); closeImageZoom(); });
+
+  document.getElementById('ai-guide-fab').addEventListener('click', openAiGuidePanel);
+  document.getElementById('ai-guide-close').addEventListener('click', () => document.getElementById('ai-guide-panel').classList.remove('open'));
+  document.getElementById('ai-guide-quick-replies').innerHTML = AI_GUIDE_QUICK_REPLIES.map((q) => `<button type="button">${q}</button>`).join('');
+  document.getElementById('ai-guide-quick-replies').querySelectorAll('button').forEach((btn) => {
+    btn.addEventListener('click', () => handleAiGuideMessage(btn.textContent));
+  });
+  const aiGuideSend = () => {
+    const input = document.getElementById('ai-guide-input');
+    handleAiGuideMessage(input.value);
+    input.value = '';
+  };
+  document.getElementById('ai-guide-send').addEventListener('click', aiGuideSend);
+  document.getElementById('ai-guide-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') aiGuideSend(); });
 
   document.getElementById('admin-exit-btn').addEventListener('click', () => {
     inAdminMode = false;

@@ -2523,13 +2523,18 @@ function shouldShowOnHome(a) {
   return false;
 }
 
-async function loadAnnouncements() {
+async function loadAnnouncements(includeArchived) {
   const session = getSession();
   const listEl = document.getElementById('announcements-list');
+  const archiveBtn = document.getElementById('announce-show-archived-btn');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
-    const rows = await rpc('get_my_announcements', { p_employee_code: session.employeeCode });
-    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">お知らせはありません。</div>'; return; }
+    const rows = await rpc('get_my_announcements', { p_employee_code: session.employeeCode, p_include_archived: !!includeArchived });
+    if (archiveBtn) archiveBtn.style.display = includeArchived ? 'none' : '';
+    if (!rows || rows.length === 0) {
+      listEl.innerHTML = `<div class="hint">${includeArchived ? '過去の通知はありません。' : 'お知らせはありません。'}</div>`;
+      return;
+    }
     listEl.innerHTML = rows.map((a) => `
       <div class="announce-item ${a.is_read ? '' : 'unread'}" data-id="${a.id}">
         <div class="row1">
@@ -6983,6 +6988,8 @@ function init() {
     loadAnonAdminList();
   };
   SCREEN_ENTER_HOOKS.announcements = loadAnnouncements;
+  const announceArchiveBtn = document.getElementById('announce-show-archived-btn');
+  if (announceArchiveBtn) announceArchiveBtn.addEventListener('click', () => loadAnnouncements(true));
   SCREEN_ENTER_HOOKS['admin-dashboard'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadAdminDashboard();

@@ -453,18 +453,15 @@ async function loadHomeAnnouncePreview() {
   area.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
     const rows = await rpc('get_my_announcements', { p_employee_code: session.employeeCode });
-    // 既読済みの通常通知がホームに居座らないようにする(shouldShowOnHome参照)。
-    // 表示順: ①重要かつ未読 ②重要かつ掲載期間中(既読でも) ③通常のお知らせで未読
-    // ④個人の申請通知(却下等)で未読。古い個人通知が重要な会社お知らせを埋もれさせないため。
+    // 重要/最重要は上部のannounce-banner-area(loadAnnounceBanner)に固定表示されるため、
+    // ここでは扱わない(二重表示を避ける)。表示順: ①通常のお知らせで未読
+    // ②個人の申請通知(却下等)で未読。古い個人通知が通常のお知らせを埋もれさせないため。
     const homeRank = (a) => {
-      const important = a.importance !== 'normal';
       const isPersonal = a.related_type === 'employee_requests';
-      if (important && !a.is_read) return 0;
-      if (important) return 1;
-      if (!isPersonal && !a.is_read) return 2;
-      return 3;
+      if (!isPersonal && !a.is_read) return 0;
+      return 1;
     };
-    const visible = (rows || []).filter(shouldShowOnHome)
+    const visible = (rows || []).filter((a) => a.importance === 'normal' && shouldShowOnHome(a))
       .sort((a, b) => homeRank(a) - homeRank(b) || new Date(b.created_at) - new Date(a.created_at));
     if (visible.length === 0) { area.innerHTML = '<div class="hint">お知らせはありません。</div>'; return; }
     const top = visible.slice(0, 3);
@@ -1825,7 +1822,9 @@ async function openMyRequestDetail(requestId, returnTo) {
         ${r.target_date ? `<div class="row2">${r.target_date}</div>` : ''}
         ${r.note ? `<div class="row2">備考: ${r.note}</div>` : ''}
         ${r.item_approval_status === 'rejected' && r.item_rejection_reason ? `<div class="row2">却下理由: ${r.item_rejection_reason}</div>` : ''}
-        ${r.receipt_url ? `<div class="row2"><img class="mrd-receipt-thumb" src="${r.receipt_url}" alt="領収書" data-zoom="${r.receipt_url}"></div>` : ''}
+        ${r.receipt_url
+          ? `<div class="row2"><img class="mrd-receipt-thumb" src="${r.receipt_url}" alt="領収書" data-zoom="${r.receipt_url}"></div>`
+          : '<div class="hint-inline">この明細には領収書画像が添付されていません</div>'}
       </div>
     `).join('');
     if (head.cover_sheet_url) {
@@ -2421,21 +2420,28 @@ async function loadTodayList() {
   }
 }
 
+// ホーム最上部の「重要なお知らせ」バナー。未読かどうかに関わらず、掲載期間中の
+// 重要/最重要のお知らせは全てここに固定表示する(既読になった瞬間に消えるのは
+// 通常のお知らせだけで、重要なお知らせは表示終了日まで上部に残り続ける仕様)。
 async function loadAnnounceBanner() {
   const session = getSession();
   const area = document.getElementById('announce-banner-area');
   area.innerHTML = '';
   try {
     const rows = await rpc('get_my_announcements', { p_employee_code: session.employeeCode });
-    const important = (rows || []).find((a) => (a.importance === 'important' || a.importance === 'critical') && !a.is_read);
-    if (!important) return;
-    area.innerHTML = `
-      <button type="button" class="announce-banner" id="home-announce-banner">
+    const importantOnes = (rows || [])
+      .filter((a) => (a.importance === 'important' || a.importance === 'critical') && shouldShowOnHome(a))
+      .sort((a, b) => (a.importance === b.importance ? 0 : a.importance === 'critical' ? -1 : 1) || new Date(b.created_at) - new Date(a.created_at));
+    if (importantOnes.length === 0) return;
+    area.innerHTML = importantOnes.map((important) => `
+      <button type="button" class="announce-banner home-announce-banner-item" data-id="${important.id}">
         <div class="announce-banner-label">📢 ${important.importance === 'critical' ? '最重要のお知らせ' : '重要なお知らせ'}</div>
         <div class="announce-banner-title">${important.title}</div>
       </button>
-    `;
-    document.getElementById('home-announce-banner').addEventListener('click', () => showScreen('announcements'));
+    `).join('');
+    area.querySelectorAll('.home-announce-banner-item').forEach((btn) => {
+      btn.addEventListener('click', () => showScreen('announcements'));
+    });
   } catch (e) { /* 表示できなくても致命的ではないため無視 */ }
 }
 
@@ -2489,8 +2495,16 @@ async function loadAnnouncements() {
       });
     });
     listEl.querySelectorAll('.announce-detail-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', async (e) => {
         e.stopPropagation();
+        // カードの本文をタップせず「詳細を見る」を直接タップした場合でも、この通知を
+        // 見た(内容を確認した)ことに変わりはないため、ここでも既読にする
+        // (以前はここを経由すると既読化されずホームに「未読」が残り続けるバグがあった)。
+        const item = btn.closest('.announce-item');
+        if (item && item.classList.contains('unread')) {
+          item.classList.remove('unread');
+          try { await rpc('mark_announcement_read', { p_employee_code: session.employeeCode, p_announcement_id: Number(item.dataset.id) }); } catch (e2) { /* 無視 */ }
+        }
         openMyRequestDetail(btn.dataset.requestId, 'announcements');
       });
     });

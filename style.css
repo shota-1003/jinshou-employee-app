@@ -109,6 +109,22 @@ main {
   color: #fff; background: linear-gradient(135deg, var(--primary), var(--primary-deep)); box-shadow: var(--glow-brand);
 }
 
+/* 管理者モード専用の下部ナビ。個人用と見た目で区別できるよう、上部に金色のラインを付ける
+   (管理者権限で操作中であることを常に視覚的に意識できるようにするため)。 */
+.admin-bottom-nav { border-top: 2px solid var(--accent-gold, #e6c384); }
+.admin-bottom-nav-item {
+  flex: 1; background: none; border: none; padding: 9px 4px 10px; margin: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  font-size: 10px; color: var(--text-faint); font-weight: 600; border-radius: 0;
+}
+.admin-bottom-nav-item .icon { width: 32px; height: 26px; padding: 3px 5px; border-radius: var(--radius-pill); color: var(--text-faint); transition: all .25s; }
+.admin-bottom-nav-item.active { color: var(--text); }
+.admin-bottom-nav-item.active .icon {
+  color: #fff; background: linear-gradient(135deg, var(--accent-gold, #e6c384), #a8813f); box-shadow: var(--glow-brand);
+}
+#admin-exit-btn { color: var(--danger); }
+#admin-exit-btn .icon { color: var(--danger); }
+
 .login-wrap { text-align: center; padding-top: 8vh; }
 .login-logo {
   width: 72px; height: 72px; object-fit: contain;

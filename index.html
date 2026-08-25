@@ -2277,6 +2277,16 @@
   <button type="button" class="bottom-nav-item" data-nav="myinfo"><span class="icon-slot" data-icon="user"></span><span>自分</span></button>
 </nav>
 
+<!-- 管理者モード専用の下部ナビ。個人側の5タブとは別物で、管理者画面にいる間はこちらだけを
+     表示する(個人ページへ誤って戻らないようにするため)。個人画面へは専用ボタンからのみ戻る。 -->
+<nav class="bottom-nav admin-bottom-nav" id="admin-bottom-nav" style="display:none;">
+  <button type="button" class="admin-bottom-nav-item" data-nav="admin-dashboard"><span class="icon-slot" data-icon="shield"></span><span>管理ホーム</span></button>
+  <button type="button" class="admin-bottom-nav-item" data-nav="admin-all-requests"><span class="icon-slot" data-icon="clipboard-list"></span><span>申請管理</span></button>
+  <button type="button" class="admin-bottom-nav-item" data-nav="employee-summary"><span class="icon-slot" data-icon="receipt"></span><span>経費精算</span></button>
+  <button type="button" class="admin-bottom-nav-item" data-nav="daily-report-management"><span class="icon-slot" data-icon="clipboard-list"></span><span>日報管理</span></button>
+  <button type="button" class="admin-bottom-nav-item" id="admin-exit-btn"><span class="icon-slot" data-icon="user"></span><span>社員画面に戻る</span></button>
+</nav>
+
 <script src="icons.js"></script>
 <script src="app.js"></script>
 </body>

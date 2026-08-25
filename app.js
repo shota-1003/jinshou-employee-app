@@ -155,14 +155,38 @@ function hydrateIcons(root) {
 // history.pushStateで積んでおく(popstateから呼ぶ場合はfromPopstate:trueにして
 // 積み直さない)。これが無いと「戻る」操作がアプリ内遷移として扱われず、
 // アプリ自体が終了・ホーム画面に戻る等の予期しない挙動になってしまう。
+// 管理者専用画面(ここに来た時点で下部ナビを管理者用に切り替える)。個人側の5タブ
+// (ホーム/申請/お知らせ/履歴/自分)を管理者作業中に誤って押して個人ページへ
+// 戻ってしまう不具合の対策として、管理者モード中は専用の下部ナビだけを表示し、
+// 個人画面へは専用の「社員画面に戻る」ボタンからのみ戻れるようにする。
+const ADMIN_SCREENS = new Set([
+  'admin', 'admin-dashboard', 'admin-announce', 'admin-request-list', 'admin-all-requests', 'admin-role-management',
+  'anon-admin', 'anon-admin-thread',
+  'qual-admin', 'category-review', 'employee-directory', 'employee-detail', 'info-change-admin',
+  'supply-master-admin', 'entertainment-admin', 'site-admin', 'leave-admin', 'leave-grant',
+  'employee-summary', 'employee-monthly-detail', 'attendance-matrix', 'bulk-expense-admin', 'bulk-expense-detail',
+  'expense-payment', 'joyo-denpyo-admin', 'event-admin', 'license-admin', 'health-admin',
+  'daily-report-admin', 'daily-report-management', 'daily-report-detail', 'purpose-admin',
+  'subcontractor-company-admin', 'subcontractor-worker-admin',
+]);
+let inAdminMode = false;
+
 function showScreen(id, opts) {
   opts = opts || {};
   document.querySelectorAll('.screen').forEach((el) => el.classList.remove('active'));
   document.getElementById(`screen-${id}`).classList.add('active');
   const preAuthScreens = ['login', 'pin-entry', 'pin-register'];
-  document.getElementById('bottom-nav').style.display = preAuthScreens.includes(id) ? 'none' : 'flex';
+  if (!preAuthScreens.includes(id)) {
+    if (ADMIN_SCREENS.has(id)) inAdminMode = true;
+    else if (BOTTOM_NAV_MAP[id] || id === 'menu') inAdminMode = false; // 個人側の画面へ来たら管理者モードを解除
+  }
+  document.getElementById('bottom-nav').style.display = (!preAuthScreens.includes(id) && !inAdminMode) ? 'flex' : 'none';
+  document.getElementById('admin-bottom-nav').style.display = (!preAuthScreens.includes(id) && inAdminMode) ? 'flex' : 'none';
   document.querySelectorAll('.bottom-nav-item').forEach((btn) => {
     btn.classList.toggle('active', btn.getAttribute('data-nav') === (BOTTOM_NAV_MAP[id] || id));
+  });
+  document.querySelectorAll('.admin-bottom-nav-item').forEach((btn) => {
+    btn.classList.toggle('active', btn.getAttribute('data-nav') === id);
   });
   if (!opts.fromPopstate && !preAuthScreens.includes(id)) {
     history.pushState({ screen: id }, '', location.pathname + location.search);
@@ -6732,6 +6756,11 @@ function init() {
   const closeImageZoom = () => imageZoomOverlay.classList.remove('open');
   imageZoomOverlay.addEventListener('click', closeImageZoom);
   document.getElementById('image-zoom-close').addEventListener('click', (e) => { e.stopPropagation(); closeImageZoom(); });
+
+  document.getElementById('admin-exit-btn').addEventListener('click', () => {
+    inAdminMode = false;
+    enterMenu();
+  });
 
   document.querySelectorAll('[data-nav]').forEach((el) => {
     el.addEventListener('click', () => {

@@ -3378,6 +3378,22 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray;
 }
 
+// sw.jsのpushsubscriptionchangeハンドラが、ページが開いていない状態でも自力で
+// register_my_push_subscriptionを呼び直せるよう、購読中は社員番号と端末トークンを
+// IndexedDBへ保存しておく(localStorageはService Workerから読めないため)。
+function savePushAuthForSW(employeeCode, token) {
+  try {
+    const req = indexedDB.open('jinshou-push-auth', 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore('auth', { keyPath: 'id' }); };
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = db.transaction('auth', 'readwrite');
+      if (employeeCode && token) tx.objectStore('auth').put({ id: 'current', employeeCode, token });
+      else tx.objectStore('auth').delete('current');
+    };
+  } catch (e) { /* IndexedDB非対応環境では諦める(pushsubscriptionchangeの自動復旧のみ効かない) */ }
+}
+
 async function initPushToggleState() {
   const toggle = document.getElementById('myinfo-push-toggle');
   const statusEl = document.getElementById('myinfo-push-status');
@@ -3386,10 +3402,16 @@ async function initPushToggleState() {
     statusEl.textContent = 'この端末・ブラウザはPush通知に対応していません。';
     return;
   }
+  if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+    toggle.checked = false;
+    statusEl.textContent = 'ブラウザ側で通知がブロックされています。ブラウザのアドレスバー付近の設定アイコンから、このサイトの通知を「許可」に変更してから再度お試しください。';
+    return;
+  }
   try {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     toggle.checked = !!sub;
+    if (sub) statusEl.textContent = 'Push通知は有効です。';
   } catch (e) { /* 取得できなくてもトグル操作自体は試せる */ }
 }
 
@@ -3412,6 +3434,7 @@ async function togglePushNotifications(enable) {
         p_employee_code: session.employeeCode, p_endpoint: json.endpoint,
         p_p256dh: json.keys.p256dh, p_auth: json.keys.auth, p_user_agent: navigator.userAgent,
       });
+      savePushAuthForSW(session.employeeCode, currentDeviceToken);
       statusEl.textContent = 'Push通知を有効にしました。';
     } else {
       const sub = await reg.pushManager.getSubscription();
@@ -3419,6 +3442,7 @@ async function togglePushNotifications(enable) {
         await rpc('unregister_my_push_subscription', { p_employee_code: session.employeeCode, p_endpoint: sub.endpoint });
         await sub.unsubscribe();
       }
+      savePushAuthForSW(null, null);
       statusEl.textContent = 'Push通知を無効にしました。';
     }
   } catch (e) {

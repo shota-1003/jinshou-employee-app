@@ -799,9 +799,11 @@
     <button type="button" class="back-link" data-nav="menu-apply">申請一覧に戻る</button>
 
     <div class="card summary-card">
-      <div class="summary-row"><span>有給残日数</span><span class="summary-value" id="leave-summary-balance">-</span></div>
-      <div class="summary-row"><span>今年使用</span><span class="summary-value" id="leave-summary-used">-</span></div>
-      <div class="summary-row"><span>今年取得回数</span><span class="summary-value" id="leave-summary-count">-</span></div>
+      <div class="hint-inline" id="leave-summary-period" style="margin-bottom:8px;"></div>
+      <div class="summary-row"><span>今年度 使用</span><span class="summary-value" id="leave-summary-used">-</span></div>
+      <div class="summary-row"><span>今年度 付与</span><span class="summary-value" id="leave-summary-granted">-</span></div>
+      <div class="summary-row"><span>今年度 残り</span><span class="summary-value" id="leave-summary-balance">-</span></div>
+      <div class="summary-row"><span>今年度 取得回数</span><span class="summary-value" id="leave-summary-count">-</span></div>
       <div class="hint-inline" id="leave-summary-note"></div>
     </div>
     <button type="button" class="secondary" data-nav="leave-history">取得履歴を見る</button>
@@ -1122,8 +1124,9 @@
     <div class="hint" id="myinfo-photo-status" style="margin-bottom:12px;"></div>
 
     <div class="stat-mini-row">
-      <div class="stat-mini"><span class="stat-mini-label">有給残日数</span><span class="stat-mini-value" id="myinfo-leave-balance">-</span></div>
-      <div class="stat-mini"><span class="stat-mini-label">今年使用</span><span class="stat-mini-value" id="myinfo-leave-used">-</span></div>
+      <div class="stat-mini"><span class="stat-mini-label">今年度使用</span><span class="stat-mini-value" id="myinfo-leave-used">-</span></div>
+      <div class="stat-mini"><span class="stat-mini-label">今年度付与</span><span class="stat-mini-value" id="myinfo-leave-granted">-</span></div>
+      <div class="stat-mini"><span class="stat-mini-label">残り</span><span class="stat-mini-value" id="myinfo-leave-balance">-</span></div>
     </div>
 
     <div class="section-title">基本情報</div>
@@ -1819,7 +1822,7 @@
     <div id="la-list" class="areq-cards"></div>
     <div class="areq-table-wrap">
       <table class="areq-table">
-        <thead><tr><th>社員番号</th><th>氏名</th><th>残日数</th><th>付与累計</th><th>使用累計</th><th>次回付与目安</th><th></th></tr></thead>
+        <thead><tr><th>社員番号</th><th>氏名</th><th>方式</th><th>残日数</th><th>付与累計</th><th>使用累計</th><th>次回付与目安</th><th></th></tr></thead>
         <tbody id="la-table-body"></tbody>
       </table>
     </div>
@@ -1830,13 +1833,48 @@
     <button type="button" class="back-link" data-nav="leave-admin">有給管理に戻る</button>
     <div class="form-title">有給を付与する</div>
     <div class="hint" id="leave-grant-target" style="margin-bottom:10px;"></div>
+
+    <label for="leave-grant-method">付与方式<span class="required-mark">(必須)</span></label>
+    <select id="leave-grant-method">
+      <option value="">選択してください</option>
+      <option value="legal_statutory">法定基準(労基法39条)</option>
+      <option value="company_custom">会社独自運用</option>
+    </select>
+    <div id="leave-grant-statutory-wrap" style="display:none;">
+      <label for="leave-grant-schedule">週所定労働日数区分</label>
+      <select id="leave-grant-schedule">
+        <option value="full_time">通常(週5日以上/週30時間以上)</option>
+        <option value="weekly_4days">週4日(比例付与)</option>
+        <option value="weekly_3days">週3日(比例付与)</option>
+        <option value="weekly_2days">週2日(比例付与)</option>
+        <option value="weekly_1day">週1日(比例付与)</option>
+      </select>
+      <div class="hint-inline" id="leave-grant-statutory-hint"></div>
+    </div>
+
     <label for="leave-grant-amount">付与日数<span class="required-mark">(必須)</span></label>
     <input type="number" id="leave-grant-amount" step="0.5" min="0.5" placeholder="例: 10">
+
     <label for="leave-grant-date">付与日<span class="required-mark">(必須)</span></label>
     <input type="date" id="leave-grant-date">
-    <label for="leave-grant-note">メモ</label>
+
+    <label for="leave-grant-period-start">対象期間 開始<span class="required-mark">(必須)</span></label>
+    <input type="date" id="leave-grant-period-start">
+    <label for="leave-grant-period-end">対象期間 終了<span class="required-mark">(必須)</span></label>
+    <input type="date" id="leave-grant-period-end">
+
+    <label for="leave-grant-note">付与理由・メモ</label>
     <div class="hint-inline">任意</div>
     <input type="text" id="leave-grant-note" placeholder="例: 2026年度定期付与">
+
+    <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+      <input type="checkbox" id="leave-grant-manual-adjustment"> 手動調整として記録する(前システムからの繰越等)
+    </label>
+    <div id="leave-grant-adjustment-reason-wrap" style="display:none;">
+      <label for="leave-grant-adjustment-reason">調整理由<span class="required-mark">(必須)</span></label>
+      <input type="text" id="leave-grant-adjustment-reason" placeholder="例: 前システムからの繰越分">
+    </div>
+
     <div class="error" id="leave-grant-error"></div>
     <button id="leave-grant-submit">付与する</button>
   </section>
@@ -2078,12 +2116,38 @@
     </div>
     <div class="tab-panel" id="employee-detail-panel-leave">
       <div class="stat-mini-row">
-        <div class="stat-mini"><span class="stat-mini-label">有給残日数</span><span class="stat-mini-value" id="employee-detail-leave-balance">-</span></div>
-        <div class="stat-mini"><span class="stat-mini-label">今年使用</span><span class="stat-mini-value" id="employee-detail-leave-used">-</span></div>
+        <div class="stat-mini"><span class="stat-mini-label">今年度使用</span><span class="stat-mini-value" id="employee-detail-leave-used">-</span></div>
+        <div class="stat-mini"><span class="stat-mini-label">今年度付与</span><span class="stat-mini-value" id="employee-detail-leave-granted">-</span></div>
+        <div class="stat-mini"><span class="stat-mini-label">残り</span><span class="stat-mini-value" id="employee-detail-leave-balance">-</span></div>
       </div>
+      <div class="hint-inline" id="employee-detail-leave-period">-</div>
       <button type="button" class="secondary" id="employee-detail-grant-leave-btn">有給を付与する</button>
 
-      <div class="section-title">付与ポリシー</div>
+      <div class="section-title">付与方式</div>
+      <div class="hint" style="margin-bottom:10px;">給与形態(月給・日当月給等)から自動判定はしません。社員ごとに実態に合わせて選んでください。</div>
+      <label for="employee-detail-leave-method">有給管理方式</label>
+      <select id="employee-detail-leave-method">
+        <option value="">未設定</option>
+        <option value="legal_statutory">法定基準(労基法39条)で計算</option>
+        <option value="company_custom">会社独自運用</option>
+      </select>
+      <div id="employee-detail-leave-statutory-wrap" style="display:none;">
+        <label for="employee-detail-leave-schedule">週所定労働日数区分</label>
+        <select id="employee-detail-leave-schedule">
+          <option value="full_time">通常(週5日以上/週30時間以上)</option>
+          <option value="weekly_4days">週4日(比例付与)</option>
+          <option value="weekly_3days">週3日(比例付与)</option>
+          <option value="weekly_2days">週2日(比例付与)</option>
+          <option value="weekly_1day">週1日(比例付与)</option>
+        </select>
+        <div class="hint-inline" id="employee-detail-leave-statutory-hint"></div>
+      </div>
+      <div id="employee-detail-leave-custom-wrap" style="display:none;">
+        <label for="employee-detail-leave-custom-note">会社独自運用の説明</label>
+        <input type="text" id="employee-detail-leave-custom-note" placeholder="例: 日当月給社員の年7日目安">
+      </div>
+
+      <div class="section-title">次回付与予定</div>
       <div class="hint" id="employee-detail-leave-policy-hint" style="margin-bottom:10px;"></div>
       <label for="employee-detail-leave-base-date">基準日</label>
       <input type="date" id="employee-detail-leave-base-date">
@@ -2091,8 +2155,11 @@
       <input type="date" id="employee-detail-leave-next-grant">
       <button type="button" class="secondary" id="employee-detail-leave-policy-save">ポリシーを保存する</button>
 
-      <div class="section-title">付与・使用履歴</div>
+      <div class="section-title">付与・使用履歴(元帳)</div>
       <div id="employee-detail-leave-history"></div>
+
+      <div class="section-title">付与記録(方式・理由の内訳)</div>
+      <div id="employee-detail-leave-grants"></div>
     </div>
     <div class="tab-panel" id="employee-detail-panel-qual">
       <div class="section-title">健康診断</div>

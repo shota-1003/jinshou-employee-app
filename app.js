@@ -425,13 +425,14 @@ async function switchEmployee() {
   showScreen('login');
 }
 
-async function loadHomeLeaveStats(balanceElId, usedElId) {
+async function loadHomeLeaveStats(balanceElId, usedElId, grantedElId) {
   const session = getSession();
   try {
     const rows = await rpc('get_leave_summary', { p_employee_code: session.employeeCode });
     const b = rows && rows[0];
-    document.getElementById(balanceElId).textContent = b && b.has_initial_grant ? `${b.current_balance}日` : '未登録';
-    document.getElementById(usedElId).textContent = b ? `${b.used_this_year}日` : '-';
+    document.getElementById(balanceElId).textContent = b && b.has_active_period ? `${b.remaining_this_period}日` : '未設定';
+    document.getElementById(usedElId).textContent = b && b.has_active_period ? `${b.used_this_period}日` : '-';
+    if (grantedElId) document.getElementById(grantedElId).textContent = b && b.has_active_period ? `${b.granted_this_period}日` : '-';
   } catch (e) { /* 表示できなくても致命的ではないため無視 */ }
 }
 
@@ -551,7 +552,7 @@ async function renderHomeLeaveCard(session) {
   try {
     const rows = await rpc('get_leave_summary', { p_employee_code: session.employeeCode });
     const b = rows && rows[0];
-    descEl.textContent = b && b.has_initial_grant ? `残${b.current_balance}日` : '残日数を確認・申請する';
+    descEl.textContent = b && b.has_active_period ? `今年度 使用${b.used_this_period}日・残り${b.remaining_this_period}日` : '残日数を確認・申請する';
   } catch (e) { /* 取れなくても遷移自体はできる */ }
 }
 
@@ -738,14 +739,21 @@ async function loadLeaveBalance() {
   try {
     const rows = await rpc('get_leave_summary', { p_employee_code: session.employeeCode });
     const b = rows && rows[0];
-    document.getElementById('leave-summary-used').textContent = b ? `${b.used_this_year}日` : '-';
-    document.getElementById('leave-summary-count').textContent = b ? `${b.taken_count_this_year}回` : '-';
-    if (!b || !b.has_initial_grant) {
-      document.getElementById('leave-summary-balance').textContent = '未登録';
-      document.getElementById('leave-summary-note').textContent = '正式な有給残日数はまだ会社側で登録されていません。';
+    if (!b || !b.has_active_period) {
+      document.getElementById('leave-summary-period').textContent = '';
+      document.getElementById('leave-summary-used').textContent = '-';
+      document.getElementById('leave-summary-granted').textContent = '-';
+      document.getElementById('leave-summary-count').textContent = '-';
+      document.getElementById('leave-summary-balance').textContent = '未設定';
+      document.getElementById('leave-summary-note').textContent = '今年度の有給付与がまだ会社側で登録されていません。人事へご確認ください。';
       box.textContent = '';
     } else {
-      document.getElementById('leave-summary-balance').textContent = `${b.current_balance}日`;
+      const fmtDate = (d) => new Date(d).toLocaleDateString('ja-JP');
+      document.getElementById('leave-summary-period').textContent = `対象期間: ${fmtDate(b.period_start)}〜${fmtDate(b.period_end)}`;
+      document.getElementById('leave-summary-used').textContent = `${b.used_this_period}日`;
+      document.getElementById('leave-summary-granted').textContent = `${b.granted_this_period}日`;
+      document.getElementById('leave-summary-count').textContent = `${b.taken_count_this_period}回`;
+      document.getElementById('leave-summary-balance').textContent = `${b.remaining_this_period}日`;
       document.getElementById('leave-summary-note').textContent = '';
       box.textContent = `申請後の残日数見込み: 計算中`;
     }
@@ -3457,7 +3465,7 @@ async function loadMyInfo() {
   document.getElementById('myinfo-name').textContent = session.employeeName;
   document.getElementById('myinfo-code').textContent = `社員番号: ${session.employeeCode}`;
   document.getElementById('myinfo-photo-status').textContent = '';
-  loadHomeLeaveStats('myinfo-leave-balance', 'myinfo-leave-used');
+  loadHomeLeaveStats('myinfo-leave-balance', 'myinfo-leave-used', 'myinfo-leave-granted');
   initPushToggleState();
 
   try {
@@ -3662,7 +3670,7 @@ async function switchEmployeeDetailTab(tab) {
   document.querySelectorAll('#employee-detail-tabs .tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('#screen-employee-detail .tab-panel').forEach((p) => p.classList.toggle('active', p.id === `employee-detail-panel-${tab}`));
   if (tab === 'basic') await loadEmployeeDetailBasic();
-  else if (tab === 'leave') { await loadEmployeeDetailLeave(); await loadEmployeeDetailLeavePolicy(); }
+  else if (tab === 'leave') { await loadEmployeeDetailLeave(); await loadEmployeeDetailLeavePolicy(); await loadEmployeeDetailLeaveGrants(); }
   else if (tab === 'qual') await loadEmployeeDetailQual();
   else if (tab === 'supply') await loadEmployeeDetailSupply();
   else if (tab === 'requests') await loadEmployeeDetailRequests();
@@ -3734,10 +3742,19 @@ async function loadEmployeeDetailLeave() {
   const listEl = document.getElementById('employee-detail-leave-history');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
-    const rows = await rpc('get_employee_admin_summary', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
-    const s = rows && rows[0];
-    document.getElementById('employee-detail-leave-balance').textContent = s && s.leave_balance != null ? `${s.leave_balance}日` : '未登録';
-    document.getElementById('employee-detail-leave-used').textContent = s ? `${s.leave_used_this_year}日` : '-';
+    const summaryRows = await rpc('admin_get_employee_leave_summary', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
+    const b = summaryRows && summaryRows[0];
+    if (b && b.has_active_period) {
+      document.getElementById('employee-detail-leave-used').textContent = `${b.used_this_period}日`;
+      document.getElementById('employee-detail-leave-granted').textContent = `${b.granted_this_period}日`;
+      document.getElementById('employee-detail-leave-balance').textContent = `${b.remaining_this_period}日`;
+      document.getElementById('employee-detail-leave-period').textContent = `対象期間: ${new Date(b.period_start).toLocaleDateString('ja-JP')}〜${new Date(b.period_end).toLocaleDateString('ja-JP')}`;
+    } else {
+      document.getElementById('employee-detail-leave-used').textContent = '-';
+      document.getElementById('employee-detail-leave-granted').textContent = '-';
+      document.getElementById('employee-detail-leave-balance').textContent = '未設定';
+      document.getElementById('employee-detail-leave-period').textContent = '今年度の付与がまだ登録されていません。';
+    }
 
     const ledger = await rpc('admin_get_employee_leave_ledger', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
     if (!ledger || ledger.length === 0) { listEl.innerHTML = '<div class="hint">付与・使用履歴はまだありません。</div>'; return; }
@@ -3765,32 +3782,91 @@ async function loadEmployeeDetailLeave() {
 
 let leaveGrantTargetCode = null;
 
-function openLeaveGrant(code, name) {
+function updateLeaveGrantStatutoryHint() {
+  const hintEl = document.getElementById('leave-grant-statutory-hint');
+  const hireDate = document.getElementById('leave-grant-target').dataset.hireDate;
+  const schedule = document.getElementById('leave-grant-schedule').value;
+  if (!hireDate) { hintEl.textContent = ''; return; }
+  rpc('calc_statutory_leave_days', { p_hire_date: hireDate, p_schedule: schedule, p_as_of: todayJST() })
+    .then((rows) => {
+      const days = Array.isArray(rows) ? rows[0] : rows;
+      hintEl.textContent = days != null ? `参考(法定最低基準): ${typeof days === 'object' ? days.calc_statutory_leave_days : days}日` : '入社日が未登録のため参考値を計算できません。';
+    })
+    .catch(() => { hintEl.textContent = ''; });
+}
+
+async function openLeaveGrant(code, name) {
+  const session = getSession();
   leaveGrantTargetCode = code;
-  document.getElementById('leave-grant-target').textContent = `対象: ${name}さん(${code})`;
+  const targetEl = document.getElementById('leave-grant-target');
+  targetEl.textContent = `対象: ${name}さん(${code})`;
+  targetEl.dataset.hireDate = '';
+  document.getElementById('leave-grant-method').value = '';
+  document.getElementById('leave-grant-schedule').value = 'full_time';
+  document.getElementById('leave-grant-statutory-wrap').style.display = 'none';
+  document.getElementById('leave-grant-statutory-hint').textContent = '';
   document.getElementById('leave-grant-amount').value = '';
   document.getElementById('leave-grant-date').value = todayJST();
+  document.getElementById('leave-grant-period-start').value = todayJST();
+  document.getElementById('leave-grant-period-end').value = '';
   document.getElementById('leave-grant-note').value = '';
+  document.getElementById('leave-grant-manual-adjustment').checked = false;
+  document.getElementById('leave-grant-adjustment-reason-wrap').style.display = 'none';
+  document.getElementById('leave-grant-adjustment-reason').value = '';
   hideError('leave-grant-error');
   showScreen('leave-grant');
+  try {
+    const rows = await rpc('admin_get_employee_leave_policy', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
+    const p = rows && rows[0];
+    if (p && p.hire_date) targetEl.dataset.hireDate = p.hire_date.slice(0, 10);
+    if (p && p.grant_method) {
+      document.getElementById('leave-grant-method').value = p.grant_method;
+      document.getElementById('leave-grant-statutory-wrap').style.display = p.grant_method === 'legal_statutory' ? '' : 'none';
+    }
+    if (p && p.statutory_schedule) document.getElementById('leave-grant-schedule').value = p.statutory_schedule;
+    updateLeaveGrantStatutoryHint();
+  } catch (e) { /* 参考値が取れなくても付与自体は続行できる */ }
 }
 
 async function doSubmitLeaveGrant() {
   const session = getSession();
+  const method = document.getElementById('leave-grant-method').value;
+  const schedule = document.getElementById('leave-grant-schedule').value;
   const amount = Number(document.getElementById('leave-grant-amount').value);
   const date = document.getElementById('leave-grant-date').value;
+  const periodStart = document.getElementById('leave-grant-period-start').value;
+  const periodEnd = document.getElementById('leave-grant-period-end').value;
+  const note = document.getElementById('leave-grant-note').value.trim() || null;
+  const isManual = document.getElementById('leave-grant-manual-adjustment').checked;
+  const adjustmentReason = document.getElementById('leave-grant-adjustment-reason').value.trim() || null;
   hideError('leave-grant-error');
+  if (!method) { showError('leave-grant-error', '付与方式(法定基準/会社独自運用)を選択してください。'); return; }
   if (!amount || amount <= 0) { showError('leave-grant-error', '付与日数を入力してください。'); return; }
   if (!date) { showError('leave-grant-error', '付与日を入力してください。'); return; }
+  if (!periodStart || !periodEnd) { showError('leave-grant-error', '対象期間(開始・終了)を入力してください。'); return; }
+  if (isManual && !adjustmentReason) { showError('leave-grant-error', '手動調整の場合は調整理由を入力してください。'); return; }
   try {
-    await rpc('admin_grant_leave', {
+    await rpc('admin_record_leave_grant', {
       p_admin_employee_code: session.employeeCode, p_target_employee_code: leaveGrantTargetCode,
-      p_amount: amount, p_effective_date: date, p_note: document.getElementById('leave-grant-note').value.trim() || null,
+      p_granted_days: amount, p_grant_date: date, p_grant_period_start: periodStart, p_grant_period_end: periodEnd,
+      p_grant_method: method, p_grant_reason: note, p_is_manual_adjustment: isManual, p_adjustment_reason: adjustmentReason,
     });
+    // 対象社員の有給管理方式もあわせて記録しておく(次回以降の付与画面で自動反映される)。
+    await rpc('admin_set_employee_leave_policy', {
+      p_admin_employee_code: session.employeeCode, p_target_employee_code: leaveGrantTargetCode,
+      p_base_date: null, p_next_grant_date: null,
+      p_grant_method: method, p_statutory_schedule: method === 'legal_statutory' ? schedule : null, p_company_custom_note: method === 'company_custom' ? note : null,
+    }).catch(() => { /* ポリシー保存に失敗しても付与自体は成功しているため致命的ではない */ });
     showDone('有給を付与しました。', 'leave-admin');
   } catch (e) {
     showError('leave-grant-error', e.message || '付与に失敗しました。');
   }
+}
+
+function updateEmployeeDetailStatutoryHint() {
+  const method = document.getElementById('employee-detail-leave-method').value;
+  document.getElementById('employee-detail-leave-statutory-wrap').style.display = method === 'legal_statutory' ? '' : 'none';
+  document.getElementById('employee-detail-leave-custom-wrap').style.display = method === 'company_custom' ? '' : 'none';
 }
 
 async function loadEmployeeDetailLeavePolicy() {
@@ -3804,20 +3880,67 @@ async function loadEmployeeDetailLeavePolicy() {
     document.getElementById('employee-detail-leave-policy-hint').textContent = p && p.is_estimate
       ? `次回付与予定日は未設定のため目安(入社日または直近付与実績から自動計算)を表示しています。入社日: ${p.hire_date ? new Date(p.hire_date).toLocaleDateString('ja-JP') : '未登録'}`
       : '次回付与予定日は管理者により設定済みです。';
+    document.getElementById('employee-detail-leave-method').value = (p && p.grant_method) || '';
+    document.getElementById('employee-detail-leave-schedule').value = (p && p.statutory_schedule) || 'full_time';
+    document.getElementById('employee-detail-leave-custom-note').value = (p && p.company_custom_note) || '';
+    updateEmployeeDetailStatutoryHint();
+    document.getElementById('employee-detail-leave-statutory-hint').textContent = (p && p.statutory_reference_days != null)
+      ? `参考(法定最低基準): ${p.statutory_reference_days}日` : '';
   } catch (e) { /* 無視 */ }
 }
 
 async function doSaveLeavePolicy() {
   const session = getSession();
   const code = currentEmployeeDetailCode;
+  const method = document.getElementById('employee-detail-leave-method').value || null;
   try {
     await rpc('admin_set_employee_leave_policy', {
       p_admin_employee_code: session.employeeCode, p_target_employee_code: code,
       p_base_date: document.getElementById('employee-detail-leave-base-date').value || null,
       p_next_grant_date: document.getElementById('employee-detail-leave-next-grant').value || null,
+      p_grant_method: method,
+      p_statutory_schedule: method === 'legal_statutory' ? document.getElementById('employee-detail-leave-schedule').value : null,
+      p_company_custom_note: method === 'company_custom' ? (document.getElementById('employee-detail-leave-custom-note').value.trim() || null) : null,
     });
     await loadEmployeeDetailLeavePolicy();
   } catch (e) { alert(e.message || '保存に失敗しました。'); }
+}
+
+const LEAVE_GRANT_METHOD_LABEL = { legal_statutory: '法定基準', company_custom: '会社独自運用' };
+
+async function loadEmployeeDetailLeaveGrants() {
+  const session = getSession();
+  const code = currentEmployeeDetailCode;
+  const listEl = document.getElementById('employee-detail-leave-grants');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_get_employee_leave_grants', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">付与記録はまだありません。</div>'; return; }
+    listEl.innerHTML = rows.map((g) => `
+      <div class="history-item">
+        <div class="row1">
+          <span>${LEAVE_GRANT_METHOD_LABEL[g.grant_method] || g.grant_method}${g.is_manual_adjustment ? '(手動調整)' : ''}${g.superseded_at ? ' <span class="mini-tag danger">訂正済み</span>' : ''}</span>
+          <span>${g.granted_days}日</span>
+        </div>
+        <div class="row2">対象期間 ${new Date(g.grant_period_start).toLocaleDateString('ja-JP')}〜${new Date(g.grant_period_end).toLocaleDateString('ja-JP')}・付与日${new Date(g.grant_date).toLocaleDateString('ja-JP')}${g.grant_reason ? `・${g.grant_reason}` : ''}</div>
+        <div class="row2">記録者: ${g.created_by}(${new Date(g.created_at).toLocaleDateString('ja-JP')})${g.superseded_at ? `・訂正: ${g.superseded_by}「${g.superseded_reason}」` : ''}</div>
+        ${!g.superseded_at ? `<button type="button" class="link leave-grant-supersede-btn" data-grant-id="${g.id}">この付与記録を訂正する</button>` : ''}
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.leave-grant-supersede-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const reason = prompt('訂正理由を入力してください(元の記録は削除されず、訂正済みとして残ります)');
+        if (!reason) return;
+        try {
+          await rpc('admin_supersede_leave_grant', { p_admin_employee_code: session.employeeCode, p_grant_id: Number(btn.dataset.grantId), p_reason: reason });
+          await loadEmployeeDetailLeave();
+          await loadEmployeeDetailLeaveGrants();
+        } catch (e) { alert(e.message || '訂正に失敗しました。'); }
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
 }
 
 // ---------- 有給管理(管理者、全社員比較) ----------
@@ -3836,12 +3959,14 @@ async function loadLeaveAdmin() {
     listEl.innerHTML = rows.map((r) => `
       <div class="admin-result-item la-row" data-code="${r.employee_code}" data-name="${r.employee_name}">
         <div class="row1"><span>${r.employee_name}(${r.employee_code})</span><span>${r.current_balance}日</span></div>
-        <div class="row2">付与累計${r.granted_total}日・使用累計${r.used_total}日・次回付与目安${r.next_grant_estimate ? new Date(r.next_grant_estimate).toLocaleDateString('ja-JP') : '-'}</div>
+        <div class="row2">${r.policy_is_set ? LEAVE_GRANT_METHOD_LABEL[r.grant_method] || r.grant_method : '<span class="mini-tag danger">方式未設定</span>'}・付与累計${r.granted_total}日・使用累計${r.used_total}日・次回付与目安${r.next_grant_estimate ? new Date(r.next_grant_estimate).toLocaleDateString('ja-JP') : '-'}</div>
       </div>
     `).join('');
     tbodyEl.innerHTML = rows.map((r) => `
       <tr class="la-row" data-code="${r.employee_code}" data-name="${r.employee_name}">
-        <td>${r.employee_code}</td><td>${r.employee_name}</td><td>${r.current_balance}日</td>
+        <td>${r.employee_code}</td><td>${r.employee_name}</td>
+        <td>${r.policy_is_set ? (LEAVE_GRANT_METHOD_LABEL[r.grant_method] || r.grant_method) : '<span class="mini-tag danger">未設定</span>'}</td>
+        <td>${r.current_balance}日</td>
         <td>${r.granted_total}日</td><td>${r.used_total}日</td>
         <td>${r.next_grant_estimate ? new Date(r.next_grant_estimate).toLocaleDateString('ja-JP') : '-'}</td>
         <td><button type="button" class="return-btn la-grant-btn" data-code="${r.employee_code}" data-name="${r.employee_name}">付与</button></td>
@@ -8245,6 +8370,22 @@ function init() {
     employeeSearchTimer = setTimeout(loadLeaveAdmin, 300);
   });
   document.getElementById('leave-grant-submit').addEventListener('click', doSubmitLeaveGrant);
+  document.getElementById('leave-grant-method').addEventListener('change', (e) => {
+    document.getElementById('leave-grant-statutory-wrap').style.display = e.target.value === 'legal_statutory' ? '' : 'none';
+    updateLeaveGrantStatutoryHint();
+  });
+  document.getElementById('leave-grant-schedule').addEventListener('change', updateLeaveGrantStatutoryHint);
+  document.getElementById('leave-grant-date').addEventListener('change', (e) => {
+    if (!document.getElementById('leave-grant-period-start').value) document.getElementById('leave-grant-period-start').value = e.target.value;
+    if (!document.getElementById('leave-grant-period-end').value && e.target.value) {
+      const d = new Date(e.target.value); d.setFullYear(d.getFullYear() + 1); d.setDate(d.getDate() - 1);
+      document.getElementById('leave-grant-period-end').value = d.toISOString().slice(0, 10);
+    }
+  });
+  document.getElementById('leave-grant-manual-adjustment').addEventListener('change', (e) => {
+    document.getElementById('leave-grant-adjustment-reason-wrap').style.display = e.target.checked ? '' : 'none';
+  });
+  document.getElementById('employee-detail-leave-method').addEventListener('change', updateEmployeeDetailStatutoryHint);
   document.getElementById('ep-submit').addEventListener('click', doSubmitExpensePayment);
 
   document.getElementById('expense-bulk-receipts-input').addEventListener('change', (e) => {

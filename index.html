@@ -87,6 +87,15 @@
     </div>
     <div class="home-announce-block" id="home-announce-block"></div>
 
+    <div id="home-daily-report-status-banner" class="today-item" style="cursor:pointer;display:none;">
+      <span class="today-item-icon"><span class="icon-slot" data-icon="clipboard-list"></span></span>
+      <div class="today-item-body">
+        <div class="today-item-label" id="home-daily-report-status-label">本日の日報</div>
+        <div class="today-item-count" id="home-daily-report-status-detail"></div>
+      </div>
+      <span class="today-item-arrow"><span class="icon-slot" data-icon="chevron-right"></span></span>
+    </div>
+
     <div class="section-title">今日やること</div>
     <div class="today-list" id="today-list"></div>
 
@@ -344,7 +353,34 @@
       <button type="button" class="secondary dr-summary-tab" data-period="calendar">今月(カレンダー)</button>
     </div>
     <div id="my-daily-report-summary" class="summary-card"></div>
-    <div id="my-daily-report-list"></div>
+
+    <div class="dr-view-toggle" style="margin:10px 0;">
+      <button type="button" class="secondary dr-view-tab" data-view="list">リスト表示</button>
+      <button type="button" class="secondary dr-view-tab" data-view="calendar">カレンダー表示</button>
+    </div>
+
+    <div id="my-daily-report-list-view">
+      <div id="my-daily-report-list"></div>
+    </div>
+
+    <div id="my-daily-report-calendar-view" style="display:none;">
+      <div class="dr-cal-nav">
+        <button type="button" class="secondary" id="dr-cal-prev">＜</button>
+        <div class="dr-cal-month-label" id="dr-cal-month-label"></div>
+        <button type="button" class="secondary" id="dr-cal-next">＞</button>
+      </div>
+      <div class="dr-cal-weekdays">
+        <span class="dr-cal-sun">日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="dr-cal-sat">土</span>
+      </div>
+      <div class="dr-cal-grid" id="dr-cal-grid"></div>
+      <div class="dr-cal-legend">
+        <span><span class="dr-cal-dot done"></span>提出済み</span>
+        <span><span class="dr-cal-dot warn"></span>要確認</span>
+        <span><span class="dr-cal-dot leave"></span>有給</span>
+        <span><span class="dr-cal-dot missing"></span>未提出</span>
+      </div>
+      <div id="dr-cal-day-detail"></div>
+    </div>
   </section>
 
   <!-- 日報 詳細(本人、履歴カードのタップ先。管理者用のscreen-daily-report-detailとは別) -->
@@ -2035,6 +2071,10 @@
       <input type="text" id="employee-edit-furigana">
       <label for="employee-edit-birth">生年月日</label>
       <input type="date" id="employee-edit-birth">
+      <div class="checkbox-row">
+        <input type="checkbox" id="employee-edit-show-birthday">
+        <label>誕生日を社内カレンダーに表示する(生年・年齢は表示されません)</label>
+      </div>
       <label for="employee-edit-department">所属/役割</label>
       <input type="text" id="employee-edit-department">
 

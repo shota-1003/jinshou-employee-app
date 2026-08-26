@@ -580,6 +580,8 @@ button.link {
 .today-item-arrow { color: var(--text-faint); flex-shrink: 0; }
 .today-item.urgent { background: var(--danger-bg); border-color: oklch(0.66 0.19 22 / 30%); }
 .today-item.urgent .today-item-icon { background: oklch(0.66 0.19 22 / 22%); color: var(--danger); }
+.today-item.done { background: var(--success-bg); border-color: oklch(0.74 0.15 155 / 30%); }
+.today-item.done .today-item-icon { background: var(--success-bg); color: var(--success); }
 .today-empty { font-size: 13px; color: var(--text-muted); padding: 8px 4px 4px; }
 
 /* 重要なお知らせバナー */
@@ -788,6 +790,33 @@ button.link {
 .summary-grid .summary-value { display: block; font-size: 15px; font-weight: 700; color: var(--text); }
 .button-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
 .button-row button { width: auto; flex: 0 0 auto; }
+
+/* ===== 日報 月間カレンダー ===== */
+.dr-view-toggle, .dr-cal-nav { display: flex; gap: 8px; align-items: center; }
+.dr-view-toggle .dr-view-tab { flex: 1; }
+.dr-view-toggle .dr-view-tab.active, .dr-cal-nav button.active { background: var(--primary); color: #fff; }
+.dr-cal-nav { justify-content: space-between; margin-bottom: 10px; }
+.dr-cal-nav button { width: auto; padding: 6px 14px; }
+.dr-cal-month-label { font-size: 15px; font-weight: 800; color: var(--text); }
+.dr-cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; font-size: 11px; color: var(--text-muted); font-weight: 700; margin-bottom: 4px; }
+.dr-cal-weekdays .dr-cal-sun { color: var(--danger); }
+.dr-cal-weekdays .dr-cal-sat { color: var(--primary); }
+.dr-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.dr-cal-cell { aspect-ratio: 1; border-radius: 10px; border: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 3px 2px; font-size: 12px; cursor: pointer; position: relative; background: var(--card-bg, transparent); }
+.dr-cal-cell.empty { visibility: hidden; cursor: default; }
+.dr-cal-cell.today { border-color: var(--primary); border-width: 2px; }
+.dr-cal-cell.sunday .dr-cal-daynum, .dr-cal-cell.holiday .dr-cal-daynum { color: var(--danger); }
+.dr-cal-cell.saturday .dr-cal-daynum { color: var(--primary); }
+.dr-cal-daynum { font-weight: 700; }
+.dr-cal-dots { display: flex; gap: 2px; margin-top: 2px; flex-wrap: wrap; justify-content: center; }
+.dr-cal-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.dr-cal-dot.done { background: var(--success); }
+.dr-cal-dot.warn { background: var(--danger); }
+.dr-cal-dot.leave { background: var(--info); }
+.dr-cal-dot.missing { border: 1px solid var(--danger); background: transparent; }
+.dr-cal-birthday { font-size: 9px; line-height: 1; margin-top: 1px; }
+.dr-cal-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--text-muted); margin: 10px 0; align-items: center; }
+.dr-cal-legend .dr-cal-dot { margin-right: 3px; }
 
 /* ===== 社員詳細(管理者)・自分の情報(社員) 共通の情報表示 ===== */
 .field-group { margin-bottom: 8px; }

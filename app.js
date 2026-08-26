@@ -502,6 +502,7 @@ function enterMenu() {
   showScreen('menu');
   renderHomeAdminBanner(session);
   renderHomeDailyReportCard(session);
+  renderHomeDailyReportStatusBanner(session);
   renderHomeEventsArea(session);
 }
 
@@ -516,6 +517,45 @@ async function renderHomeDailyReportCard(session) {
     const submitted = (rows || []).some((r) => r.report_status === 'submitted' || r.report_status === 'confirmed');
     descEl.textContent = submitted ? '本日の日報を確認' : '今日の日報を入力';
   } catch (e) { /* 取得できなくても遷移自体はできるため無視 */ }
+}
+
+// ホーム画面から1タップで「本日の日報を確認」できるようにする専用バナー(2026-08-26追加)。
+// 提出済み/未提出/要確認の3状態を出し分け、タップ先も状態に応じて変える
+// (未提出→入力画面、それ以外→詳細確認画面)。「よく使う機能」の日報カード(入力用)とは別に、
+// ホーム上部で状態そのものが一目で分かるようにする。
+async function renderHomeDailyReportStatusBanner(session) {
+  const banner = document.getElementById('home-daily-report-status-banner');
+  const labelEl = document.getElementById('home-daily-report-status-label');
+  const detailEl = document.getElementById('home-daily-report-status-detail');
+  const today = todayJST();
+  try {
+    const rows = await rpc('get_my_daily_report_detail', { p_employee_code: session.employeeCode, p_report_date: today });
+    banner.style.display = 'flex';
+    banner.classList.remove('urgent', 'done');
+    banner.onclick = null;
+
+    if (!rows || rows.length === 0) {
+      // 未提出。15時以降は「まだ提出されていません」として強調する(それより前は通常表示)。
+      const hourJST = Number(new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' })).getHours());
+      const isLate = hourJST >= 15;
+      banner.classList.toggle('urgent', isLate);
+      labelEl.textContent = isLate ? '本日の日報がまだ提出されていません' : '本日の日報：未提出';
+      detailEl.textContent = 'タップして入力する';
+      banner.onclick = () => showScreen('daily-report');
+    } else if (rows.some((r) => r.needs_review)) {
+      banner.classList.add('urgent');
+      labelEl.textContent = '本日の日報：要確認';
+      detailEl.textContent = '内容に確認が必要な点があります。タップして確認';
+      banner.onclick = () => openMyDailyReportDetail(today);
+    } else {
+      banner.classList.add('done');
+      labelEl.textContent = '本日の日報：提出済み ✓';
+      detailEl.textContent = 'タップして内容を確認';
+      banner.onclick = () => openMyDailyReportDetail(today);
+    }
+  } catch (e) {
+    banner.style.display = 'none';
+  }
 }
 
 // executiveはadmin-dashboard(全管理メニュー)、日報担当(nippo_admin、executiveではない)は
@@ -4155,6 +4195,7 @@ async function openEmployeeEditBasic() {
     if (p) {
       document.getElementById('employee-edit-furigana').value = p.furigana || '';
       document.getElementById('employee-edit-birth').value = p.birth_date ? p.birth_date.slice(0, 10) : '';
+      document.getElementById('employee-edit-show-birthday').checked = p.show_birthday_on_calendar !== false;
       document.getElementById('employee-edit-department').value = p.department || '';
       document.getElementById('employee-edit-is-driver').checked = !!p.is_driver;
       document.getElementById('employee-edit-can-overtime').checked = !!p.can_overtime;
@@ -4192,6 +4233,7 @@ async function doSaveEmployeeBasic() {
       p_can_input_transport: document.getElementById('employee-edit-can-transport').checked,
       p_can_input_qualification: document.getElementById('employee-edit-can-qualification').checked,
       p_can_backdate_entertainment_preapproval: document.getElementById('employee-edit-can-backdate-ent').checked,
+      p_show_birthday_on_calendar: document.getElementById('employee-edit-show-birthday').checked,
     });
     showScreen('employee-detail');
     await loadEmployeeDetailBasic();
@@ -5282,9 +5324,126 @@ async function doSubmitDailyReport(isDraft) {
 }
 
 let dailyReportSummaryPeriodType = 'pay_period';
+let dailyReportViewMode = 'list';
+let dailyReportCalYear = null;
+let dailyReportCalMonth = null;
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function setDailyReportView(mode) {
+  dailyReportViewMode = mode;
+  document.querySelectorAll('.dr-view-tab').forEach((btn) => btn.classList.toggle('active', btn.dataset.view === mode));
+  document.getElementById('my-daily-report-list-view').style.display = mode === 'list' ? 'block' : 'none';
+  document.getElementById('my-daily-report-calendar-view').style.display = mode === 'calendar' ? 'block' : 'none';
+  if (mode === 'calendar') {
+    if (dailyReportCalYear == null) {
+      const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+      dailyReportCalYear = now.getFullYear();
+      dailyReportCalMonth = now.getMonth() + 1;
+    }
+    loadDailyReportCalendar();
+  }
+}
+
+function shiftDailyReportCalMonth(delta) {
+  let m = dailyReportCalMonth + delta;
+  let y = dailyReportCalYear;
+  while (m < 1) { m += 12; y -= 1; }
+  while (m > 12) { m -= 12; y += 1; }
+  dailyReportCalYear = y;
+  dailyReportCalMonth = m;
+  loadDailyReportCalendar();
+}
+
+async function loadDailyReportCalendar() {
+  const session = getSession();
+  const grid = document.getElementById('dr-cal-grid');
+  const label = document.getElementById('dr-cal-month-label');
+  label.textContent = `${dailyReportCalYear}年${dailyReportCalMonth}月`;
+  grid.innerHTML = '<div class="hint">読み込み中...</div>';
+  document.getElementById('dr-cal-day-detail').innerHTML = '';
+  try {
+    const rows = await rpc('get_my_home_calendar_month', { p_employee_code: session.employeeCode, p_year: dailyReportCalYear, p_month: dailyReportCalMonth });
+    const byDate = new Map((rows || []).map((r) => [r.calendar_date, r]));
+    const today = todayJST();
+
+    const firstDow = new Date(Date.UTC(dailyReportCalYear, dailyReportCalMonth - 1, 1)).getUTCDay();
+    const daysInMonth = new Date(Date.UTC(dailyReportCalYear, dailyReportCalMonth, 0)).getUTCDate();
+
+    grid.innerHTML = '';
+    for (let i = 0; i < firstDow; i++) {
+      const empty = document.createElement('div');
+      empty.className = 'dr-cal-cell empty';
+      grid.appendChild(empty);
+    }
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${dailyReportCalYear}-${pad2(dailyReportCalMonth)}-${pad2(day)}`;
+      const info = byDate.get(dateStr);
+      const dow = new Date(Date.UTC(dailyReportCalYear, dailyReportCalMonth - 1, day)).getUTCDay();
+      const cell = document.createElement('div');
+      cell.className = 'dr-cal-cell';
+      if (dow === 0) cell.classList.add('sunday');
+      if (dow === 6) cell.classList.add('saturday');
+      if (info && (info.is_national_holiday || info.is_company_holiday)) cell.classList.add('holiday');
+      if (dateStr === today) cell.classList.add('today');
+
+      const dots = [];
+      if (info) {
+        if (info.needs_review) dots.push('<span class="dr-cal-dot warn"></span>');
+        else if (info.report_status === 'submitted' || info.report_status === 'confirmed') dots.push('<span class="dr-cal-dot done"></span>');
+        if (info.is_paid_leave) dots.push('<span class="dr-cal-dot leave"></span>');
+        if (!info.report_status && !info.is_paid_leave && dateStr < today && dow !== 0) dots.push('<span class="dr-cal-dot missing"></span>');
+      } else if (dateStr < today && dow !== 0) {
+        dots.push('<span class="dr-cal-dot missing"></span>');
+      }
+      const birthdayMark = info && info.birthday_names && info.birthday_names.length > 0
+        ? `<div class="dr-cal-birthday">🎂${info.birthday_names.length > 1 ? info.birthday_names.length + '名' : ''}</div>` : '';
+
+      cell.innerHTML = `<span class="dr-cal-daynum">${day}</span><div class="dr-cal-dots">${dots.join('')}</div>${birthdayMark}`;
+      cell.addEventListener('click', () => onDailyReportCalDayClick(dateStr, info));
+      grid.appendChild(cell);
+    }
+  } catch (e) {
+    grid.innerHTML = '<div class="empty-state">読み込みに失敗しました</div>';
+  }
+}
+
+function onDailyReportCalDayClick(dateStr, info) {
+  const detailEl = document.getElementById('dr-cal-day-detail');
+  const holidayName = info && (info.national_holiday_name || info.company_holiday_name);
+  const birthdayLine = info && info.birthday_names && info.birthday_names.length > 0 ? `🎂 ${info.birthday_names.join('・')}さん 誕生日` : '';
+  if (info && info.report_status) {
+    detailEl.innerHTML = `
+      <div class="card">
+        <div class="row1"><span>${dateStr}</span>${holidayName ? `<span class="mini-tag info">${holidayName}</span>` : ''}</div>
+        ${birthdayLine ? `<div class="hint-inline">${birthdayLine}</div>` : ''}
+        <button type="button" data-open-detail="${dateStr}">この日の日報を確認する</button>
+      </div>
+    `;
+    detailEl.querySelector('[data-open-detail]').addEventListener('click', () => openMyDailyReportDetail(dateStr));
+  } else {
+    detailEl.innerHTML = `
+      <div class="card">
+        <div class="row1"><span>${dateStr}</span>${holidayName ? `<span class="mini-tag info">${holidayName}</span>` : ''}</div>
+        ${birthdayLine ? `<div class="hint-inline">${birthdayLine}</div>` : ''}
+        ${info && info.is_paid_leave ? '<div class="hint-inline">有給休暇</div>' : '<div class="hint-inline">この日の日報はありません</div>'}
+        <button type="button" class="secondary" data-open-input="${dateStr}">この日の日報を入力する</button>
+      </div>
+    `;
+    detailEl.querySelector('[data-open-input]').addEventListener('click', () => {
+      dailyReportTarget = { type: 'self', employeeCode: null, employeeName: null, subcontractorWorkerId: null, workerName: null };
+      dailyReportPrefillDate = dateStr;
+      showScreen('daily-report');
+    });
+  }
+}
 
 async function loadMyDailyReports() {
   const session = getSession();
+  document.querySelectorAll('.dr-view-tab').forEach((btn) => btn.classList.toggle('active', btn.dataset.view === 'list'));
+  document.getElementById('my-daily-report-list-view').style.display = 'block';
+  document.getElementById('my-daily-report-calendar-view').style.display = 'none';
+  dailyReportViewMode = 'list';
   const list = document.getElementById('my-daily-report-list');
   list.innerHTML = '<div class="hint">読み込み中...</div>';
   loadMyDailyReportSummary();
@@ -7400,6 +7559,11 @@ function init() {
   document.querySelectorAll('.dr-summary-tab').forEach((btn) => {
     btn.addEventListener('click', () => { dailyReportSummaryPeriodType = btn.dataset.period; loadMyDailyReportSummary(); });
   });
+  document.querySelectorAll('.dr-view-tab').forEach((btn) => {
+    btn.addEventListener('click', () => setDailyReportView(btn.dataset.view));
+  });
+  document.getElementById('dr-cal-prev').addEventListener('click', () => shiftDailyReportCalMonth(-1));
+  document.getElementById('dr-cal-next').addEventListener('click', () => shiftDailyReportCalMonth(1));
   document.getElementById('my-daily-report-detail-edit-btn').addEventListener('click', () => {
     if (!myDailyReportDetailDate) return;
     dailyReportTarget = { type: 'self', employeeCode: null, employeeName: null, subcontractorWorkerId: null, workerName: null };

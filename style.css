@@ -811,8 +811,10 @@ button.link {
 .dr-cal-daynum { font-weight: 700; }
 .dr-cal-dots { display: flex; gap: 2px; margin-top: 2px; flex-wrap: wrap; justify-content: center; }
 .dr-cal-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
-.dr-cal-dot.done { background: var(--success); }
-.dr-cal-dot.warn { background: var(--danger); }
+/* 提出済み(done)は指示どおり赤丸で表示する。要確認(warn)は「提出済み」の赤丸に埋もれないよう、
+   同じ赤でも太い白枠つきの大きめの丸にして明確に区別する(2026-08-26、ユーザー指示への対応)。 */
+.dr-cal-dot.done { background: var(--danger); }
+.dr-cal-dot.warn { width: 9px; height: 9px; background: var(--danger); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--danger); margin: -1.5px; }
 .dr-cal-dot.leave { background: var(--info); }
 .dr-cal-dot.missing { border: 1px solid var(--danger); background: transparent; }
 .dr-cal-birthday { font-size: 9px; line-height: 1; margin-top: 1px; }

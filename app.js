@@ -5619,7 +5619,11 @@ async function loadDailyReportCalendar() {
 
       const dots = [];
       if (info) {
-        // 赤丸(要対応)は「本人または管理者が確認すべき状態」のみ。提出済み・承認済みは赤くしない。
+        // カレンダーの丸は「提出済み・承認済み＝赤丸」(ユーザー指示)。ただし要確認/差戻し
+        // (requires_attention)はそれと見分けがつくよう、白枠つきの大きめの赤丸で強調する
+        // (style.cssの.dr-cal-dot.warn参照)。1日に両方該当することは無い(要確認が優先)ため
+        // 丸が二重に付くことはない。なお、リスト/詳細/ホームの「🔴」バッジは別概念のままで、
+        // そちらは引き続き「要対応のみ赤」の運用を変えていない。
         if (info.requires_attention) dots.push('<span class="dr-cal-dot warn"></span>');
         else if (info.report_status === 'submitted' || info.report_status === 'confirmed') dots.push('<span class="dr-cal-dot done"></span>');
         if (info.is_paid_leave) dots.push('<span class="dr-cal-dot leave"></span>');

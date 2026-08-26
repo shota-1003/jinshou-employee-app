@@ -503,6 +503,7 @@ function enterMenu() {
   renderHomeAdminBanner(session);
   renderHomeDailyReportCard(session);
   renderHomeDailyReportStatusBanner(session);
+  renderHomeUpcomingEvents(session);
   renderHomeEventsArea(session);
 }
 
@@ -517,6 +518,47 @@ async function renderHomeDailyReportCard(session) {
     const submitted = (rows || []).some((r) => r.report_status === 'submitted' || r.report_status === 'confirmed');
     descEl.textContent = submitted ? '本日の日報を確認' : '今日の日報を入力';
   } catch (e) { /* 取得できなくても遷移自体はできるため無視 */ }
+}
+
+// ホーム画面「近日予定」(会社からのお知らせとは別カテゴリ、本人が登録した個人予定のみ)。
+// 直近のものだけを優先表示し(1か月先の予定でホームが埋まらないように)、当日・前日は強調する。
+async function renderHomeUpcomingEvents(session) {
+  const area = document.getElementById('home-upcoming-events-area');
+  try {
+    const rows = await rpc('get_my_upcoming_calendar_events', { p_employee_code: session.employeeCode, p_days_ahead: 14, p_limit: 5 });
+    if (!rows || rows.length === 0) { area.innerHTML = ''; return; }
+    const urgencyLabel = { today: '本日', tomorrow: '明日', this_week: '今週', later: '' };
+    area.innerHTML = `
+      <div class="section-title">近日予定</div>
+      <div class="today-list">
+        ${rows.map((ev) => `
+          <div class="today-item ${ev.urgency === 'today' || ev.urgency === 'tomorrow' ? 'urgent' : ''}" data-event-nav="${ev.event_date}">
+            <span class="today-item-icon"><span class="icon-slot" data-icon="calendar"></span></span>
+            <div class="today-item-body">
+              <div class="today-item-label">${urgencyLabel[ev.urgency] ? urgencyLabel[ev.urgency] + '　' : ''}${ev.event_date.slice(5).replace('-', '/')}${ev.start_time ? ' ' + ev.start_time.slice(0, 5) : ''}　${ev.title}</div>
+              ${ev.location ? `<div class="today-item-count">${ev.location}</div>` : ''}
+            </div>
+            <span class="today-item-arrow"><span class="icon-slot" data-icon="chevron-right"></span></span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    hydrateIcons(area);
+    area.querySelectorAll('[data-event-nav]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const d = el.dataset.eventNav;
+        showScreen('my-daily-reports');
+        setTimeout(() => {
+          setDailyReportView('calendar');
+          const [y, m] = d.split('-').map(Number);
+          dailyReportCalYear = y; dailyReportCalMonth = m;
+          loadDailyReportCalendar().then(() => onDailyReportCalDayClick(d, null));
+        }, 50);
+      });
+    });
+  } catch (e) {
+    area.innerHTML = '';
+  }
 }
 
 // ホーム画面から1タップで「本日の日報を確認」できるようにする専用バナー(2026-08-26追加)。
@@ -544,8 +586,13 @@ async function renderHomeDailyReportStatusBanner(session) {
       banner.onclick = () => showScreen('daily-report');
     } else if (rows.some((r) => r.needs_review)) {
       banner.classList.add('urgent');
-      labelEl.textContent = '本日の日報：要確認';
+      labelEl.textContent = '🔴 本日の日報：要確認';
       detailEl.textContent = '内容に確認が必要な点があります。タップして確認';
+      banner.onclick = () => openMyDailyReportDetail(today);
+    } else if (rows.some((r) => r.report_status === 'rejected')) {
+      banner.classList.add('urgent');
+      labelEl.textContent = '🔴 本日の日報：修正依頼あり';
+      detailEl.textContent = '管理者から修正依頼が届いています。タップして確認';
       banner.onclick = () => openMyDailyReportDetail(today);
     } else {
       banner.classList.add('done');
@@ -5323,10 +5370,23 @@ async function doSubmitDailyReport(isDraft) {
   }
 }
 
+// 日報の状態表示を全画面(リスト/カレンダー/詳細/ホーム)で統一する。
+// 「本人または管理者が確認すべき状態」だけを🔴で示し、提出済み・承認済み等の正常状態は
+// 赤くしない(2026-08-26、ユーザー指示)。
+function dailyReportStatusBadgeHtml(r) {
+  if (r.needs_review) return '<span class="mini-tag danger">🔴 要確認</span>';
+  if (r.report_status === 'rejected') return `<span class="mini-tag danger">🔴 修正依頼あり${r.rejected_reason ? '：' + r.rejected_reason : ''}</span>`;
+  if (r.report_status === 'confirmed') return '<span class="mini-tag done">✅ 承認済み</span>';
+  if (r.report_status === 'submitted') return '<span class="mini-tag muted">提出済み(管理者確認待ち)</span>';
+  return '<span class="mini-tag muted">下書き</span>';
+}
+
 let dailyReportSummaryPeriodType = 'pay_period';
 let dailyReportViewMode = 'list';
 let dailyReportCalYear = null;
 let dailyReportCalMonth = null;
+let dailyReportCalEventsByDate = new Map();
+let personalEventEditingId = null;
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
@@ -5363,8 +5423,17 @@ async function loadDailyReportCalendar() {
   grid.innerHTML = '<div class="hint">読み込み中...</div>';
   document.getElementById('dr-cal-day-detail').innerHTML = '';
   try {
-    const rows = await rpc('get_my_home_calendar_month', { p_employee_code: session.employeeCode, p_year: dailyReportCalYear, p_month: dailyReportCalMonth });
+    const [rows, eventRows] = await Promise.all([
+      rpc('get_my_home_calendar_month', { p_employee_code: session.employeeCode, p_year: dailyReportCalYear, p_month: dailyReportCalMonth }),
+      rpc('get_my_calendar_events', { p_employee_code: session.employeeCode, p_year: dailyReportCalYear, p_month: dailyReportCalMonth }),
+    ]);
     const byDate = new Map((rows || []).map((r) => [r.calendar_date, r]));
+    dailyReportCalEventsByDate = new Map();
+    (eventRows || []).forEach((ev) => {
+      const list = dailyReportCalEventsByDate.get(ev.event_date) || [];
+      list.push(ev);
+      dailyReportCalEventsByDate.set(ev.event_date, list);
+    });
     const today = todayJST();
 
     const firstDow = new Date(Date.UTC(dailyReportCalYear, dailyReportCalMonth - 1, 1)).getUTCDay();
@@ -5389,7 +5458,8 @@ async function loadDailyReportCalendar() {
 
       const dots = [];
       if (info) {
-        if (info.needs_review) dots.push('<span class="dr-cal-dot warn"></span>');
+        // 赤丸(要対応)は「本人または管理者が確認すべき状態」のみ。提出済み・承認済みは赤くしない。
+        if (info.requires_attention) dots.push('<span class="dr-cal-dot warn"></span>');
         else if (info.report_status === 'submitted' || info.report_status === 'confirmed') dots.push('<span class="dr-cal-dot done"></span>');
         if (info.is_paid_leave) dots.push('<span class="dr-cal-dot leave"></span>');
         if (!info.report_status && !info.is_paid_leave && dateStr < today && dow !== 0) dots.push('<span class="dr-cal-dot missing"></span>');
@@ -5398,8 +5468,10 @@ async function loadDailyReportCalendar() {
       }
       const birthdayMark = info && info.birthday_names && info.birthday_names.length > 0
         ? `<div class="dr-cal-birthday">🎂${info.birthday_names.length > 1 ? info.birthday_names.length + '名' : ''}</div>` : '';
+      const eventMark = info && info.personal_event_titles && info.personal_event_titles.length > 0
+        ? `<div class="dr-cal-birthday">📌${info.personal_event_titles.length > 1 ? info.personal_event_titles.length + '件' : ''}</div>` : '';
 
-      cell.innerHTML = `<span class="dr-cal-daynum">${day}</span><div class="dr-cal-dots">${dots.join('')}</div>${birthdayMark}`;
+      cell.innerHTML = `<span class="dr-cal-daynum">${day}</span><div class="dr-cal-dots">${dots.join('')}</div>${birthdayMark}${eventMark}`;
       cell.addEventListener('click', () => onDailyReportCalDayClick(dateStr, info));
       grid.appendChild(cell);
     }
@@ -5412,30 +5484,126 @@ function onDailyReportCalDayClick(dateStr, info) {
   const detailEl = document.getElementById('dr-cal-day-detail');
   const holidayName = info && (info.national_holiday_name || info.company_holiday_name);
   const birthdayLine = info && info.birthday_names && info.birthday_names.length > 0 ? `🎂 ${info.birthday_names.join('・')}さん 誕生日` : '';
-  if (info && info.report_status) {
-    detailEl.innerHTML = `
-      <div class="card">
-        <div class="row1"><span>${dateStr}</span>${holidayName ? `<span class="mini-tag info">${holidayName}</span>` : ''}</div>
-        ${birthdayLine ? `<div class="hint-inline">${birthdayLine}</div>` : ''}
-        <button type="button" data-open-detail="${dateStr}">この日の日報を確認する</button>
-      </div>
-    `;
-    detailEl.querySelector('[data-open-detail]').addEventListener('click', () => openMyDailyReportDetail(dateStr));
-  } else {
-    detailEl.innerHTML = `
-      <div class="card">
-        <div class="row1"><span>${dateStr}</span>${holidayName ? `<span class="mini-tag info">${holidayName}</span>` : ''}</div>
-        ${birthdayLine ? `<div class="hint-inline">${birthdayLine}</div>` : ''}
-        ${info && info.is_paid_leave ? '<div class="hint-inline">有給休暇</div>' : '<div class="hint-inline">この日の日報はありません</div>'}
-        <button type="button" class="secondary" data-open-input="${dateStr}">この日の日報を入力する</button>
-      </div>
-    `;
-    detailEl.querySelector('[data-open-input]').addEventListener('click', () => {
+  const events = dailyReportCalEventsByDate.get(dateStr) || [];
+  const eventsHtml = events.map((ev) => `
+    <div class="field-row" data-event-id="${ev.id}" style="cursor:pointer;">
+      <span>${ev.start_time ? ev.start_time.slice(0, 5) + ' ' : ''}${ev.title}</span>
+      <span class="icon-slot" data-icon="chevron-right"></span>
+    </div>
+  `).join('');
+
+  const reportBlock = (info && info.report_status)
+    ? `<button type="button" data-open-detail="${dateStr}">この日の日報を確認する</button>`
+    : `${info && info.is_paid_leave ? '<div class="hint-inline">有給休暇</div>' : '<div class="hint-inline">この日の日報はありません</div>'}
+       <button type="button" class="secondary" data-open-input="${dateStr}">この日の日報を入力する</button>`;
+
+  detailEl.innerHTML = `
+    <div class="card">
+      <div class="row1"><span>${dateStr}</span>${holidayName ? `<span class="mini-tag info">${holidayName}</span>` : ''}</div>
+      ${birthdayLine ? `<div class="hint-inline">${birthdayLine}</div>` : ''}
+      ${reportBlock}
+      <div class="section-title" style="margin:12px 0 4px;font-size:13px;">自分の予定</div>
+      ${eventsHtml || '<div class="hint-inline">この日の予定はありません</div>'}
+      <button type="button" class="secondary" data-add-event="${dateStr}" style="margin-top:8px;">予定を追加</button>
+    </div>
+  `;
+  const openDetailBtn = detailEl.querySelector('[data-open-detail]');
+  if (openDetailBtn) openDetailBtn.addEventListener('click', () => openMyDailyReportDetail(dateStr));
+  const openInputBtn = detailEl.querySelector('[data-open-input]');
+  if (openInputBtn) {
+    openInputBtn.addEventListener('click', () => {
       dailyReportTarget = { type: 'self', employeeCode: null, employeeName: null, subcontractorWorkerId: null, workerName: null };
       dailyReportPrefillDate = dateStr;
       showScreen('daily-report');
     });
   }
+  detailEl.querySelectorAll('[data-event-id]').forEach((el) => {
+    el.addEventListener('click', () => openPersonalEventForm(Number(el.dataset.eventId), dateStr));
+  });
+  detailEl.querySelector('[data-add-event]').addEventListener('click', () => openPersonalEventForm(null, dateStr));
+}
+
+// ---------- 個人予定の登録・編集フォーム(カレンダー日詳細から開く) ----------
+
+function openPersonalEventForm(eventId, dateStr) {
+  personalEventEditingId = eventId;
+  const existing = eventId ? (dailyReportCalEventsByDate.get(dateStr) || []).find((e) => e.id === eventId) : null;
+  const detailEl = document.getElementById('dr-cal-day-detail');
+  detailEl.innerHTML = `
+    <div class="card">
+      <div class="form-title" style="font-size:14px;">${eventId ? '予定を編集' : '予定を追加'}</div>
+      <label>日付</label>
+      <input type="date" id="pev-date" value="${dateStr}">
+      <label>予定名</label>
+      <input type="text" id="pev-title" placeholder="例: ○○建設とゴルフ" value="${existing ? existing.title.replace(/"/g, '&quot;') : ''}">
+      <label>開始時間(任意)</label>
+      <input type="time" id="pev-start" value="${existing && existing.start_time ? existing.start_time.slice(0, 5) : ''}">
+      <label>終了時間(任意)</label>
+      <input type="time" id="pev-end" value="${existing && existing.end_time ? existing.end_time.slice(0, 5) : ''}">
+      <label>場所(任意)</label>
+      <input type="text" id="pev-location" value="${existing && existing.location ? existing.location.replace(/"/g, '&quot;') : ''}">
+      <label>相手先(任意)</label>
+      <input type="text" id="pev-counterpart" value="${existing && existing.counterpart ? existing.counterpart.replace(/"/g, '&quot;') : ''}">
+      <label>備考(任意)</label>
+      <input type="text" id="pev-note" value="${existing && existing.note ? existing.note.replace(/"/g, '&quot;') : ''}">
+      <div class="checkbox-row">
+        <input type="checkbox" id="pev-notify" ${existing && existing.notify_enabled ? 'checked' : ''}>
+        <label>通知する(将来の通知機能に対応予定)</label>
+      </div>
+      <div class="hint-inline" id="pev-error" style="color:var(--danger);display:none;"></div>
+      <button type="button" id="pev-save">保存する</button>
+      ${eventId ? '<button type="button" class="secondary" id="pev-delete">この予定を削除する</button>' : ''}
+      <button type="button" class="link" id="pev-cancel">キャンセル</button>
+    </div>
+  `;
+  document.getElementById('pev-save').addEventListener('click', () => savePersonalEvent(dateStr));
+  document.getElementById('pev-cancel').addEventListener('click', () => onDailyReportCalDayClick(dateStr, null));
+  const delBtn = document.getElementById('pev-delete');
+  if (delBtn) delBtn.addEventListener('click', () => deletePersonalEvent(eventId, dateStr));
+}
+
+async function savePersonalEvent(originalDateStr) {
+  const session = getSession();
+  const errEl = document.getElementById('pev-error');
+  errEl.style.display = 'none';
+  const title = document.getElementById('pev-title').value.trim();
+  if (!title) { errEl.textContent = '予定名を入力してください。'; errEl.style.display = 'block'; return; }
+  const btn = document.getElementById('pev-save');
+  btn.disabled = true;
+  try {
+    const params = [
+      session.employeeCode, document.getElementById('pev-date').value, title,
+      document.getElementById('pev-start').value || null, document.getElementById('pev-end').value || null,
+      document.getElementById('pev-location').value.trim() || null, document.getElementById('pev-counterpart').value.trim() || null,
+      document.getElementById('pev-note').value.trim() || null, document.getElementById('pev-notify').checked,
+    ];
+    if (personalEventEditingId) {
+      await rpc('update_my_calendar_event', {
+        p_employee_code: params[0], p_event_id: personalEventEditingId, p_event_date: params[1], p_title: params[2],
+        p_start_time: params[3], p_end_time: params[4], p_location: params[5], p_counterpart: params[6], p_note: params[7], p_notify_enabled: params[8],
+      });
+    } else {
+      await rpc('add_my_calendar_event', {
+        p_employee_code: params[0], p_event_date: params[1], p_title: params[2],
+        p_start_time: params[3], p_end_time: params[4], p_location: params[5], p_counterpart: params[6], p_note: params[7], p_notify_enabled: params[8],
+      });
+    }
+    await loadDailyReportCalendar();
+    renderHomeUpcomingEvents(session);
+  } catch (e) {
+    errEl.textContent = e.message || '保存に失敗しました。';
+    errEl.style.display = 'block';
+    btn.disabled = false;
+  }
+}
+
+async function deletePersonalEvent(eventId, dateStr) {
+  const session = getSession();
+  try {
+    await rpc('delete_my_calendar_event', { p_employee_code: session.employeeCode, p_event_id: eventId });
+    await loadDailyReportCalendar();
+    renderHomeUpcomingEvents(session);
+  } catch (e) { /* 失敗しても画面は再読み込みされるので静かに無視 */ }
 }
 
 async function loadMyDailyReports() {
@@ -5455,12 +5623,18 @@ async function loadMyDailyReports() {
       const div = document.createElement('div');
       div.className = 'history-item';
       div.style.cursor = 'pointer';
+      const parts = [];
+      if (Number(r.overtime_hours) > 0) parts.push(`残業 ${Number(r.overtime_hours)}h`);
+      if (r.is_early_commute) parts.push(`通勤早出 ${Number(r.early_commute_hours)}h`);
+      if (r.is_commute_overtime) parts.push(`通勤残業 ${Number(r.commute_overtime_hours)}h`);
+      if (r.is_over_100km) parts.push('通勤100km超');
       div.innerHTML = `
         <div class="row1"><span>${r.report_date}</span><span>${Number(r.total_headcount).toFixed(1)}人工</span></div>
         <div class="row2">${r.site_names.map((n, i) => `${n}(${r.work_types[i]})`).join('・')}</div>
+        ${parts.length > 0 ? `<div class="hint-inline">${parts.join(' / ')}</div>` : ''}
         ${r.is_special ? '<span class="mini-tag warn">特殊日報(管理者確認中)</span>' : ''}
         ${r.reflected ? '<span class="mini-tag muted">シート反映済み</span>' : ''}
-        ${r.needs_review ? '<span class="mini-tag danger">⚠ 確認が必要です</span>' : ''}
+        ${dailyReportStatusBadgeHtml(r)}
         <div class="hint-inline">タップして詳細を確認</div>
       `;
       div.addEventListener('click', () => openMyDailyReportDetail(r.report_date));
@@ -5523,11 +5697,10 @@ async function openMyDailyReportDetail(dateStr) {
   try {
     const rows = await rpc('get_my_daily_report_detail', { p_employee_code: session.employeeCode, p_report_date: dateStr });
     if (!rows || rows.length === 0) { body.innerHTML = '<div class="empty-state">この日の日報は見つかりませんでした</div>'; return; }
-    const statusLabel = { draft: '下書き', submitted: '提出済み(管理者確認待ち)', confirmed: '承認済み', rejected: '差し戻し' };
     body.innerHTML = `<div class="form-title" style="font-size:15px;">${dateStr}</div>` + rows.map((r) => `
       <div class="card" style="margin-bottom:10px;">
-        ${r.needs_review ? `<div class="mini-tag danger" style="margin-bottom:6px;">⚠ 日報内容に確認が必要です</div>
-          ${(r.consistency_issues || []).map((iss) => `<div class="hint-inline">・${iss.message}</div>`).join('')}` : ''}
+        <div style="margin-bottom:6px;">${dailyReportStatusBadgeHtml(r)}</div>
+        ${r.needs_review ? (r.consistency_issues || []).map((iss) => `<div class="hint-inline">・${iss.message}</div>`).join('') : ''}
         <div class="field-row"><span>現場</span><span>${r.site_name || ''}</span></div>
         <div class="field-row"><span>勤務区分</span><span>${r.work_type || ''}</span></div>
         <div class="field-row"><span>人工</span><span>${r.work_type === '終日' ? '1.0' : '0.5'}</span></div>
@@ -5542,7 +5715,7 @@ async function openMyDailyReportDetail(dateStr) {
         <div class="field-row"><span>資格取得</span><span>${(r.qualification_names || []).join('・') || 'なし'}</span></div>
         <div class="field-row"><span>備考</span><span>${r.notes || '-'}</span></div>
         <div class="field-row"><span>提出日時</span><span>${new Date(r.submitted_at).toLocaleString('ja-JP')}</span></div>
-        <div class="field-row"><span>現在の状態</span><span>${statusLabel[r.report_status] || r.report_status}${r.reflected ? '(シート反映済み)' : ''}</span></div>
+        <div class="field-row"><span>シート反映</span><span>${r.reflected ? '反映済み' : '未反映'}</span></div>
         ${r.report_status === 'rejected' && r.rejected_reason ? `<div class="field-row"><span>差し戻し理由</span><span>${r.rejected_reason}</span></div>` : ''}
       </div>
     `).join('');

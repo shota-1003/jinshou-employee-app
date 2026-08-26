@@ -779,6 +779,7 @@ button.link {
 .mini-tag.danger { background: var(--danger-bg); color: var(--danger); }
 .mini-tag.info { background: var(--info-bg); color: var(--primary); }
 .mini-tag.muted { background: oklch(1 0 0 / 8%); color: var(--text-muted); }
+.mini-tag.done { background: var(--success-bg); color: var(--success); }
 
 /* ===== 日報 今月の自動集計 ===== */
 .dr-summary-period-toggle { display: flex; gap: 8px; }

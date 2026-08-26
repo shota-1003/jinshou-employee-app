@@ -205,6 +205,7 @@ const ADMIN_SCREENS = new Set([
   'employee-summary', 'employee-monthly-detail', 'attendance-matrix', 'bulk-expense-admin', 'bulk-expense-detail',
   'expense-payment', 'joyo-denpyo-admin', 'event-admin', 'license-admin', 'health-admin',
   'daily-report-admin', 'daily-report-management', 'daily-report-detail', 'purpose-admin',
+  'daily-report-needs-review-admin', 'daily-report-edit-requests-admin',
   'subcontractor-company-admin', 'subcontractor-worker-admin',
 ]);
 let inAdminMode = false;
@@ -5133,9 +5134,13 @@ async function resetDailyReportForm() {
   document.getElementById('daily-report-proxy-wrap').style.display = dailyReportIsNippoAdmin ? 'block' : 'none';
 
   const dateInput = document.getElementById('daily-report-date');
-  const today = todayJST();
-  dateInput.value = today;
-  loadDailyReportForDate(today);
+  // 日報履歴の詳細画面から「この日の内容を修正する」で来た場合は、今日ではなくその日を開く
+  // (resetDailyReportFormは画面遷移のたびに自動で走るため、ここで両方が競合してentryが
+  // 二重に読み込まれる不具合を避けるため、ここで一本化する)。
+  const target = dailyReportPrefillDate || todayJST();
+  dailyReportPrefillDate = null;
+  dateInput.value = target;
+  loadDailyReportForDate(target);
 }
 
 async function doSubmitDailyReport(isDraft) {
@@ -5196,13 +5201,40 @@ async function doSubmitDailyReport(isDraft) {
   const btn = document.getElementById('daily-report-submit');
   btn.disabled = true;
   try {
-    const result = await rpc('submit_daily_report', {
-      p_actor_employee_code: session.employeeCode, p_report_date: dateStr, p_entries: entries, p_is_draft: !!isDraft,
-      p_target_employee_code: dailyReportTarget.type === 'employee' ? dailyReportTarget.employeeCode : null,
-      p_target_worker_type: dailyReportTarget.type === 'subcontractor' ? 'subcontractor' : 'employee',
-      p_target_subcontractor_worker_id: dailyReportTarget.type === 'subcontractor' ? dailyReportTarget.subcontractorWorkerId : null,
-    });
-    const r = result && result[0];
+    let r;
+    let editRequiresApproval = false;
+    if (dailyReportTarget.type === 'self' && !isDraft) {
+      // 本人が自分の日報を編集する経路だけ、修正申請の仕組み(request_daily_report_edit)を通す。
+      // 既に確認・反映済みの日を書き換えようとした場合だけ理由の入力を求め、承認待ちになる
+      // (代理入力・外注入力は既存どおり管理者の直接権限としてsubmit_daily_reportを使う)。
+      let reason = null;
+      for (;;) {
+        try {
+          const editResult = await rpc('request_daily_report_edit', {
+            p_employee_code: session.employeeCode, p_report_date: dateStr, p_entries: entries, p_reason: reason,
+          });
+          const er = editResult && editResult[0];
+          editRequiresApproval = !!(er && er.requires_approval);
+          r = { is_special: false, total_headcount: entries.reduce((s, e) => s + (e.work_type === '終日' ? 1 : 0.5), 0), entry_count: entries.length };
+          break;
+        } catch (editErr) {
+          if (!reason && /修正理由を入力してください/.test(editErr.message || '')) {
+            reason = window.prompt('この日はすでに確認・反映済みのため、修正には理由が必要です。修正理由を入力してください。');
+            if (!reason || !reason.trim()) { throw new Error('修正には理由の入力が必要です。'); }
+            continue;
+          }
+          throw editErr;
+        }
+      }
+    } else {
+      const result = await rpc('submit_daily_report', {
+        p_actor_employee_code: session.employeeCode, p_report_date: dateStr, p_entries: entries, p_is_draft: !!isDraft,
+        p_target_employee_code: dailyReportTarget.type === 'employee' ? dailyReportTarget.employeeCode : null,
+        p_target_worker_type: dailyReportTarget.type === 'subcontractor' ? 'subcontractor' : 'employee',
+        p_target_subcontractor_worker_id: dailyReportTarget.type === 'subcontractor' ? dailyReportTarget.subcontractorWorkerId : null,
+      });
+      r = result && result[0];
+    }
 
     let qualWarning = '';
     if (hasQualification && !isDraft) {
@@ -5223,9 +5255,24 @@ async function doSubmitDailyReport(isDraft) {
     }
 
     if (isDraft) { showDone(`日報を下書き保存しました(${dateStr})。提出は完了していません。`, 'menu-apply'); return; }
+
+    if (editRequiresApproval) {
+      showDone(`この日はすでに確認・反映済みのため、修正内容を管理者確認待ちとして登録しました(${dateStr})。管理者が承認すると反映されます。` + qualWarning, 'menu-apply');
+      return;
+    }
+
+    // 提出直後に、同日・同現場の他社員の日報との整合性を確認する(要確認があっても提出自体は完了扱い)。
+    let consistencyWarning = '';
+    try {
+      const issues = await rpc('run_daily_report_consistency_check', { p_report_date: dateStr });
+      if (issues && issues.length > 0) {
+        consistencyWarning = ' ⚠ 内容に確認が必要な点があります(日報履歴から詳細を確認してください)。';
+      }
+    } catch (e3) { /* 整合性チェックの失敗で提出完了メッセージ自体は止めない */ }
+
     const msg = (r && r.is_special
       ? `日報を受け付けました(${dateStr}、${r.entry_count}現場)。3現場以上のため特殊日報として管理者が確認します。`
-      : `日報を受け付けました(${dateStr}、合計${r ? Number(r.total_headcount).toFixed(1) : ''}人工)。`) + qualWarning;
+      : `日報を受け付けました(${dateStr}、合計${r ? Number(r.total_headcount).toFixed(1) : ''}人工)。`) + qualWarning + consistencyWarning;
     showDone(msg, 'menu-apply');
   } catch (e) {
     showError('daily-report-error', e.message || '送信に失敗しました。もう一度お試しください。');
@@ -5234,23 +5281,114 @@ async function doSubmitDailyReport(isDraft) {
   }
 }
 
+let dailyReportSummaryPeriodType = 'pay_period';
+
 async function loadMyDailyReports() {
   const session = getSession();
   const list = document.getElementById('my-daily-report-list');
   list.innerHTML = '<div class="hint">読み込み中...</div>';
+  loadMyDailyReportSummary();
   try {
     const rows = await rpc('get_my_daily_reports', { p_employee_code: session.employeeCode, p_limit: 30 });
     if (rows.length === 0) { list.innerHTML = '<div class="empty-state">まだ日報がありません</div>'; return; }
-    list.innerHTML = rows.map((r) => `
-      <div class="history-item">
+    list.innerHTML = '';
+    rows.forEach((r) => {
+      const div = document.createElement('div');
+      div.className = 'history-item';
+      div.style.cursor = 'pointer';
+      div.innerHTML = `
         <div class="row1"><span>${r.report_date}</span><span>${Number(r.total_headcount).toFixed(1)}人工</span></div>
         <div class="row2">${r.site_names.map((n, i) => `${n}(${r.work_types[i]})`).join('・')}</div>
         ${r.is_special ? '<span class="mini-tag warn">特殊日報(管理者確認中)</span>' : ''}
         ${r.reflected ? '<span class="mini-tag muted">シート反映済み</span>' : ''}
+        ${r.needs_review ? '<span class="mini-tag danger">⚠ 確認が必要です</span>' : ''}
+        <div class="hint-inline">タップして詳細を確認</div>
+      `;
+      div.addEventListener('click', () => openMyDailyReportDetail(r.report_date));
+      list.appendChild(div);
+    });
+  } catch (e) {
+    list.innerHTML = '<div class="empty-state">読み込みに失敗しました</div>';
+  }
+}
+
+async function loadMyDailyReportSummary() {
+  const session = getSession();
+  const el = document.getElementById('my-daily-report-summary');
+  document.querySelectorAll('.dr-summary-tab').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.period === dailyReportSummaryPeriodType);
+  });
+  el.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const now = new Date();
+    const rows = await rpc('get_my_daily_report_month_summary', {
+      p_employee_code: session.employeeCode, p_year: now.getFullYear(), p_month: now.getMonth() + 1,
+      p_period_type: dailyReportSummaryPeriodType,
+    });
+    const s = rows && rows[0];
+    if (!s) { el.innerHTML = '<div class="hint">集計を取得できませんでした。</div>'; return; }
+    const fmtN = (n) => Number(n || 0).toFixed(1).replace(/\.0$/, '');
+    el.innerHTML = `
+      <div class="summary-period-label">${s.period_start} 〜 ${s.period_end}</div>
+      <div class="summary-grid">
+        <div><span class="summary-label">出勤日数</span><span class="summary-value">${fmtN(s.work_days)}日</span></div>
+        <div><span class="summary-label">総人工</span><span class="summary-value">${fmtN(s.total_headcount)}人工</span></div>
+        <div><span class="summary-label">残業時間</span><span class="summary-value">${fmtN(s.overtime_hours)}h</span></div>
+        <div><span class="summary-label">通勤早出</span><span class="summary-value">${s.early_commute_count}回 / ${fmtN(s.early_commute_hours)}h</span></div>
+        <div><span class="summary-label">通勤残業</span><span class="summary-value">${s.commute_overtime_count}回 / ${fmtN(s.commute_overtime_hours)}h</span></div>
+        <div><span class="summary-label">通勤100km超</span><span class="summary-value">${s.over_100km_count}回</span></div>
+        <div><span class="summary-label">リーダー</span><span class="summary-value">${s.leader_count}回</span></div>
+        <div><span class="summary-label">有給</span><span class="summary-value">${fmtN(s.paid_leave_days)}日</span></div>
+        <div><span class="summary-label">半日勤務</span><span class="summary-value">${s.half_day_work_count}回</span></div>
+        <div><span class="summary-label">日曜出勤</span><span class="summary-value">${s.sunday_work_count}回</span></div>
+        <div><span class="summary-label">現場作業</span><span class="summary-value">${s.field_duty_count}回</span></div>
+        <div><span class="summary-label">営業</span><span class="summary-value">${s.sales_count}回</span></div>
+        <div><span class="summary-label">運搬</span><span class="summary-value">${s.transport_count}回</span></div>
+        <div><span class="summary-label">資格取得</span><span class="summary-value">${s.qualification_count}件</span></div>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = '<div class="hint">集計の読み込みに失敗しました。</div>';
+  }
+}
+
+let myDailyReportDetailDate = null;
+let dailyReportPrefillDate = null;
+
+async function openMyDailyReportDetail(dateStr) {
+  myDailyReportDetailDate = dateStr;
+  showScreen('my-daily-report-detail');
+  const session = getSession();
+  const body = document.getElementById('my-daily-report-detail-body');
+  body.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_daily_report_detail', { p_employee_code: session.employeeCode, p_report_date: dateStr });
+    if (!rows || rows.length === 0) { body.innerHTML = '<div class="empty-state">この日の日報は見つかりませんでした</div>'; return; }
+    const statusLabel = { draft: '下書き', submitted: '提出済み(管理者確認待ち)', confirmed: '承認済み', rejected: '差し戻し' };
+    body.innerHTML = `<div class="form-title" style="font-size:15px;">${dateStr}</div>` + rows.map((r) => `
+      <div class="card" style="margin-bottom:10px;">
+        ${r.needs_review ? `<div class="mini-tag danger" style="margin-bottom:6px;">⚠ 日報内容に確認が必要です</div>
+          ${(r.consistency_issues || []).map((iss) => `<div class="hint-inline">・${iss.message}</div>`).join('')}` : ''}
+        <div class="field-row"><span>現場</span><span>${r.site_name || ''}</span></div>
+        <div class="field-row"><span>勤務区分</span><span>${r.work_type || ''}</span></div>
+        <div class="field-row"><span>人工</span><span>${r.work_type === '終日' ? '1.0' : '0.5'}</span></div>
+        <div class="field-row"><span>リーダー</span><span>${r.is_leader ? 'あり' : 'なし'}</span></div>
+        <div class="field-row"><span>残業時間</span><span>${r.overtime_hours != null ? r.overtime_hours + 'h' : '-'}</span></div>
+        <div class="field-row"><span>通勤早出</span><span>${r.is_early_commute ? `あり(${r.early_commute_hours}h)` : 'なし'}</span></div>
+        <div class="field-row"><span>通勤残業</span><span>${r.is_commute_overtime ? `あり(${r.commute_overtime_hours}h)` : 'なし'}</span></div>
+        <div class="field-row"><span>通勤100km超</span><span>${r.is_over_100km ? 'あり' : 'なし'}</span></div>
+        <div class="field-row"><span>現場作業</span><span>${r.is_field_duty ? 'あり' : 'なし'}</span></div>
+        <div class="field-row"><span>営業</span><span>${r.is_sales ? 'あり' : 'なし'}</span></div>
+        <div class="field-row"><span>運搬</span><span>${r.is_transport ? 'あり' : 'なし'}</span></div>
+        <div class="field-row"><span>資格取得</span><span>${(r.qualification_names || []).join('・') || 'なし'}</span></div>
+        <div class="field-row"><span>備考</span><span>${r.notes || '-'}</span></div>
+        <div class="field-row"><span>提出日時</span><span>${new Date(r.submitted_at).toLocaleString('ja-JP')}</span></div>
+        <div class="field-row"><span>現在の状態</span><span>${statusLabel[r.report_status] || r.report_status}${r.reflected ? '(シート反映済み)' : ''}</span></div>
+        ${r.report_status === 'rejected' && r.rejected_reason ? `<div class="field-row"><span>差し戻し理由</span><span>${r.rejected_reason}</span></div>` : ''}
       </div>
     `).join('');
   } catch (e) {
-    list.innerHTML = '<div class="empty-state">読み込みに失敗しました</div>';
+    body.innerHTML = '<div class="empty-state">読み込みに失敗しました</div>';
   }
 }
 
@@ -5277,6 +5415,116 @@ async function loadDailyReportAdminList() {
         try {
           await rpc('resolve_error', { p_id: Number(btn.dataset.resolveId), p_status: 'resolved', p_resolution: `${session.employeeName}が確認しスプレッドシートへ手動反映` });
           loadDailyReportAdminList();
+        } catch (e) { btn.disabled = false; }
+      });
+    });
+  } catch (e) {
+    list.innerHTML = '<div class="empty-state">読み込みに失敗しました</div>';
+  }
+}
+
+// ---------- 日報の要確認一覧(管理者、同日同現場の整合性チェック結果) ----------
+
+async function loadDailyReportNeedsReviewAdmin() {
+  const session = getSession();
+  const list = document.getElementById('daily-report-needs-review-list');
+  list.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_needs_review_daily_reports', { p_admin_employee_code: session.employeeCode, p_date_from: null, p_date_to: null });
+    if (!rows || rows.length === 0) { list.innerHTML = '<div class="empty-state">要確認の日報はありません</div>'; return; }
+    // 比較しやすいよう、日付+現場でグループ化して表示する。
+    const groups = new Map();
+    rows.forEach((r) => {
+      const key = `${r.report_date}__${r.site_id}`;
+      if (!groups.has(key)) groups.set(key, { report_date: r.report_date, site_name: r.site_name, rows: [] });
+      groups.get(key).rows.push(r);
+    });
+    list.innerHTML = '';
+    groups.forEach((g) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'card';
+      wrap.style.marginBottom = '10px';
+      const memberLines = g.rows.map((r) => `
+        <div class="field-row">
+          <span>${r.employee_name}</span>
+          <span>${r.work_type}${r.overtime_hours != null ? ' 残業' + r.overtime_hours + 'h' : ''}${r.is_early_commute ? ' 通勤早出あり' : ''}${r.is_commute_overtime ? ' 通勤残業あり' : ''}</span>
+        </div>
+      `).join('');
+      const issueTexts = [...new Set(g.rows.flatMap((r) => (r.consistency_issues || []).map((iss) => iss.message)))];
+      wrap.innerHTML = `
+        <div class="row1"><span>${g.report_date}</span><span>${g.site_name || ''}</span></div>
+        ${memberLines}
+        ${issueTexts.map((t) => `<div class="mini-tag danger" style="display:block;margin-top:4px;">⚠ ${t}</div>`).join('')}
+        <div class="button-row" style="margin-top:10px;">
+          ${g.rows.map((r) => `<button type="button" class="secondary" data-ack-id="${r.id}">${r.employee_name}を確認済みにする</button>`).join('')}
+        </div>
+        <div class="button-row">
+          ${g.rows.map((r) => `<button type="button" class="link" data-correct-id="${r.id}">${r.employee_name}へ修正依頼</button>`).join('')}
+        </div>
+      `;
+      list.appendChild(wrap);
+    });
+    list.querySelectorAll('[data-ack-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await rpc('admin_resolve_daily_report_review', { p_admin_employee_code: session.employeeCode, p_daily_report_id: Number(btn.dataset.ackId), p_action: 'acknowledge', p_reason: null });
+          loadDailyReportNeedsReviewAdmin();
+        } catch (e) { btn.disabled = false; }
+      });
+    });
+    list.querySelectorAll('[data-correct-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const reason = window.prompt('修正依頼の理由を入力してください。');
+        if (!reason || !reason.trim()) return;
+        btn.disabled = true;
+        try {
+          await rpc('admin_resolve_daily_report_review', { p_admin_employee_code: session.employeeCode, p_daily_report_id: Number(btn.dataset.correctId), p_action: 'request_correction', p_reason: reason.trim() });
+          loadDailyReportNeedsReviewAdmin();
+        } catch (e) { btn.disabled = false; }
+      });
+    });
+  } catch (e) {
+    list.innerHTML = '<div class="empty-state">読み込みに失敗しました</div>';
+  }
+}
+
+// ---------- 日報の修正申請一覧(管理者、確認済み/反映済みの日報を本人が修正しようとした申請) ----------
+
+async function loadDailyReportEditRequestsAdmin() {
+  const session = getSession();
+  const list = document.getElementById('daily-report-edit-requests-list');
+  list.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_daily_report_edit_requests', { p_admin_employee_code: session.employeeCode, p_status: 'pending' });
+    if (!rows || rows.length === 0) { list.innerHTML = '<div class="empty-state">修正申請はありません</div>'; return; }
+    list.innerHTML = rows.map((r) => `
+      <div class="history-item">
+        <div class="row1"><span>${r.employee_name}</span><span>${r.report_date}</span></div>
+        <div class="row2">理由: ${r.reason}</div>
+        <div class="hint-inline">申請日時: ${new Date(r.requested_at).toLocaleString('ja-JP')}</div>
+        <div class="button-row" style="margin-top:8px;">
+          <button type="button" data-approve-id="${r.id}">承認して反映</button>
+          <button type="button" class="secondary" data-reject-id="${r.id}">却下</button>
+        </div>
+      </div>
+    `).join('');
+    list.querySelectorAll('[data-approve-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await rpc('admin_decide_daily_report_edit_request', { p_admin_employee_code: session.employeeCode, p_request_id: Number(btn.dataset.approveId), p_action: 'approved', p_reason: null });
+          loadDailyReportEditRequestsAdmin();
+        } catch (e) { btn.disabled = false; }
+      });
+    });
+    list.querySelectorAll('[data-reject-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const reason = window.prompt('却下理由を入力してください(任意)。') || null;
+        btn.disabled = true;
+        try {
+          await rpc('admin_decide_daily_report_edit_request', { p_admin_employee_code: session.employeeCode, p_request_id: Number(btn.dataset.rejectId), p_action: 'rejected', p_reason: reason });
+          loadDailyReportEditRequestsAdmin();
         } catch (e) { btn.disabled = false; }
       });
     });
@@ -7149,6 +7397,16 @@ function init() {
   document.getElementById('sc-company-submit').addEventListener('click', doSaveSubcontractorCompany);
   document.getElementById('sc-worker-submit').addEventListener('click', doSaveSubcontractorWorker);
 
+  document.querySelectorAll('.dr-summary-tab').forEach((btn) => {
+    btn.addEventListener('click', () => { dailyReportSummaryPeriodType = btn.dataset.period; loadMyDailyReportSummary(); });
+  });
+  document.getElementById('my-daily-report-detail-edit-btn').addEventListener('click', () => {
+    if (!myDailyReportDetailDate) return;
+    dailyReportTarget = { type: 'self', employeeCode: null, employeeName: null, subcontractorWorkerId: null, workerName: null };
+    dailyReportPrefillDate = myDailyReportDetailDate;
+    showScreen('daily-report');
+  });
+
   let areqSearchTimer = null;
   document.getElementById('areq-search-name').addEventListener('input', (e) => {
     clearTimeout(areqSearchTimer);
@@ -7619,6 +7877,9 @@ function init() {
   };
   SCREEN_ENTER_HOOKS['daily-report'] = resetDailyReportForm;
   SCREEN_ENTER_HOOKS['my-daily-reports'] = loadMyDailyReports;
+  SCREEN_ENTER_HOOKS['my-daily-report-detail'] = () => { if (myDailyReportDetailDate) openMyDailyReportDetail(myDailyReportDetailDate); };
+  SCREEN_ENTER_HOOKS['daily-report-needs-review-admin'] = loadDailyReportNeedsReviewAdmin;
+  SCREEN_ENTER_HOOKS['daily-report-edit-requests-admin'] = loadDailyReportEditRequestsAdmin;
   SCREEN_ENTER_HOOKS['daily-report-admin'] = async () => {
     if (!(await isNippoAdmin())) { enterMenu(); return; }
     loadDailyReportAdminList();

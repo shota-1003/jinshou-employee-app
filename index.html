@@ -339,7 +339,36 @@
   <section id="screen-my-daily-reports" class="screen">
     <button type="button" class="back-link" data-nav="myinfo">自分の情報に戻る</button>
     <div class="form-title">日報 提出履歴</div>
+    <div class="dr-summary-period-toggle" style="margin-bottom:8px;">
+      <button type="button" class="secondary dr-summary-tab" data-period="pay_period">給与期間</button>
+      <button type="button" class="secondary dr-summary-tab" data-period="calendar">今月(カレンダー)</button>
+    </div>
+    <div id="my-daily-report-summary" class="summary-card"></div>
     <div id="my-daily-report-list"></div>
+  </section>
+
+  <!-- 日報 詳細(本人、履歴カードのタップ先。管理者用のscreen-daily-report-detailとは別) -->
+  <section id="screen-my-daily-report-detail" class="screen">
+    <button type="button" class="back-link" data-nav="my-daily-reports">日報提出履歴に戻る</button>
+    <div class="form-title">日報の内容</div>
+    <div id="my-daily-report-detail-body"></div>
+    <button type="button" id="my-daily-report-detail-edit-btn" class="secondary" style="margin-top:12px;">この日の内容を修正する</button>
+  </section>
+
+  <!-- 日報 要確認一覧(管理者) -->
+  <section id="screen-daily-report-needs-review-admin" class="screen">
+    <button type="button" class="back-link" data-nav="daily-report-management">日報管理に戻る</button>
+    <div class="form-title">日報の要確認一覧</div>
+    <div class="hint" style="margin-bottom:10px;">同日・同現場の他社員の日報と食い違いが検知された日報です。内容を確認し、問題なければ「確認済みにする」、修正が必要なら理由を添えて「修正依頼」してください。</div>
+    <div id="daily-report-needs-review-list"></div>
+  </section>
+
+  <!-- 日報 修正申請一覧(管理者) -->
+  <section id="screen-daily-report-edit-requests-admin" class="screen">
+    <button type="button" class="back-link" data-nav="daily-report-management">日報管理に戻る</button>
+    <div class="form-title">日報の修正申請</div>
+    <div class="hint" style="margin-bottom:10px;">既に確認・反映済みの日報を本人が修正しようとした申請です。内容を確認し、承認または却下してください。</div>
+    <div id="daily-report-edit-requests-list"></div>
   </section>
 
   <!-- 日報 特殊ケース確認(管理者) -->
@@ -410,6 +439,16 @@
         <span class="icon-slot" data-icon="alert-triangle"></span>
         <span class="home-card-label">特殊ケース確認</span>
         <span class="home-card-desc">3現場以上の日報</span>
+      </button>
+      <button type="button" class="home-card" data-nav="daily-report-needs-review-admin">
+        <span class="icon-slot" data-icon="alert-triangle"></span>
+        <span class="home-card-label">要確認一覧</span>
+        <span class="home-card-desc">同日同現場の食い違い</span>
+      </button>
+      <button type="button" class="home-card" data-nav="daily-report-edit-requests-admin">
+        <span class="icon-slot" data-icon="alert-triangle"></span>
+        <span class="home-card-label">修正申請</span>
+        <span class="home-card-desc">確認済み日報の修正依頼</span>
       </button>
       <button type="button" class="home-card" data-nav="subcontractor-company-admin">
         <span class="icon-slot" data-icon="users-round"></span>

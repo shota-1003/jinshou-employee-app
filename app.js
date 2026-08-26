@@ -4138,6 +4138,13 @@ async function openEmployeeEditBasic() {
   document.getElementById('employee-edit-department').value = '';
   hideError('employee-edit-error');
   showScreen('employee-edit-basic');
+  // 現在値の読み込み完了までは保存ボタンを無効化する。以前ここが無防備だったため、
+  // 読み込み完了前(チェックボックスがまだ画面初期状態のまま)に保存を押すと、
+  // 日報権限フラグ等が意図せずfalseで上書きされてしまう不具合を実際に踏んだ
+  // (社員0001の通勤早出/残業等の表示対象フラグが誤って全消去された)。
+  const submitBtn = document.getElementById('employee-edit-submit');
+  submitBtn.disabled = true;
+  submitBtn.textContent = '読み込み中...';
   // 日報の対象者フラグは現在値を読み込んでチェック状態を反映する(社員詳細の
   // admin_get_employee_profileと同じデータをここでも取得する)。
   try {
@@ -4156,7 +4163,13 @@ async function openEmployeeEditBasic() {
       document.getElementById('employee-edit-can-qualification').checked = !!p.can_input_qualification;
       document.getElementById('employee-edit-can-backdate-ent').checked = !!p.can_backdate_entertainment_preapproval;
     }
-  } catch (e) { /* 読み込めなくても新規入力は続けられる */ }
+  } catch (e) {
+    showError('employee-edit-error', '現在の設定を読み込めませんでした。保存すると意図せず設定が消える可能性があるため、画面を開き直してください。');
+    return; // 読み込み失敗時は保存ボタンを無効のままにする(disabledを解除しない)
+  } finally {
+    submitBtn.textContent = '保存する';
+  }
+  submitBtn.disabled = false;
 }
 
 async function doSaveEmployeeBasic() {

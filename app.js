@@ -5105,7 +5105,15 @@ async function loadDailyReportForDate(dateStr) {
     } else {
       hint.textContent = 'この日は入力済みです。内容を修正して「日報を提出する」を押すと上書きされます。';
     }
-    existing.forEach((e) => addDailyReportEntry({ site_id: e.site_id, work_type: e.work_type, is_leader: e.is_leader, is_night_shift: e.is_night_shift, notes: e.notes }));
+    // 以前は残業/通勤早出/通勤残業/通勤100km超/現場作業/営業/運搬を再表示用に渡し忘れており、
+    // DBには正しく保存されているのに再読み込みすると入力欄が空に見える不具合があった
+    // (保存自体は既存のまま無事故だった)。existingの全項目をそのままprefillへ渡す。
+    existing.forEach((e) => addDailyReportEntry({
+      site_id: e.site_id, work_type: e.work_type, is_leader: e.is_leader, is_night_shift: e.is_night_shift, notes: e.notes,
+      overtime_hours: e.overtime_hours, is_early_commute: e.is_early_commute, is_commute_overtime: e.is_commute_overtime,
+      early_commute_hours: e.early_commute_hours, commute_overtime_hours: e.commute_overtime_hours,
+      is_over_100km: e.is_over_100km, is_transport: e.is_transport, is_field_duty: e.is_field_duty, is_sales: e.is_sales,
+    }));
   } else {
     addDailyReportEntry();
   }

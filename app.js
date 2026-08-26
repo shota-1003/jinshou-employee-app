@@ -18,6 +18,9 @@
 
 const SUPABASE_URL = 'https://tcxbtanumtuyfrqtjtvo.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_UVAjFJSjIs7Sl2tMpLWRkQ_uyDw9eyW';
+// VAPID公開鍵は秘匿情報ではないためそのまま埋め込む(.envのVAPID_PUBLIC_KEYと同じ値、
+// mail-secretary等の他アプリと共通の会社送信元アイデンティティを再利用する)。
+const VAPID_PUBLIC_KEY = 'BAwOlLW9xTd5GUuIFaj_a-8VjxlLUEPWSlOaZpy5-0_M0DPkyWokfCBXZdRqsZGsMvvFAU6i2wWKP8KRQWepR2A';
 const N8N_BASE_URL = 'https://shota1003.app.n8n.cloud';
 const SESSION_KEY = 'jinshou_employee_session'; // sessionStorage(タブを閉じると消える、UI表示用のキャッシュ)
 const REMEMBERED_CODE_KEY = 'jinshou_remembered_employee_code'; // localStorage(社員番号入力欄の補助のみ)
@@ -503,6 +506,8 @@ function enterMenu() {
   renderHomeAdminBanner(session);
   renderHomeDailyReportCard(session);
   renderHomeDailyReportStatusBanner(session);
+  renderHomeMonthStats(session);
+  renderHomeLeaveCard(session);
   renderHomeUpcomingEvents(session);
   renderHomeEventsArea(session);
 }
@@ -518,6 +523,36 @@ async function renderHomeDailyReportCard(session) {
     const submitted = (rows || []).some((r) => r.report_status === 'submitted' || r.report_status === 'confirmed');
     descEl.textContent = submitted ? '本日の日報を確認' : '今日の日報を入力';
   } catch (e) { /* 取得できなくても遷移自体はできるため無視 */ }
+}
+
+// ホーム画面「今月の状況」(給与期間の出勤日数・残業時間だけを簡潔に表示し、詳細は
+// 日報履歴・カレンダー画面へ誘導する。全項目を詰め込んで見づらくしない設計)。
+async function renderHomeMonthStats(session) {
+  const el = document.getElementById('home-month-stats');
+  el.innerHTML = '';
+  el.onclick = () => showScreen('my-daily-reports');
+  try {
+    const now = new Date();
+    const rows = await rpc('get_my_daily_report_month_summary', {
+      p_employee_code: session.employeeCode, p_year: now.getFullYear(), p_month: now.getMonth() + 1, p_period_type: 'pay_period',
+    });
+    const s = rows && rows[0];
+    if (!s) return;
+    const fmtN = (n) => Number(n || 0).toFixed(1).replace(/\.0$/, '');
+    el.innerHTML = `
+      <div class="stat-mini"><span class="stat-mini-label">今期出勤日数</span><span class="stat-mini-value">${fmtN(s.work_days)}日</span></div>
+      <div class="stat-mini"><span class="stat-mini-label">今期残業時間</span><span class="stat-mini-value">${fmtN(s.overtime_hours)}h</span></div>
+    `;
+  } catch (e) { /* 取れなくてもホーム全体の表示は続ける */ }
+}
+
+async function renderHomeLeaveCard(session) {
+  const descEl = document.getElementById('home-leave-desc');
+  try {
+    const rows = await rpc('get_leave_summary', { p_employee_code: session.employeeCode });
+    const b = rows && rows[0];
+    descEl.textContent = b && b.has_initial_grant ? `残${b.current_balance}日` : '残日数を確認・申請する';
+  } catch (e) { /* 取れなくても遷移自体はできる */ }
 }
 
 // ホーム画面「近日予定」(会社からのお知らせとは別カテゴリ、本人が登録した個人予定のみ)。
@@ -3332,6 +3367,66 @@ function renderAvatar(elId, name, photoUrl) {
   }
 }
 
+// ---------- Push通知(2026-08-26追加、既存の通知センター(announcements)の配信経路を1つ追加するだけ) ----------
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+async function initPushToggleState() {
+  const toggle = document.getElementById('myinfo-push-toggle');
+  const statusEl = document.getElementById('myinfo-push-status');
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    toggle.disabled = true;
+    statusEl.textContent = 'この端末・ブラウザはPush通知に対応していません。';
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    toggle.checked = !!sub;
+  } catch (e) { /* 取得できなくてもトグル操作自体は試せる */ }
+}
+
+async function togglePushNotifications(enable) {
+  const session = getSession();
+  const statusEl = document.getElementById('myinfo-push-status');
+  const toggle = document.getElementById('myinfo-push-toggle');
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (enable) {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        toggle.checked = false;
+        statusEl.textContent = 'ブラウザの通知許可が必要です。ブラウザの設定から通知を許可してください。';
+        return;
+      }
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) });
+      const json = sub.toJSON();
+      await rpc('register_my_push_subscription', {
+        p_employee_code: session.employeeCode, p_endpoint: json.endpoint,
+        p_p256dh: json.keys.p256dh, p_auth: json.keys.auth, p_user_agent: navigator.userAgent,
+      });
+      statusEl.textContent = 'Push通知を有効にしました。';
+    } else {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await rpc('unregister_my_push_subscription', { p_employee_code: session.employeeCode, p_endpoint: sub.endpoint });
+        await sub.unsubscribe();
+      }
+      statusEl.textContent = 'Push通知を無効にしました。';
+    }
+  } catch (e) {
+    toggle.checked = !enable;
+    statusEl.textContent = 'Push通知の設定に失敗しました: ' + (e.message || '');
+  }
+}
+
 async function loadMyInfo() {
   const session = getSession();
   renderAvatar('myinfo-avatar', session.employeeName, null);
@@ -3339,6 +3434,7 @@ async function loadMyInfo() {
   document.getElementById('myinfo-code').textContent = `社員番号: ${session.employeeCode}`;
   document.getElementById('myinfo-photo-status').textContent = '';
   loadHomeLeaveStats('myinfo-leave-balance', 'myinfo-leave-used');
+  initPushToggleState();
 
   try {
     const rows = await rpc('get_my_profile', { p_employee_code: session.employeeCode });
@@ -4824,16 +4920,60 @@ async function doDecideSite(itemEl, action) {
   } catch (e) { /* 失敗時は一覧が更新されないだけ */ }
 }
 
-async function doCreateSite() {
+const JAPAN_PREFECTURES = [
+  '北海道', '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県', '茨城県', '栃木県', '群馬県',
+  '埼玉県', '千葉県', '東京都', '神奈川県', '新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県',
+  '岐阜県', '静岡県', '愛知県', '三重県', '滋賀県', '京都府', '大阪府', '兵庫県', '奈良県', '和歌山県',
+  '鳥取県', '島根県', '岡山県', '広島県', '山口県', '徳島県', '香川県', '愛媛県', '高知県', '福岡県',
+  '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県',
+];
+function populateSitePrefectureSelect() {
+  const sel = document.getElementById('site-create-prefecture');
+  if (sel.options.length > 1) return;
+  JAPAN_PREFECTURES.forEach((p) => {
+    const opt = document.createElement('option');
+    opt.value = p; opt.textContent = p;
+    sel.appendChild(opt);
+  });
+}
+
+async function doCreateSite(forceCreate) {
   const session = getSession();
   const nameInput = document.getElementById('site-create-name');
   const name = nameInput.value.trim();
+  const candidatesEl = document.getElementById('site-create-candidates');
   hideError('site-create-error');
+  candidatesEl.style.display = 'none';
   if (!name) { showError('site-create-error', '現場名を入力してください。'); return; }
   try {
-    await rpc('admin_create_site', { p_admin_employee_code: session.employeeCode, p_site_name: name });
+    const result = await rpc('admin_register_site', {
+      p_admin_employee_code: session.employeeCode, p_site_name: name,
+      p_prefecture: document.getElementById('site-create-prefecture').value || null,
+      p_address: document.getElementById('site-create-address').value.trim() || null,
+      p_prime_contractor: document.getElementById('site-create-prime-contractor').value.trim() || null,
+      p_planned_start_date: document.getElementById('site-create-start-date').value || null,
+      p_planned_end_date: document.getElementById('site-create-end-date').value || null,
+      p_force_create: !!forceCreate,
+    });
+    const r = result && result[0];
+    if (r && r.similar_candidates && r.similar_candidates.length > 0) {
+      candidatesEl.style.display = 'block';
+      candidatesEl.innerHTML = `
+        <div class="hint-inline" style="margin-top:8px;">似た現場が見つかりました。既存の現場ではありませんか？</div>
+        ${r.similar_candidates.map((c) => `<div class="hint-inline">・${c.site_name}(類似度${Math.round(c.similarity * 100)}%)</div>`).join('')}
+        <button type="button" class="secondary" id="site-create-force-btn" style="margin-top:6px;">それでも新規現場として登録する</button>
+      `;
+      document.getElementById('site-create-force-btn').addEventListener('click', () => doCreateSite(true));
+      return;
+    }
     nameInput.value = '';
+    document.getElementById('site-create-prefecture').value = '';
+    document.getElementById('site-create-address').value = '';
+    document.getElementById('site-create-prime-contractor').value = '';
+    document.getElementById('site-create-start-date').value = '';
+    document.getElementById('site-create-end-date').value = '';
     await loadSiteAdminList();
+    await loadAllSitesList();
   } catch (e) {
     showError('site-create-error', e.message || '登録に失敗しました。');
   }
@@ -5071,6 +5211,23 @@ function addDailyReportEntry(prefill) {
   if (prefill && prefill.early_commute_hours != null) clone.querySelector('.dr-early-commute-hours').value = prefill.early_commute_hours;
   if (prefill && prefill.commute_overtime_hours != null) clone.querySelector('.dr-commute-overtime-hours').value = prefill.commute_overtime_hours;
   if (prefill && prefill.is_over_100km) clone.querySelector('.dr-is-over-100km').checked = true;
+  const isBusinessTripEl = clone.querySelector('.dr-is-business-trip');
+  const overnightWrap = clone.querySelector('.dr-overnight-wrap');
+  const isOvernightEl = clone.querySelector('.dr-is-overnight');
+  const overnightNightsWrap = clone.querySelector('.dr-overnight-nights-wrap');
+  const overnightNightsEl = clone.querySelector('.dr-overnight-nights');
+  if (prefill && prefill.is_business_trip) isBusinessTripEl.checked = true;
+  if (prefill && prefill.is_overnight) isOvernightEl.checked = true;
+  if (prefill && prefill.overnight_nights != null) overnightNightsEl.value = prefill.overnight_nights;
+  overnightWrap.style.display = isBusinessTripEl.checked ? 'block' : 'none';
+  overnightNightsWrap.style.display = isOvernightEl.checked ? 'block' : 'none';
+  isBusinessTripEl.addEventListener('change', () => {
+    overnightWrap.style.display = isBusinessTripEl.checked ? 'block' : 'none';
+    if (!isBusinessTripEl.checked) { isOvernightEl.checked = false; overnightNightsWrap.style.display = 'none'; }
+  });
+  isOvernightEl.addEventListener('change', () => {
+    overnightNightsWrap.style.display = isOvernightEl.checked ? 'block' : 'none';
+  });
   if (prefill && prefill.is_transport) clone.querySelector('.dr-is-transport').checked = true;
   if (prefill && prefill.is_field_duty) clone.querySelector('.dr-is-field-duty').checked = true;
   if (prefill && prefill.is_sales) clone.querySelector('.dr-is-sales').checked = true;
@@ -5203,6 +5360,7 @@ async function loadDailyReportForDate(dateStr) {
       overtime_hours: e.overtime_hours, is_early_commute: e.is_early_commute, is_commute_overtime: e.is_commute_overtime,
       early_commute_hours: e.early_commute_hours, commute_overtime_hours: e.commute_overtime_hours,
       is_over_100km: e.is_over_100km, is_transport: e.is_transport, is_field_duty: e.is_field_duty, is_sales: e.is_sales,
+      is_business_trip: e.is_business_trip, is_overnight: e.is_overnight, overnight_nights: e.overnight_nights,
     }));
   } else {
     addDailyReportEntry();
@@ -5277,6 +5435,9 @@ async function doSubmitDailyReport(isDraft) {
       is_transport: el.querySelector('.dr-is-transport').checked,
       is_field_duty: el.querySelector('.dr-is-field-duty').checked,
       is_sales: el.querySelector('.dr-is-sales').checked,
+      is_business_trip: el.querySelector('.dr-is-business-trip').checked,
+      is_overnight: el.querySelector('.dr-is-overnight').checked,
+      overnight_nights: el.querySelector('.dr-overnight-nights').value ? Number(el.querySelector('.dr-overnight-nights').value) : null,
     });
   }
 
@@ -5709,6 +5870,7 @@ async function openMyDailyReportDetail(dateStr) {
         <div class="field-row"><span>通勤早出</span><span>${r.is_early_commute ? `あり(${r.early_commute_hours}h)` : 'なし'}</span></div>
         <div class="field-row"><span>通勤残業</span><span>${r.is_commute_overtime ? `あり(${r.commute_overtime_hours}h)` : 'なし'}</span></div>
         <div class="field-row"><span>通勤100km超</span><span>${r.is_over_100km ? 'あり' : 'なし'}</span></div>
+        <div class="field-row"><span>出張</span><span>${r.is_business_trip ? (r.is_overnight ? `あり(宿泊${r.overnight_nights || ''}日)` : 'あり(日帰り)') : 'なし'}</span></div>
         <div class="field-row"><span>現場作業</span><span>${r.is_field_duty ? 'あり' : 'なし'}</span></div>
         <div class="field-row"><span>営業</span><span>${r.is_sales ? 'あり' : 'なし'}</span></div>
         <div class="field-row"><span>運搬</span><span>${r.is_transport ? 'あり' : 'なし'}</span></div>
@@ -7737,6 +7899,7 @@ function init() {
   });
   document.getElementById('dr-cal-prev').addEventListener('click', () => shiftDailyReportCalMonth(-1));
   document.getElementById('dr-cal-next').addEventListener('click', () => shiftDailyReportCalMonth(1));
+  document.getElementById('myinfo-push-toggle').addEventListener('change', (e) => togglePushNotifications(e.target.checked));
   document.getElementById('my-daily-report-detail-edit-btn').addEventListener('click', () => {
     if (!myDailyReportDetailDate) return;
     dailyReportTarget = { type: 'self', employeeCode: null, employeeName: null, subcontractorWorkerId: null, workerName: null };
@@ -8016,9 +8179,11 @@ function init() {
   };
   SCREEN_ENTER_HOOKS['site-admin'] = async () => {
     if (!(await isNippoAdmin())) { enterMenu(); return; }
+    populateSitePrefectureSelect();
     loadSiteAdminList();
+    loadAllSitesList();
   };
-  document.getElementById('site-create-submit').addEventListener('click', doCreateSite);
+  document.getElementById('site-create-submit').addEventListener('click', () => doCreateSite(false));
   let siteListSearchTimer = null;
   document.getElementById('site-list-search').addEventListener('input', (e) => {
     clearTimeout(siteListSearchTimer);

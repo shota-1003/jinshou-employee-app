@@ -11,7 +11,7 @@
 // ネットワークが使える限り常に最新のファイルを取得し、オフライン時だけキャッシュへ
 // フォールバックする方式にすることで、この種の「古いキャッシュに固定される」問題を
 // 自己修復できるようにした。
-const CACHE_NAME = 'jinshou-employee-app-v54';
+const CACHE_NAME = 'jinshou-employee-app-v55';
 const SHELL_FILES = [
   './', './index.html', './style.css', './app.js', './icons.js', './manifest.json',
   './icons/app-icon-180-v2.png', './icons/icon-192-v2.png', './icons/icon-512-v2.png', './icons/icon-512-maskable-v2.png',
@@ -56,5 +56,36 @@ self.addEventListener('fetch', (event) => {
         return res;
       })
       .catch(() => caches.match(event.request)),
+  );
+});
+
+// Push通知(2026-08-26追加)。重要な通知(会社からのお知らせ・申請の承認/却下/差戻し・
+// 日報不整合・未提出締切・休暇申請結果・本人予定の事前通知)のみをcreate_system_notification
+// (announcements/announcement_recipients、既存の通知センター)経由で送る設計のため、
+// ここでは受信したペイロードをそのまま表示するだけにする(重要度の絞り込みは送信側で行う)。
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = { title: '通知', body: event.data ? event.data.text() : '' }; }
+  const title = data.title || '迅翔興業 社員ポータル';
+  const options = {
+    body: data.body || '',
+    icon: './icons/icon-192-v2.png',
+    badge: './icons/favicon-32-v2.png',
+    data: { url: data.url || './' },
+    tag: data.tag || undefined,
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) || './';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientsArr) => {
+      for (const client of clientsArr) {
+        if ('focus' in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
+    }),
   );
 });

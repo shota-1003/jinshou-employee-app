@@ -96,6 +96,21 @@
       <span class="today-item-arrow"><span class="icon-slot" data-icon="chevron-right"></span></span>
     </div>
 
+    <div class="section-title">今月の状況</div>
+    <div class="stat-mini-row" id="home-month-stats" style="cursor:pointer;"></div>
+    <div class="home-card-grid" style="margin-bottom:12px;">
+      <button type="button" class="home-card" data-nav="my-daily-reports">
+        <span class="icon-slot" data-icon="calendar"></span>
+        <span class="home-card-label">日報履歴・カレンダー</span>
+        <span class="home-card-desc">提出履歴と月間カレンダー</span>
+      </button>
+      <button type="button" class="home-card" data-nav="leave">
+        <span class="icon-slot" data-icon="calendar"></span>
+        <span class="home-card-label" id="home-leave-label">休暇申請</span>
+        <span class="home-card-desc" id="home-leave-desc">残日数を確認・申請する</span>
+      </button>
+    </div>
+
     <div id="home-upcoming-events-area"></div>
 
     <div class="section-title">今日やること</div>
@@ -318,6 +333,19 @@
       <div class="checkbox-row">
         <input type="checkbox" class="dr-is-over-100km">
         <label>通勤100km超(現場までの移動が100kmを超える)</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" class="dr-is-business-trip">
+        <label>出張(通常の通勤圏外での勤務)</label>
+      </div>
+      <div class="dr-overnight-wrap" style="display:none;">
+        <div class="checkbox-row">
+          <input type="checkbox" class="dr-is-overnight">
+          <label>宿泊あり(日帰りの場合はチェックしない)</label>
+        </div>
+        <div class="dr-overnight-nights-wrap" style="display:none;">
+          <input type="number" class="dr-overnight-nights" min="1" step="1" placeholder="宿泊日数(例: 2)">
+        </div>
       </div>
       <div class="dr-other-duty-group" style="display:none;">
         <div class="section-title" style="margin-top:0;">現場作業・営業・運搬(職人以外の方)</div>
@@ -1107,6 +1135,15 @@
     <div class="section-title">緊急連絡先</div>
     <div class="card"><div class="field-group" id="myinfo-emergency-fields"></div></div>
 
+    <div class="section-title">通知設定</div>
+    <div class="card">
+      <div class="checkbox-row">
+        <input type="checkbox" id="myinfo-push-toggle">
+        <label>重要な通知をこの端末にPush通知で受け取る</label>
+      </div>
+      <div class="hint-inline" id="myinfo-push-status">会社からの重要なお知らせ・申請の承認/却下/差戻し・日報の要確認・休暇申請結果・登録した予定の事前通知など、対応が必要な重要事項のみ送ります。</div>
+    </div>
+
     <div class="section-title">メニュー</div>
     <div class="menu-list">
       <button type="button" class="menu-item" data-nav="history">
@@ -1606,8 +1643,21 @@
       <div class="hint" style="margin-bottom:8px;">承認待ちを経由せず、すぐに使える現場として登録します。</div>
       <label>現場名<span class="required-mark">(必須)</span></label>
       <input type="text" id="site-create-name" placeholder="例: 〇〇マンション新築工事">
+      <label>都道府県</label>
+      <select id="site-create-prefecture">
+        <option value="">選択してください</option>
+      </select>
+      <label>住所</label>
+      <input type="text" id="site-create-address" placeholder="例: 徳島市南昭和町1-23">
+      <label>元請</label>
+      <input type="text" id="site-create-prime-contractor" placeholder="例: 〇〇建設株式会社">
+      <label>開始予定日</label>
+      <input type="date" id="site-create-start-date">
+      <label>終了予定日</label>
+      <input type="date" id="site-create-end-date">
       <button type="button" id="site-create-submit">登録する</button>
       <div class="error" id="site-create-error"></div>
+      <div id="site-create-candidates" style="display:none;"></div>
     </div>
     <div class="section-title">承認待ちの新規現場</div>
     <div class="hint" style="margin-bottom:12px;">社員が日報・経費申請等で新しく入力した現場名です。承認すると次回から候補に表示されます。名前を修正してから承認することもできます。</div>

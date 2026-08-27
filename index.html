@@ -95,6 +95,7 @@
       </div>
       <span class="today-item-arrow"><span class="icon-slot" data-icon="chevron-right"></span></span>
     </div>
+    <button type="button" class="link" id="home-daily-report-mark-rest-btn" style="display:none;margin:2px 0 0 44px;">今日は休みとして登録する</button>
 
     <div class="section-title">今月の状況</div>
     <div class="stat-mini-row" id="home-month-stats" style="cursor:pointer;"></div>
@@ -382,6 +383,12 @@
       <button type="button" class="secondary dr-summary-tab" data-period="pay_period">給与期間</button>
       <button type="button" class="secondary dr-summary-tab" data-period="calendar">今月(カレンダー)</button>
     </div>
+    <div class="dr-cal-nav">
+      <button type="button" class="secondary" id="dr-period-prev">＜</button>
+      <div class="dr-cal-month-label" id="dr-period-label"></div>
+      <button type="button" class="secondary" id="dr-period-next">＞</button>
+    </div>
+    <button type="button" class="link" id="dr-period-reset" style="display:none;margin:2px 0 8px;">今の期間に戻る</button>
     <div id="my-daily-report-summary" class="summary-card"></div>
 
     <div class="dr-view-toggle" style="margin:10px 0;">
@@ -405,9 +412,10 @@
       <div class="dr-cal-grid" id="dr-cal-grid"></div>
       <div class="dr-cal-legend">
         <span><span class="dr-cal-dot done"></span>提出済み</span>
-        <span><span class="dr-cal-dot warn"></span>要確認・修正依頼(白枠の丸)</span>
-        <span><span class="dr-cal-dot leave"></span>有給</span>
+        <span><span class="dr-cal-dot warn"></span>要確認・修正依頼</span>
         <span><span class="dr-cal-dot missing"></span>未提出</span>
+        <span><span class="dr-cal-dot leave"></span>有給</span>
+        <span><span class="dr-cal-dot rest"></span>休み(有給以外)</span>
       </div>
       <div id="dr-cal-day-detail"></div>
     </div>
@@ -809,7 +817,15 @@
     <button type="button" class="secondary" data-nav="leave-history">取得履歴を見る</button>
 
     <div class="card">
-      <div class="form-title">有給休暇申請</div>
+      <div class="form-title">休暇申請</div>
+      <label for="leave-category">区分</label>
+      <select id="leave-category">
+        <option value="paid_leave">有給休暇</option>
+        <option value="regular_leave">普通休暇</option>
+        <option value="absence">欠勤</option>
+        <option value="company_leave">会社都合休み</option>
+        <option value="other_leave">その他休暇</option>
+      </select>
       <label for="leave-start">開始日</label>
       <input type="date" id="leave-start">
       <label for="leave-end">終了日</label>
@@ -1272,11 +1288,32 @@
     </div>
   </section>
 
-  <!-- 自分の支給品履歴 -->
+  <!-- 自分の支給品履歴・現在保有数 -->
   <section id="screen-my-supply" class="screen">
     <button type="button" class="back-link" data-nav="myinfo">自分の情報に戻る</button>
-    <div class="form-title">支給品履歴</div>
+    <div class="form-title">支給品</div>
+    <div class="section-title">現在の支給品</div>
+    <div id="my-supply-holdings"></div>
+    <div class="section-title">支給履歴</div>
     <div id="my-supply-list"></div>
+    <div class="section-title">差異報告</div>
+    <div class="hint" style="margin-bottom:8px;">実際に持っている数が上と違う場合は、品目を選んで報告してください。自動で数量が書き換わることはなく、管理者確認のうえで確定します。</div>
+    <div id="my-supply-discrepancies"></div>
+  </section>
+
+  <!-- 支給品 差異報告フォーム -->
+  <section id="screen-supply-discrepancy-report" class="screen">
+    <button type="button" class="back-link" data-nav="my-supply">支給品に戻る</button>
+    <div class="form-title">差異を報告する</div>
+    <label for="sdr-item">品目</label>
+    <select id="sdr-item"></select>
+    <div class="hint-inline" id="sdr-system-quantity"></div>
+    <label for="sdr-quantity">実際に持っている数</label>
+    <input type="number" id="sdr-quantity" min="0" step="1">
+    <label for="sdr-note">メモ(任意)</label>
+    <input type="text" id="sdr-note">
+    <div class="error" id="sdr-error"></div>
+    <button id="sdr-submit">報告する</button>
   </section>
 
   <!-- 管理者画面 -->
@@ -1698,19 +1735,16 @@
       <label for="ent-purpose">目的<span class="required-mark">(必須)</span></label>
       <input type="text" id="ent-purpose" placeholder="例: 新規案件の受注御礼">
 
-      <label>取引先<span class="required-mark">(必須)</span></label>
-      <input type="text" id="ent-partner" list="vendor-list">
-      <input type="hidden" id="ent-partner-id">
-
-      <label for="ent-partner-participants">取引先参加者</label>
-      <div class="hint-inline">氏名が分かれば入力(任意)</div>
-      <input type="text" id="ent-partner-participants" placeholder="例: 山田様、鈴木様">
-      <label for="ent-partner-count">取引先参加人数<span class="required-mark">(必須)</span></label>
-      <input type="number" id="ent-partner-count" min="1">
+      <label>接待先(取引先)<span class="required-mark">(必須)</span></label>
+      <div class="hint-inline">複数の会社が同席する場合は「＋取引先会社を追加」で増やせます。参加人数と氏名が分かる人数は一致しなくても申請できます。</div>
+      <div id="ent-companies"></div>
+      <button type="button" class="secondary" id="ent-company-add">＋取引先会社を追加</button>
 
       <label>自社参加者<span class="required-mark">(必須)</span></label>
       <div class="participant-select" id="ent-our-participants"></div>
       <div class="hint-inline">自社人数: <span id="ent-our-count">0</span>名(自動計算)</div>
+
+      <div class="ent-summary" id="ent-summary"></div>
 
       <label for="ent-note">備考</label>
       <div class="hint-inline">任意</div>
@@ -1750,19 +1784,16 @@
       <label for="ent-late-purpose">目的<span class="required-mark">(必須)</span></label>
       <input type="text" id="ent-late-purpose" placeholder="例: 新規案件の受注御礼">
 
-      <label>取引先<span class="required-mark">(必須)</span></label>
-      <input type="text" id="ent-late-partner" list="vendor-list">
-      <input type="hidden" id="ent-late-partner-id">
-
-      <label for="ent-late-partner-participants">取引先参加者</label>
-      <div class="hint-inline">氏名が分かれば入力(任意)</div>
-      <input type="text" id="ent-late-partner-participants" placeholder="例: 山田様、鈴木様">
-      <label for="ent-late-partner-count">取引先参加人数<span class="required-mark">(必須)</span></label>
-      <input type="number" id="ent-late-partner-count" min="1">
+      <label>接待先(取引先)<span class="required-mark">(必須)</span></label>
+      <div class="hint-inline">複数の会社が同席する場合は「＋取引先会社を追加」で増やせます。参加人数と氏名が分かる人数は一致しなくても申請できます。</div>
+      <div id="ent-late-companies"></div>
+      <button type="button" class="secondary" id="ent-late-company-add">＋取引先会社を追加</button>
 
       <label>自社参加者<span class="required-mark">(必須)</span></label>
       <div class="participant-select" id="ent-late-our-participants"></div>
       <div class="hint-inline">自社人数: <span id="ent-late-our-count">0</span>名(自動計算)</div>
+
+      <div class="ent-summary" id="ent-late-summary"></div>
 
       <label for="ent-late-reason">事前に申請できなかった具体的な理由<span class="required-mark">(必須・15文字以上)</span></label>
       <div class="hint-inline">「忘れていた」等の簡単な理由ではなく、具体的な事情を記入してください。管理者が承認可否を判断する材料になります。</div>
@@ -2169,6 +2200,23 @@
       <div id="employee-detail-qual-list"></div>
     </div>
     <div class="tab-panel" id="employee-detail-panel-supply">
+      <div class="section-title">現在の保有数</div>
+      <div id="employee-detail-supply-holdings"></div>
+      <div class="section-title">保有数を調整する</div>
+      <div class="hint" style="margin-bottom:8px;">導入前から持っている分の初期登録や、確認の結果判明した訂正はここから行う。理由は履歴に残る。</div>
+      <label for="ed-supply-adjust-item">品目</label>
+      <select id="ed-supply-adjust-item"></select>
+      <label for="ed-supply-adjust-delta">増減数(マイナス可、例: 初期登録+3、訂正-1)</label>
+      <input type="number" id="ed-supply-adjust-delta" step="1">
+      <label for="ed-supply-adjust-reason">理由<span class="required-mark">(必須)</span></label>
+      <input type="text" id="ed-supply-adjust-reason" placeholder="例: 導入前からの保有分の初期登録">
+      <div class="error" id="ed-supply-adjust-error"></div>
+      <button type="button" class="secondary" id="ed-supply-adjust-submit">調整する</button>
+      <div class="section-title">調整履歴</div>
+      <div id="employee-detail-supply-adjust-history"></div>
+      <div class="section-title">差異報告</div>
+      <div id="employee-detail-supply-discrepancies"></div>
+      <div class="section-title">支給履歴</div>
       <div id="employee-detail-supply-list"></div>
     </div>
     <div class="tab-panel" id="employee-detail-panel-requests">

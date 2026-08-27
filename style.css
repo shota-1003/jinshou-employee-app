@@ -809,14 +809,16 @@ button.link {
 .dr-cal-cell.sunday .dr-cal-daynum, .dr-cal-cell.holiday .dr-cal-daynum { color: var(--danger); }
 .dr-cal-cell.saturday .dr-cal-daynum { color: var(--primary); }
 .dr-cal-daynum { font-weight: 700; }
-.dr-cal-dots { display: flex; gap: 2px; margin-top: 2px; flex-wrap: wrap; justify-content: center; }
-.dr-cal-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
-/* 提出済み(done)は指示どおり赤丸で表示する。要確認(warn)は「提出済み」の赤丸に埋もれないよう、
-   同じ赤でも太い白枠つきの大きめの丸にして明確に区別する(2026-08-26、ユーザー指示への対応)。 */
-.dr-cal-dot.done { background: var(--danger); }
-.dr-cal-dot.warn { width: 9px; height: 9px; background: var(--danger); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--danger); margin: -1.5px; }
+.dr-cal-dots { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; justify-content: center; }
+/* 2026-08-27修正: 色の意味を整理(ユーザー指示)。赤は「異常・本人対応必要・管理者確認必要」の
+   状態(要確認/修正依頼)だけに限定し、提出済み(正常)を赤にしない。スマホでも一目で分かるよう
+   基準サイズも6px→10pxへ拡大した。 */
+.dr-cal-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.dr-cal-dot.done { background: var(--success); }
+.dr-cal-dot.warn { width: 13px; height: 13px; background: var(--danger); border: 2px solid #fff; box-shadow: 0 0 0 1.5px var(--danger); margin: -1.5px; }
 .dr-cal-dot.leave { background: var(--info); }
-.dr-cal-dot.missing { border: 1px solid var(--danger); background: transparent; }
+.dr-cal-dot.rest { background: var(--text-muted); }
+.dr-cal-dot.missing { width: 10px; height: 10px; border: 2px solid var(--warn); background: transparent; }
 .dr-cal-birthday { font-size: 9px; line-height: 1; margin-top: 1px; }
 .dr-cal-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--text-muted); margin: 10px 0; align-items: center; }
 .dr-cal-legend .dr-cal-dot { margin-right: 3px; }
@@ -878,6 +880,17 @@ button.link {
 /* ===== 現場の新規入力・打ち合わせ/接待交際費の参加者ブロック ===== */
 .item-new-site-wrap, .item-meeting-block, .item-entertainment-block {
   margin-top: 6px; padding: 12px 14px; background: oklch(1 0 0 / 5%); border-radius: var(--radius-sm); border: 1px dashed var(--border-strong);
+}
+/* ===== 接待交際費: 複数会社(取引先)入力ブロック(2026-08-27) ===== */
+.ent-company-block {
+  margin-top: 10px; padding: 12px 14px; background: oklch(1 0 0 / 5%); border-radius: var(--radius-sm); border: 1px dashed var(--border-strong);
+}
+.ent-company-block-header {
+  display: flex; align-items: center; justify-content: space-between; font-weight: 700; margin-bottom: 6px;
+}
+.ent-company-block-header .ent-company-remove { padding: 4px 10px; font-size: 12px; width: auto; }
+.ent-summary {
+  margin-top: 12px; padding: 10px 12px; background: oklch(1 0 0 / 6%); border-radius: var(--radius-sm); font-size: 13px; line-height: 1.7;
 }
 .participant-select { margin-top: 6px; }
 .participant-search-input { margin-bottom: 6px; }

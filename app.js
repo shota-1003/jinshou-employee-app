@@ -4771,6 +4771,8 @@ async function doSubmitEntertainmentPreapproval() {
       p_partner_participant_count: partnerCount,
       p_our_participant_employee_codes: ourCodes,
       p_note: document.getElementById('ent-note').value.trim() || null,
+      p_is_special_late_application: false,
+      p_late_reason: null,
     });
     showDone('接待・会食の事前申請を送信しました。管理者の承認をお待ちください。', 'menu-apply');
   } catch (e) {

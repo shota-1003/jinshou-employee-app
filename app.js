@@ -8736,13 +8736,13 @@ function collectJoyoDenpyoWorkers() {
 }
 
 async function doSubmitJoyoDenpyo(isDraft) {
+  hideError('jd-form-error');
   const session = getSession();
   const editId = document.getElementById('jd-edit-id').value;
   const date = document.getElementById('jd-date').value;
   const siteSelect = document.getElementById('jd-site-select');
   const siteId = siteSelect.value && siteSelect.value !== '__new__' ? Number(siteSelect.value) : null;
   const newSiteName = !siteId ? document.getElementById('jd-site-search').value.trim() : null;
-  hideError('jd-form-error');
   if (!date) { showError('jd-form-error', '日付を入力してください。'); return; }
   if (!siteId && !newSiteName) { showError('jd-form-error', '現場を選択または入力してください。'); return; }
 

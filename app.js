@@ -603,6 +603,7 @@ function enterMenu(replace) {
 // 同じRPC(get_employee_status_timeline/mark_status_report_returned)を再利用する。
 async function renderHomeMyOutingBanner(session) {
   const banner = document.getElementById('home-my-outing-banner');
+  if (!banner) return;
   try {
     const rows = await rpc('get_employee_status_timeline', { p_employee_code: session.employeeCode, p_target_employee_code: session.employeeCode, p_work_date: null });
     const active = (rows || []).filter((r) => r.status === 'active' && r.event_type === 'outing');
@@ -10288,7 +10289,7 @@ function init() {
     if (!isAdmin()) { enterMenu(); return; }
     resetEmployeeCreateForm();
   };
-  document.getElementById('ec-submit').addEventListener('click', doCreateEmployee);
+  onId('ec-submit', 'click', doCreateEmployee);
   SCREEN_ENTER_HOOKS['info-change-admin'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadInfoChangeAdmin();

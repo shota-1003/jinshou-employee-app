@@ -195,6 +195,7 @@ const SCREEN_ENTER_HOOKS = {};
 // 元のタブが点灯したままになるようにマッピングする。
 const BOTTOM_NAV_MAP = {
   menu: 'menu',
+  'assignment-calendar': 'menu',
   'menu-apply': 'menu-apply', leave: 'menu-apply', expense: 'menu-apply', 'expense-select': 'menu-apply', 'expense-advance': 'menu-apply', 'expense-company': 'menu-apply',
   'expense-bulk': 'menu-apply',
   meeting: 'menu-apply', 'supply-request': 'menu-apply', 'qual-submit': 'menu-apply', 'health-submit': 'menu-apply',
@@ -258,6 +259,12 @@ function showScreen(id, opts) {
     if (ADMIN_SCREENS.has(id)) inAdminMode = true;
     else if (BOTTOM_NAV_MAP[id] || id === 'menu') inAdminMode = false; // 個人側の画面へ来たら管理者モードを解除
   }
+  // 配置カレンダーを開いている間だけページ側をスクロールさせない(INT-16)。
+  // 配置カレンダーは上部を「スクロール領域の外」に置いて日付移動UIを固定しているため、
+  // ページ側が別にスクロールすると、その保証が崩れてモジュールごと上へ流れてしまう。
+  document.body.classList.toggle('assignment-calendar-open', id === 'assignment-calendar');
+  if (id === 'assignment-calendar') mountAssignmentCalendar();
+  else unmountAssignmentCalendar();
   document.getElementById('bottom-nav').style.display = (!preAuthScreens.includes(id) && !inAdminMode) ? 'flex' : 'none';
   document.getElementById('admin-bottom-nav').style.display = (!preAuthScreens.includes(id) && inAdminMode) ? 'flex' : 'none';
   // ログイン前・管理者モード中は案内AIを表示しない(下部ナビと同じ扱い)。
@@ -416,6 +423,188 @@ async function doSubmitEmployeeCode() {
   } catch (e) {
     showError('login-error', '通信エラーが発生しました。電波の良い場所でもう一度お試しください。');
   }
+}
+
+// ============================================================
+// 暗証番号の表示/非表示 (E-14)
+//
+// 現場では手袋のまま片手で入力するため、打ち間違いに気づけないまま
+// 5回失敗して15分ロックされる事故が起きやすい。既定は非表示のまま、
+// 目のボタンで確認できるようにする。
+// 個々の画面へ個別に書かず、type="password" の欄すべてへ一括で付ける
+// (今後PIN欄が増えても付け忘れが起きない)。
+// ============================================================
+function attachPinRevealToggles() {
+  const inputs = document.querySelectorAll('input[type="password"][inputmode="numeric"]');
+  inputs.forEach((input) => {
+    if (input.dataset.revealAttached === '1') return;
+    input.dataset.revealAttached = '1';
+    let field = input.parentElement;
+    if (!field || !field.classList.contains('pin-field')) {
+      field = document.createElement('div');
+      field.className = 'pin-field';
+      input.parentNode.insertBefore(field, input);
+      field.appendChild(input);
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pin-reveal';
+    btn.textContent = '👁';
+    btn.setAttribute('aria-label', '暗証番号を表示する');
+    btn.addEventListener('click', () => {
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.textContent = show ? '🙈' : '👁';
+      btn.setAttribute('aria-label', show ? '暗証番号を隠す' : '暗証番号を表示する');
+      input.focus();
+    });
+    field.appendChild(btn);
+  });
+}
+
+// ============================================================
+// 弱い暗証番号を使っている人へのお願い (E-13)
+// ログインは拒否しない。ホームで変更を促すだけ。
+// ============================================================
+async function refreshPinWeakBanner(session) {
+  const banner = document.getElementById('pin-weak-banner');
+  if (!banner || !session) return;
+  try {
+    const rows = await rpc('get_my_auth_status', { p_employee_code: session.employeeCode });
+    const st = Array.isArray(rows) ? rows[0] : rows;
+    banner.style.display = st && st.out_must_change_pin ? '' : 'none';
+  } catch (e) {
+    // 取得できなくてもホーム自体は使えるようにする(RPCが無い環境でも壊さない)
+    banner.style.display = 'none';
+  }
+}
+
+// ============================================================
+// 暗証番号をお忘れの方 (E-15)
+// 端末トークンが手元にあるかどうかで、その場で再設定できるかが決まる。
+// ============================================================
+function openPinForgot() {
+  const auth = getDeviceAuth();
+  const hasDevice = !!(auth && auth.token && pendingLoginCode && auth.employeeCode === pendingLoginCode);
+  document.getElementById('pin-forgot-device-card').style.display = hasDevice ? '' : 'none';
+  document.getElementById('pin-forgot-request-card').style.display = hasDevice ? 'none' : '';
+  hideError('pin-forgot-error');
+  hideError('pin-forgot-request-error');
+  document.getElementById('pin-forgot-new').value = '';
+  document.getElementById('pin-forgot-confirm').value = '';
+  showScreen('pin-forgot');
+  attachPinRevealToggles();
+}
+
+async function doPinForgotReset() {
+  const pin = document.getElementById('pin-forgot-new').value.trim();
+  const confirmPin = document.getElementById('pin-forgot-confirm').value.trim();
+  hideError('pin-forgot-error');
+  if (!/^[0-9]{4,6}$/.test(pin)) {
+    showError('pin-forgot-error', '暗証番号は4〜6桁の数字で入力してください。');
+    return;
+  }
+  if (pin !== confirmPin) {
+    showError('pin-forgot-error', '確認用の暗証番号が一致しません。');
+    return;
+  }
+  const btn = document.getElementById('pin-forgot-submit');
+  btn.disabled = true;
+  try {
+    await rpc('reset_my_pin_with_device', { p_employee_code: pendingLoginCode, p_new_pin: pin });
+    // 設定した暗証番号でそのままログインする(もう一度打たせない)
+    const rows = await rpc('verify_employee_pin', { p_employee_code: pendingLoginCode, p_pin: pin });
+    if (!rows || rows.length === 0) { showError('pin-forgot-error', '設定できましたが、ログインに失敗しました。もう一度お試しください。'); return; }
+    const emp = rows[0];
+    setSession({ employeeCode: pendingLoginCode, employeeId: emp.out_employee_id, employeeName: emp.out_employee_name, requestRole: emp.out_request_role });
+    setDeviceAuth(pendingLoginCode, emp.out_device_token);
+    if (emp.out_approval_status === 'pending') { showScreen('device-pending'); return; }
+    enterMenu();
+  } catch (e) {
+    showError('pin-forgot-error', e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function doPinResetRequest() {
+  hideError('pin-forgot-request-error');
+  const btn = document.getElementById('pin-forgot-request-submit');
+  btn.disabled = true;
+  try {
+    await rpc('request_pin_reset', { p_employee_code: pendingLoginCode, p_note: null });
+    // 社員番号の存在有無を画面から推測できないよう、常に同じ文言を出す。
+    showError('pin-forgot-request-error', '管理者へ再設定の依頼を送りました。初回登録コードが伝えられるまでお待ちください。');
+  } catch (e) {
+    showError('pin-forgot-request-error', e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ログイン済みの本人が、現在の暗証番号を思い出せないまま設定し直す (E-15)。
+// 端末トークンが本人確認そのものなので、管理者を介さずに完結する。
+async function doPinChangeReset() {
+  const pin = document.getElementById('pin-change-reset-new').value.trim();
+  const confirmPin = document.getElementById('pin-change-reset-confirm').value.trim();
+  hideError('pin-change-reset-error');
+  if (!/^[0-9]{4,6}$/.test(pin)) {
+    showError('pin-change-reset-error', '暗証番号は4〜6桁の数字で入力してください。');
+    return;
+  }
+  if (pin !== confirmPin) {
+    showError('pin-change-reset-error', '確認用の暗証番号が一致しません。');
+    return;
+  }
+  const btn = document.getElementById('pin-change-reset-submit');
+  btn.disabled = true;
+  try {
+    const session = getSession();
+    await rpc('reset_my_pin_with_device', { p_employee_code: session.employeeCode, p_new_pin: pin });
+    document.getElementById('pin-change-reset-new').value = '';
+    document.getElementById('pin-change-reset-confirm').value = '';
+    showDone('暗証番号を設定しました。次回のログインから新しい暗証番号をお使いください。', 'myinfo');
+  } catch (e) {
+    showError('pin-change-reset-error', e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ============================================================
+// 配置カレンダー(別モジュール)の組み込み
+//
+// 独自の認証・独自の社員/現場マスターは持たせない。ポータルが既に持っている
+// rpc() とログイン中の社員番号をそのまま渡すだけで、同じセッションで動く
+// (統合仕様書 §6)。画面を離れるときは destroy() を呼んで resize リスナーを外す。
+// ============================================================
+let assignmentCalendarApi = null;
+
+function mountAssignmentCalendar() {
+  const root = document.getElementById('assignment-calendar-root');
+  if (!root || !window.AssignmentCalendar) return;
+  const session = getSession();
+  if (!session) return;
+  if (assignmentCalendarApi) { assignmentCalendarApi.refresh(); return; }
+  try {
+    assignmentCalendarApi = window.AssignmentCalendar.mount(root, {
+      rpc,
+      employeeCode: session.employeeCode,
+      employeeName: session.employeeName,
+      // 現場管理アプリはまだ無い。用意できたらここで site_id を渡して遷移させる。
+      onOpenSite: null,
+    });
+  } catch (e) {
+    root.innerHTML = '<div class="hint" style="padding:16px;">配置カレンダーを開けませんでした。時間をおいてもう一度お試しください。</div>';
+  }
+}
+
+function unmountAssignmentCalendar() {
+  if (!assignmentCalendarApi) return;
+  try { assignmentCalendarApi.destroy(); } catch (e) { /* 既に外れている */ }
+  assignmentCalendarApi = null;
+  const root = document.getElementById('assignment-calendar-root');
+  if (root) root.innerHTML = '';
 }
 
 async function doVerifyPin() {
@@ -596,6 +785,7 @@ function enterMenu(replace) {
   renderHomeEventsArea(session);
   renderHomeMyOutingBanner(session);
   renderHomeAssignmentCard(session);
+  refreshPinWeakBanner(session);
 }
 
 // 本人が現在「外出・一時離脱」中の場合、ホーム最上部に目立つバナーで表示し、その場で
@@ -4214,7 +4404,7 @@ async function loadEmployeeDirectory() {
 }
 
 function resetEmployeeCreateForm() {
-  ['ec-name', 'ec-furigana', 'ec-department', 'ec-hire-date', 'ec-phone', 'ec-address',
+  ['ec-code', 'ec-name', 'ec-furigana', 'ec-department', 'ec-hire-date', 'ec-phone', 'ec-address',
     'ec-emergency-name', 'ec-emergency-relation', 'ec-emergency-phone'].forEach((id) => { document.getElementById(id).value = ''; });
   document.getElementById('ec-gender').value = '';
   document.getElementById('ec-foreign-worker').checked = false;
@@ -4223,14 +4413,22 @@ function resetEmployeeCreateForm() {
 
 async function doCreateEmployee() {
   const session = getSession();
+  const code = document.getElementById('ec-code').value.trim();
   const name = document.getElementById('ec-name').value.trim();
   hideError('ec-error');
+  // 社員番号は既存の社員名簿・給与Spreadsheetの番号をそのまま指定する(自動採番しない=項目1/5)。
+  if (!code) { showError('ec-error', '社員番号を入力してください。'); return; }
+  if (!/^[0-9]{1,10}$/.test(code)) { showError('ec-error', '社員番号は数字で入力してください(例: 0044)。'); return; }
   if (!name) { showError('ec-error', '氏名を入力してください。'); return; }
   const btn = document.getElementById('ec-submit');
   btn.disabled = true;
   try {
-    const rows = await rpc('admin_create_employee', {
-      p_admin_employee_code: session.employeeCode, p_employee_name: name,
+    // 空欄・形式・重複・既存衝突チェックはRPC側(admin_create_employee_with_code)でも
+    // 二重に行い、重複社員番号はDBのUNIQUE制約が最終防衛線になる。
+    const rows = await rpc('admin_create_employee_with_code', {
+      p_admin_employee_code: session.employeeCode,
+      p_new_employee_code: code,
+      p_employee_name: name,
       p_department: document.getElementById('ec-department').value.trim() || null,
       p_hire_date: document.getElementById('ec-hire-date').value || null,
       p_gender: document.getElementById('ec-gender').value || null,
@@ -4243,8 +4441,9 @@ async function doCreateEmployee() {
       p_emergency_contact_phone: document.getElementById('ec-emergency-phone').value.trim() || null,
     });
     const created = rows && rows[0];
-    alert(`社員番号${created.employee_code}で登録しました。続けて初回ログイン用コードの発行等を行えます。`);
-    openEmployeeDetail(created.employee_code, 'basic');
+    const createdCode = created.out_employee_code || created.employee_code;
+    alert(`社員番号${createdCode}で登録しました。続けて初回ログイン用コードの発行等を行えます。`);
+    openEmployeeDetail(createdCode, 'basic');
   } catch (e) {
     showError('ec-error', e.message || '登録に失敗しました。');
   } finally {
@@ -9874,6 +10073,21 @@ function init() {
   document.getElementById('pin-entry-submit').addEventListener('click', doVerifyPin);
   document.getElementById('pin-entry-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') doVerifyPin(); });
   document.getElementById('pin-entry-switch').addEventListener('click', switchEmployee);
+  // 暗証番号をお忘れの方 (E-15)
+  document.getElementById('pin-forgot-link').addEventListener('click', openPinForgot);
+  document.getElementById('pin-forgot-back').addEventListener('click', () => showScreen('pin-entry'));
+  document.getElementById('pin-forgot-submit').addEventListener('click', doPinForgotReset);
+  document.getElementById('pin-forgot-request-submit').addEventListener('click', doPinResetRequest);
+  // 弱い暗証番号のお願いから変更画面へ (E-13)
+  document.getElementById('pin-weak-change-btn').addEventListener('click', () => showScreen('pin-change'));
+  document.getElementById('pin-change-forgot-link').addEventListener('click', () => {
+    const card = document.getElementById('pin-change-forgot-card');
+    card.style.display = card.style.display === 'none' ? '' : 'none';
+    attachPinRevealToggles();
+  });
+  document.getElementById('pin-change-reset-submit').addEventListener('click', doPinChangeReset);
+  // 暗証番号欄すべてに表示/非表示を付ける (E-14)
+  attachPinRevealToggles();
 
   document.getElementById('pin-register-submit').addEventListener('click', doRegisterPin);
   document.getElementById('pin-register-switch').addEventListener('click', switchEmployee);

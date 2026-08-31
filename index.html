@@ -13,6 +13,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;800;900&family=Zen+Kaku+Gothic+New:wght@500;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<!-- 配置カレンダー(現場・人員配置)。セレクタは全て .ac- 接頭辞に閉じているため、
+     ポータル本体のスタイルと衝突しない(統合仕様書 INT-03)。 -->
+<link rel="stylesheet" href="assignment-calendar.css">
 </head>
 <body>
 <!-- 2026-08-28: Staging/Production取り違え防止。IS_STAGING=trueのビルドでのみJSが
@@ -52,9 +55,20 @@
         <input type="password" id="pin-entry-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
         <div class="error" id="pin-entry-error"></div>
         <button id="pin-entry-submit">ログイン</button>
+        <button class="link" id="pin-forgot-link">暗証番号をお忘れの方</button>
         <button class="link" id="pin-entry-switch">別の社員番号でログイン</button>
       </div>
     </div>
+  </section>
+
+  <!-- 配置カレンダー(現場・人員配置)。
+       画面自体はモジュールが #assignment-calendar-root の中へ描く。
+       ポータルの rpc() とログイン中の社員番号をそのまま渡すため、再ログインは発生しない。
+       配置カレンダーは上部(年月ナビ・週ストリップ)をスクロール領域の外に置くことで
+       「日付移動UIが画面外へ出ない」ことを構造的に保証している。そのためこの画面を
+       開いている間はページ側をスクロールさせない(統合仕様書 INT-16)。 -->
+  <section id="screen-assignment-calendar" class="screen">
+    <div id="assignment-calendar-root"></div>
   </section>
 
   <!-- 暗証番号登録画面(初回、または管理者リセット後) -->
@@ -77,6 +91,39 @@
     </div>
   </section>
 
+  <!-- 暗証番号をお忘れの方 (E-15)。
+       2段構えにしている:
+         (1) いつも使っている端末が手元にある場合 … 端末トークンが「その端末を持っている」
+             という所持要素そのものなので、これを本人確認として本人がその場で再設定できる。
+             最も多いケース(PINだけ忘れた)が管理者を介さず解決する。
+         (2) 端末を失った/データを消した場合 … 本人確認ができないので再設定はさせない。
+             管理者へ再設定依頼を送るだけ(電話をかけずに済む)。 -->
+  <section id="screen-pin-forgot" class="screen">
+    <div class="login-wrap">
+      <img src="brand/logo-gold.png" alt="迅翔興業" class="login-logo">
+      <div class="login-company">暗証番号をお忘れの方</div>
+      <div class="card" id="pin-forgot-device-card">
+        <div class="hint" style="margin-bottom:14px;">この端末はご本人の端末として登録済みです。新しい暗証番号をその場で設定できます。</div>
+        <label for="pin-forgot-new">新しい暗証番号(4〜6桁の数字)</label>
+        <div class="pin-field">
+          <input type="password" id="pin-forgot-new" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+        </div>
+        <label for="pin-forgot-confirm">確認のためもう一度入力</label>
+        <div class="pin-field">
+          <input type="password" id="pin-forgot-confirm" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+        </div>
+        <div class="error" id="pin-forgot-error"></div>
+        <button id="pin-forgot-submit">この暗証番号にする</button>
+      </div>
+      <div class="card" id="pin-forgot-request-card">
+        <div class="hint" style="margin-bottom:14px;">この端末では本人確認ができないため、その場での再設定はできません。管理者へ再設定を依頼してください。依頼すると管理者に通知が届き、初回登録コードが発行されます。</div>
+        <div class="error" id="pin-forgot-request-error"></div>
+        <button id="pin-forgot-request-submit">管理者へ再設定を依頼する</button>
+      </div>
+      <button class="link" id="pin-forgot-back">ログイン画面に戻る</button>
+    </div>
+  </section>
+
   <!-- 2026-08-28: セキュリティ強化(新端末は管理者承認制)により、承認待ちの間はここで止める。
        トークン自体は既に発行済み(setDeviceAuth済み)なので、承認され次第「更新して確認する」で
        そのままenterMenu()できる。 -->
@@ -96,6 +143,12 @@
        大きなカテゴリーカード(申請/自分の情報/会社/管理者)だけを表示する。各カテゴリーを
        タップした先の専用画面で、初めてそのカテゴリーの中身(フォーム一覧等)を表示する構造。 -->
   <section id="screen-menu" class="screen">
+    <!-- 既存の弱い暗証番号を使っている人へのお願い。ログインは拒否せず、ここで促すだけ。 -->
+    <div class="pin-weak-banner" id="pin-weak-banner" style="display:none;">
+      <div class="pin-weak-title">暗証番号の変更をお願いします</div>
+      <div>いまお使いの暗証番号は推測されやすいものです(同じ数字の繰り返しや1234のような連番)。安全のため変更してください。</div>
+      <button type="button" id="pin-weak-change-btn">暗証番号を変更する</button>
+    </div>
     <div class="greeting-block">
       <div class="greeting-hi" id="menu-greeting-hi"></div>
       <div class="greeting-name" id="menu-greeting-name"></div>
@@ -137,6 +190,11 @@
          外出・遅刻・早退/経費/常用伝票/支給品/会議/接待・会食(ユーザー指示)。 -->
     <div class="section-title">よく使う機能</div>
     <div class="home-card-grid">
+      <button type="button" class="home-card" data-nav="assignment-calendar">
+        <span class="icon-slot" data-icon="calendar"></span>
+        <span class="home-card-label">配置カレンダー</span>
+        <span class="home-card-desc">現場・人員の配置を見る</span>
+      </button>
       <button type="button" class="home-card" id="home-daily-report-card" data-nav="daily-report">
         <span class="icon-slot" data-icon="clipboard-list"></span>
         <span class="home-card-label" id="home-daily-report-label">日報</span>
@@ -1342,6 +1400,19 @@
       <input type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" id="pin-change-confirm" maxlength="6">
       <div class="error" id="pin-change-error"></div>
       <button id="pin-change-submit">暗証番号を変更する</button>
+      <!-- ログイン済み=この端末が本人の端末として承認済みなので、現在の暗証番号を
+           思い出せなくても新しいものを設定できる(E-15)。管理者の手を借りずに済む。 -->
+      <button type="button" class="link" id="pin-change-forgot-link">現在の暗証番号がわからない方</button>
+    </div>
+    <div class="card" id="pin-change-forgot-card" style="display:none;">
+      <div class="form-title">現在の暗証番号を使わずに設定する</div>
+      <div class="hint" style="margin-bottom:12px;">この端末はご本人の端末として登録済みのため、現在の暗証番号を入力せずに新しい暗証番号を設定できます。</div>
+      <label for="pin-change-reset-new">新しい暗証番号(4〜6桁の数字)</label>
+      <input type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" id="pin-change-reset-new" maxlength="6">
+      <label for="pin-change-reset-confirm" style="margin-top:10px;">確認のためもう一度入力</label>
+      <input type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" id="pin-change-reset-confirm" maxlength="6">
+      <div class="error" id="pin-change-reset-error"></div>
+      <button id="pin-change-reset-submit">この暗証番号にする</button>
     </div>
   </section>
 
@@ -2504,6 +2575,7 @@
   <section id="screen-employee-directory" class="screen">
     <button type="button" class="back-link back-to-origin" data-nav="admin-dashboard">ダッシュボードに戻る</button>
     <div class="form-title">社員名簿</div>
+    <button type="button" class="secondary" id="employee-create-open-btn" data-nav="employee-create" style="margin-bottom:12px;">＋ 新入社員を登録する</button>
     <div class="search-bar">
       <span class="icon-slot" data-icon="search"></span>
       <input type="text" id="employee-search-input" placeholder="氏名・社員番号で検索">
@@ -2514,6 +2586,46 @@
       <button type="button" class="filter-chip" data-status="inactive">退職等</button>
     </div>
     <div id="employee-directory-list"></div>
+  </section>
+
+  <!-- 新入社員の登録(管理者): 社員番号を管理者が明示指定して登録する(自動採番しない) -->
+  <section id="screen-employee-create" class="screen">
+    <button type="button" class="back-link back-to-origin" data-nav="employee-directory">社員名簿に戻る</button>
+    <div class="form-title">新入社員を登録</div>
+    <div class="hint" style="margin-bottom:12px;">既存の社員名簿・給与Spreadsheetで使っている<strong>社員番号</strong>をそのまま指定してください。番号はシステムが自動で採番しません。すでに使われている番号は登録できません。</div>
+    <label for="ec-code">社員番号<span class="required-mark">(必須)</span></label>
+    <input type="text" id="ec-code" inputmode="numeric" placeholder="例: 0044" autocomplete="off">
+    <div class="hint-inline">半角数字のみ。既存社員と重複しない番号を入力してください。</div>
+    <label for="ec-name">氏名<span class="required-mark">(必須)</span></label>
+    <input type="text" id="ec-name" placeholder="例: 山田 太郎" autocomplete="off">
+    <label for="ec-furigana">フリガナ</label>
+    <input type="text" id="ec-furigana" placeholder="例: ヤマダ タロウ" autocomplete="off">
+    <label for="ec-department">部署</label>
+    <input type="text" id="ec-department" placeholder="例: 足場事業部" autocomplete="off">
+    <label for="ec-hire-date">入社日</label>
+    <input type="date" id="ec-hire-date">
+    <label for="ec-gender">性別</label>
+    <select id="ec-gender">
+      <option value="">未設定</option>
+      <option value="male">男性</option>
+      <option value="female">女性</option>
+      <option value="other">その他</option>
+    </select>
+    <label class="checkbox-row" style="margin-top:10px;"><input type="checkbox" id="ec-foreign-worker"><span>外国人労働者</span></label>
+    <label for="ec-phone">電話番号</label>
+    <input type="tel" id="ec-phone" placeholder="例: 090-1234-5678" autocomplete="off">
+    <label for="ec-address">住所</label>
+    <input type="text" id="ec-address" placeholder="例: 東京都〇〇区…" autocomplete="off">
+    <div class="section-title">緊急連絡先</div>
+    <label for="ec-emergency-name">氏名</label>
+    <input type="text" id="ec-emergency-name" placeholder="例: 山田 花子" autocomplete="off">
+    <label for="ec-emergency-relation">続柄</label>
+    <input type="text" id="ec-emergency-relation" placeholder="例: 配偶者" autocomplete="off">
+    <label for="ec-emergency-phone">電話番号</label>
+    <input type="tel" id="ec-emergency-phone" placeholder="例: 090-8765-4321" autocomplete="off">
+    <div class="error" id="ec-error"></div>
+    <button type="button" class="primary" id="ec-submit" style="margin-top:16px;">この社員番号で登録する</button>
+    <div class="hint" style="margin-top:10px;">登録後、社員詳細の「ログイン端末」タブから<strong>初回登録コード</strong>を発行し、本人へお伝えください。本人がそのコードで初めてアクセスし、自分で暗証番号(PIN)を設定します。</div>
   </section>
 
   <!-- 社員詳細(管理者) -->
@@ -3160,6 +3272,10 @@
 </div>
 
 <script src="icons.js"></script>
+<!-- 配置カレンダーは window.AssignmentCalendar / window.Rokuyou だけを公開する。
+     app.js より先に読み込む(app.js の初期化時点で mount() を呼べるようにするため)。 -->
+<script src="rokuyou.js"></script>
+<script src="assignment-calendar.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

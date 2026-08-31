@@ -741,10 +741,18 @@ button.link {
 .item-suggest-chip .icon { width: 16px; height: 16px; flex-shrink: 0; }
 
 /* ===== タブ切り替え(社員詳細等) ===== */
-.tab-bar { display: flex; gap: 4px; background: oklch(1 0 0 / 6%); border-radius: var(--radius-pill); padding: 4px; margin-bottom: 16px; overflow-x: auto; }
+/* タブは横スクロールにせず、狭い画面では折り返して全タブを常に見せる(PCは1行、375px等は複数行)。
+   タブ数が増えても操作性が落ちないよう、pill型を保ったまま flex-wrap で段組みする。 */
+.tab-bar { display: flex; flex-wrap: wrap; gap: 4px; background: oklch(1 0 0 / 6%); border-radius: var(--radius-lg, 14px); padding: 4px; margin-bottom: 16px; }
 .tab-btn {
-  flex: 1; width: auto; margin: 0; padding: 8px 10px; font-size: 12.5px; font-weight: 700; white-space: nowrap;
+  flex: 1 1 auto; width: auto; margin: 0; padding: 8px 10px; font-size: 12.5px; font-weight: 700; white-space: nowrap;
   background: none; color: var(--text-muted); border-radius: var(--radius-pill);
+}
+/* 375px前後の狭い画面では余白・字間を詰めて段数を抑える。幅は内容ベース(flex 1 1 auto)のまま
+   にして、長いラベル(例: 資格・免許・健診)が固定列幅で切れないようにする。 */
+@media (max-width: 430px) {
+  .tab-bar { gap: 3px; }
+  .tab-btn { padding: 8px 8px; font-size: 12px; }
 }
 .tab-btn.active { background: var(--card-bg); color: var(--primary); box-shadow: var(--shadow-sm); }
 .tab-panel { display: none; }
@@ -1220,3 +1228,51 @@ body.is-staging::after {
 .home-status-compact-label { font-size: 12.5px; font-weight: 700; color: var(--text); flex-shrink: 0; }
 .home-status-compact-desc { font-size: 12px; color: var(--text-muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-status-compact .icon-slot:last-child { color: var(--text-faint); flex-shrink: 0; }
+
+/* ---------------- 暗証番号の表示/非表示 (E-14) ----------------
+   現場では手袋のまま片手で入力するため、打ち間違いに気づけないと
+   ロックアウト(5回失敗で15分)まで進んでしまう。既定は非表示のまま、
+   目のボタンで確認できるようにする。指で押しやすい44px以上を確保する。 */
+.pin-field { position: relative; }
+.pin-field input { padding-right: 56px; }
+/* ポータルの共通 button スタイル(width:100%・margin・影)を打ち消す必要があるため、
+   .pin-field を含めた詳細度の高いセレクタで指定する。 */
+.pin-field .pin-reveal {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: 52px; min-width: 52px; height: auto; margin: 0; padding: 0;
+  border: none; border-radius: 0; background: transparent; box-shadow: none;
+  cursor: pointer; font-size: 20px; line-height: 1; color: var(--text-faint);
+  display: flex; align-items: center; justify-content: center;
+}
+.pin-field .pin-reveal:active { color: var(--primary); background: transparent; }
+/* ラベル直後に入力欄が来る構成のため、ボタンの当たり判定は入力欄の高さいっぱい */
+
+/* ---------------- 弱い暗証番号の変更のお願い (E-13) ---------------- */
+/* ポータルはダークテーマなので、明るい地色を敷くと本文の文字色(明色)と
+   同化して読めなくなる。地色を敷かず、枠線と色つき見出しで注意を引く。 */
+.pin-weak-banner {
+  background: oklch(0.30 0.06 75 / 55%); border: 1px solid oklch(0.72 0.14 75);
+  border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
+  color: oklch(0.96 0.02 85);
+}
+.pin-weak-banner .pin-weak-title {
+  font-weight: 700; margin-bottom: 4px; color: oklch(0.86 0.14 80);
+}
+.pin-weak-banner button { margin-top: 10px; }
+
+
+/* ---------------- 配置カレンダー同居のための調整 (INT-03 / INT-16) ----------------
+   配置カレンダーは上部(年月ナビ・週ストリップ)をスクロール領域の外に置くことで
+   「日付移動UIが画面外へ出ない」ことを構造的に保証している。ページ側が別に
+   スクロールするとその保証が崩れるため、この画面の間だけ body を固定する。 */
+body.assignment-calendar-open { overflow: hidden; }
+/* 配置カレンダー自身の高さは 100dvh から --ac-host-offset を引いて決まる。
+   ポータルは下部ナビが画面下に固定で乗るため、そのぶんを差し引く。 */
+#screen-assignment-calendar { padding: 0; }
+/* 配置カレンダーは画面いっぱいに使う。main の余白が残ると
+   月表示に使える高さが削られ、1日あたりの表示件数が落ちる。 */
+body.assignment-calendar-open main { padding: 0; }
+#screen-assignment-calendar .ac-root { --ac-nav-h: 64px; }
+body.assignment-calendar-open #screen-assignment-calendar .ac-root {
+  height: calc(100dvh - var(--ac-host-offset, 0px) - var(--ac-nav-h));
+}

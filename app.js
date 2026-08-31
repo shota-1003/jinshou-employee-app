@@ -7909,7 +7909,14 @@ let dailyReportPrefillDate = null;
 
 async function openMyDailyReportDetail(dateStr) {
   myDailyReportDetailDate = dateStr;
-  showScreen('my-daily-report-detail');
+  showScreen('my-daily-report-detail'); // enter hook(renderMyDailyReportDetailBody)が本文を描画する
+}
+
+// 詳細本文の読み込み・描画のみを行う。showScreenを呼ばないことで、
+// SCREEN_ENTER_HOOKS['my-daily-report-detail'] → openMyDailyReportDetail → showScreen → hook…
+// という再帰(詳細を1回開くだけでopenが数千回呼ばれ、fetchが暴発してERR_INSUFFICIENT_RESOURCES
+// になる既存バグ)を断つ。取消後の再描画・戻る/進むでの再入場は、この本文描画のみを呼ぶ。
+async function renderMyDailyReportDetailBody(dateStr) {
   const session = getSession();
   const body = document.getElementById('my-daily-report-detail-body');
   body.innerHTML = '<div class="hint">読み込み中...</div>';
@@ -7979,7 +7986,7 @@ async function cancelMyDailyReport(dateStr) {
     let msg = 'この日報を取消しました。集計対象から除外されます。';
     if (hadReflected) msg += '\n（集計シートへの反映解除は自動処理で行われます）';
     alert(msg);
-    await openMyDailyReportDetail(dateStr); // 詳細を再描画(取消済みバナー表示)
+    await renderMyDailyReportDetailBody(dateStr); // 本文のみ再描画(取消済みバナー表示、showScreen再帰を避ける)
   } catch (e) {
     alert(e.message || '取消に失敗しました。');
   }
@@ -11155,7 +11162,7 @@ function init() {
   };
   SCREEN_ENTER_HOOKS['daily-report'] = resetDailyReportForm;
   SCREEN_ENTER_HOOKS['my-daily-reports'] = loadMyDailyReports;
-  SCREEN_ENTER_HOOKS['my-daily-report-detail'] = () => { if (myDailyReportDetailDate) openMyDailyReportDetail(myDailyReportDetailDate); };
+  SCREEN_ENTER_HOOKS['my-daily-report-detail'] = () => { if (myDailyReportDetailDate) renderMyDailyReportDetailBody(myDailyReportDetailDate); };
   SCREEN_ENTER_HOOKS['daily-report-needs-review-admin'] = loadDailyReportNeedsReviewAdmin;
   SCREEN_ENTER_HOOKS['daily-report-edit-requests-admin'] = loadDailyReportEditRequestsAdmin;
   SCREEN_ENTER_HOOKS['daily-report-admin'] = async () => {

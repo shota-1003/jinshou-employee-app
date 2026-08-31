@@ -10090,15 +10090,18 @@ function closeAiGuidePanel() {
 
 // ---------- 初期化 ----------
 
-// Staging/Production取り違え防止(2026-08-28)。ログイン画面を含む全画面で、IS_STAGINGが
-// trueのビルドだけbodyへ.is-stagingクラスを付け、アプリ名・タブタイトル・ビルド情報表示を
-// 切り替える。Productionはこの関数自体は呼ばれるが、IS_STAGINGがfalseなので何もしない。
+// 2026-09-01の運用方針変更。以前は「Stagingは開発者だけが使うテスト環境」だったが、
+// 通常利用版(A)と先行更新版(B)の2本立てに変え、**どちらも全社員が実利用する**構成にした。
+// 両方とも同じ本番Supabaseを見るため、業務データは完全に共通である。
+// 違いは「新しい修正がどちらに先に入るか」だけなので、表示も
+// 「本番ではありません」ではなく「先行更新版・データは同じ」と伝える。
+// IS_STAGING は「先行更新版のビルドかどうか」を表すフラグとして引き続き使う。
 function applyStagingIndicator() {
   if (!IS_STAGING) return;
   document.body.classList.add('is-staging');
-  document.title = '迅翔興業 社員ポータル STAGING';
+  document.title = '迅翔興業 社員ポータル（先行更新版）';
   const titleEl = document.getElementById('app-header-title');
-  if (titleEl) titleEl.textContent = '社員ポータル｜アップデート用';
+  if (titleEl) titleEl.textContent = '社員ポータル｜先行更新版';
   const versionEl = document.getElementById('staging-build-version');
   if (versionEl) versionEl.textContent = APP_BUILD_VERSION || '-';
   const timeEl = document.getElementById('staging-build-time');

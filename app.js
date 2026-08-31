@@ -807,7 +807,20 @@ function buildHomeGreeting() {
   return { greeting: pick(GREETINGS[band]), sub };
 }
 
+// 配置カレンダー専用URL(calendar/)から未ログインで飛ばされてきた場合、
+// ログインが済んだ時点でそちらへ戻す。認証画面をカレンダー側にも作らず、
+// ログインは常にこの社員ポータル1か所だけで行うための仕組み
+// (calendar/calendar-boot.js の goPortalLogin() と対になっている)。
+function consumeLoginRedirect() {
+  let next = null;
+  try { next = new URLSearchParams(location.search).get('next'); } catch (e) { return false; }
+  if (next !== 'calendar') return false;
+  location.replace('calendar/');
+  return true;
+}
+
 function enterMenu(replace) {
+  if (consumeLoginRedirect()) return;
   const session = getSession();
   const { greeting, sub } = buildHomeGreeting();
   document.getElementById('menu-greeting-hi').textContent = greeting;

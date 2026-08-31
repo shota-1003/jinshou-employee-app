@@ -8057,6 +8057,7 @@ function renderAdminRoleCandidates(query) {
 const ADMIN_ROLE_LABEL = {
   general_admin: '全体管理者', nippo_admin: '日報担当', accounting_admin: '経理承認担当',
   hr_admin: '社員管理担当', subcontractor_admin: '外注管理担当', site_admin: '現場管理担当', device_admin: '端末承認担当',
+  expense_approval_exempt: '経費承認免除',
 };
 
 async function doGrantAdminRole(employeeCode, employeeName) {

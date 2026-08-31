@@ -3213,12 +3213,21 @@ async function loadAnnounceBanner() {
       .filter((a) => (a.importance === 'important' || a.importance === 'critical') && shouldShowOnHome(a) && a.related_type !== 'daily_reports')
       .sort((a, b) => (a.importance === b.importance ? 0 : a.importance === 'critical' ? -1 : 1) || new Date(b.created_at) - new Date(a.created_at));
     if (importantOnes.length === 0) return;
-    area.innerHTML = importantOnes.map((important) => `
+    // ホームが重要お知らせだけで埋まらないよう表示は3件まで(最重要優先・新しい順は上のsort済み)。
+    // 残りは件数つきの1ボタンへまとめ、お知らせ一覧へ誘導する(2026-08-31、統合フェーズ§15)。
+    const HOME_BANNER_LIMIT = 3;
+    const shown = importantOnes.slice(0, HOME_BANNER_LIMIT);
+    const restCount = importantOnes.length - shown.length;
+    area.innerHTML = shown.map((important) => `
       <button type="button" class="announce-banner home-announce-banner-item" data-id="${important.id}">
         <div class="announce-banner-label">📢 ${important.importance === 'critical' ? '最重要のお知らせ' : '重要なお知らせ'}</div>
         <div class="announce-banner-title">${important.title}</div>
       </button>
-    `).join('');
+    `).join('') + (restCount > 0 ? `
+      <button type="button" class="announce-banner home-announce-banner-item announce-banner-more">
+        <div class="announce-banner-title">重要なお知らせが他${restCount}件あります(すべて見る)</div>
+      </button>
+    ` : '');
     area.querySelectorAll('.home-announce-banner-item').forEach((btn) => {
       btn.addEventListener('click', () => showScreen('announcements'));
     });

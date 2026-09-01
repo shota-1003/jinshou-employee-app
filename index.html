@@ -355,8 +355,8 @@
         <select id="daily-report-target-type">
           <option value="self">自分</option>
           <option value="employee">他の社員(代理入力)</option>
-          <option value="subcontractor">外注作業員</option>
         </select>
+        <div class="hint-inline">外注(応援)は「自分」を選び、下の「外注(応援)」で会社・人数を登録してください。</div>
         <div id="daily-report-target-employee-wrap" style="display:none;">
           <input type="text" class="participant-search-input" id="daily-report-target-employee-search" placeholder="社員名で検索...">
           <div id="daily-report-target-employee-results" class="candidate-results"></div>
@@ -2624,6 +2624,15 @@
   <div class="image-zoom-overlay" id="image-zoom-overlay">
     <button type="button" class="image-zoom-close" id="image-zoom-close">✕</button>
     <img id="image-zoom-img" src="" alt="拡大画像">
+  </div>
+
+  <!-- 領収書ギャラリー(月別・左右スワイプ/前次/拡大 + 申請情報) -->
+  <div class="image-zoom-overlay receipt-gallery-overlay" id="receipt-gallery-overlay">
+    <button type="button" class="image-zoom-close" id="rg-close">✕</button>
+    <button type="button" class="rg-nav rg-prev" id="rg-prev" aria-label="前へ">‹</button>
+    <div class="rg-stage" id="rg-stage"><img id="rg-img" src="" alt="領収書"></div>
+    <button type="button" class="rg-nav rg-next" id="rg-next" aria-label="次へ">›</button>
+    <div class="rg-info" id="rg-info"></div>
   </div>
 
   <!-- 出面集計: 社員別/外注会社別/現場別のマトリクス(サクミル代替) -->

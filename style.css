@@ -493,6 +493,22 @@ button.link {
   background: rgba(255,255,255,.15); color: #fff; display: flex; align-items: center; justify-content: center; border: none;
 }
 
+/* 領収書ギャラリー(前/次/スワイプ/拡大 + 申請情報) */
+.receipt-gallery-overlay { cursor: default; flex-direction: column; }
+.receipt-gallery-overlay .rg-stage { flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; min-height: 0; }
+.receipt-gallery-overlay #rg-img { max-width: 100%; max-height: 68vh; object-fit: contain; border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); transition: opacity .12s; }
+.receipt-gallery-overlay .rg-nav {
+  position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; border: none;
+  background: rgba(255,255,255,.14); color: #fff; font-size: 30px; line-height: 1; border-radius: 10px; z-index: 2;
+}
+.receipt-gallery-overlay .rg-prev { left: 8px; } .receipt-gallery-overlay .rg-next { right: 8px; }
+.receipt-gallery-overlay .rg-info {
+  width: 100%; max-width: 520px; color: #fff; padding: 12px 14px 4px; text-align: center;
+}
+.receipt-gallery-overlay .rg-info-head { font-size: 12px; color: rgba(255,255,255,.65); }
+.receipt-gallery-overlay .rg-info-main { font-size: 16px; margin-top: 2px; }
+.receipt-gallery-overlay .rg-info-sub { font-size: 12.5px; color: rgba(255,255,255,.8); margin-top: 2px; }
+.emd-receipt-thumb { cursor: zoom-in; }
 .mrd-item-card { padding: 14px 16px; border-radius: var(--radius-md); background: var(--card-bg); border: 1px solid var(--border); margin-bottom: 10px; }
 .mrd-item-approval-badge { display: inline-flex; align-items: center; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: var(--radius-pill); margin-left: 6px; }
 .mrd-item-approval-badge.approved { background: var(--success-bg); color: var(--success); }

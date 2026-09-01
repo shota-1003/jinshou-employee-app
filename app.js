@@ -2692,6 +2692,33 @@ function hydrateSecureImages(container) {
     });
   });
 }
+// 領収書ギャラリー: 月別に複数の領収書を左右スワイプ/前次/拡大で確認できる。画像は receipt-image
+// プロキシ経由(二重保存なし)。各画像に申請情報(日付/店名/金額/勘定科目/用途/現場)を紐付けて表示。
+let rgItems = []; let rgIdx = 0; const rgUrlCache = new Map();
+async function renderReceiptGalleryItem() {
+  const it = rgItems[rgIdx]; if (!it) return;
+  const img = document.getElementById('rg-img');
+  const info = document.getElementById('rg-info');
+  const yen = (n) => (n != null ? `${Number(n).toLocaleString('ja-JP')}円` : '');
+  info.innerHTML = `
+    <div class="rg-info-head">${rgIdx + 1} / ${rgItems.length}</div>
+    <div class="rg-info-main">${it.vendor_name || '(店名なし)'}　<strong>${yen(it.amount)}</strong></div>
+    <div class="rg-info-sub">${[it.document_date, it.purpose_category, it.expense_category, it.site_name].filter(Boolean).join('・')}</div>`;
+  img.style.opacity = '0.4';
+  try {
+    if (!rgUrlCache.has(it.document_id)) rgUrlCache.set(it.document_id, await fetchSecureImageObjectUrl(`kind=receipt&id=${encodeURIComponent(it.document_id)}`));
+    img.src = rgUrlCache.get(it.document_id); img.style.opacity = '1';
+  } catch (e) { img.removeAttribute('src'); img.style.opacity = '1'; info.innerHTML += '<div class="rg-info-sub">画像を表示できませんでした</div>'; }
+}
+function rgStep(delta) { if (!rgItems.length) return; rgIdx = (rgIdx + delta + rgItems.length) % rgItems.length; renderReceiptGalleryItem(); }
+function openReceiptGallery(items, startIdx) {
+  rgItems = (items || []).filter((x) => x.document_id); rgIdx = Math.max(0, Math.min(startIdx || 0, rgItems.length - 1));
+  if (rgItems.length === 0) { alert('この月に領収書画像はありません。'); return; }
+  document.getElementById('receipt-gallery-overlay').classList.add('open');
+  renderReceiptGalleryItem();
+}
+function closeReceiptGallery() { document.getElementById('receipt-gallery-overlay').classList.remove('open'); }
+
 // 資格証/健診などの Drive 画像・PDF を、画面内サムネイル＋タップ拡大／PDFは新規タブで開く形にする共通HTML。
 function secureFileBlockHtml(photoKind, pdfKind, refId, hasPhoto, hasPdf) {
   let h = '';
@@ -5452,12 +5479,25 @@ async function openEmployeeMonthlyDetail(code, name, year, month) {
         <div class="row1"><span>${r.vendor_name}</span><span>${yen(r.amount)}</span></div>
         <div class="row2">${r.site_name || '-'}・${r.purpose_category || '-'}・${isAdvance ? (PAY_LABEL[r.payment_status] || r.payment_status) : '会社経費(立替なし)'}${badge ? `・<span class="status-badge rejected">${badge}</span>` : ''}</div>
         <div class="row2">${r.document_date || ''}${r.rejection_reason ? `・却下理由: ${r.rejection_reason}` : ''}</div>
+        ${r.document_id ? `<img class="secure-proxy-thumb emd-receipt-thumb" data-secure-kind="receipt" data-secure-id="${r.document_id}" data-doc-id="${r.document_id}" alt="領収書" loading="lazy">` : ''}
         ${payBtn}
       </div>
     `;
     };
-    document.getElementById('emd-advance-list').innerHTML = advance.length === 0 ? '<div class="hint">この月の経費立替はありません。</div>' : advance.map((r) => expenseRow(r, true)).join('');
+    // この月の領収書(document_idつき)を1つのギャラリーへまとめる。
+    const monthReceipts = [...advance, ...company].filter((r) => r.document_id).map((r) => ({ document_id: r.document_id, vendor_name: r.vendor_name, amount: r.amount, document_date: r.document_date, purpose_category: r.purpose_category, expense_category: r.expense_category, site_name: r.site_name }));
+    const galleryBtnHtml = monthReceipts.length > 0
+      ? `<button type="button" class="secondary" id="emd-receipt-gallery-btn" style="margin-bottom:10px;">📷 この月の領収書をまとめて見る(${monthReceipts.length}枚)</button>` : '';
+    document.getElementById('emd-advance-list').innerHTML = galleryBtnHtml + (advance.length === 0 ? '<div class="hint">この月の経費立替はありません。</div>' : advance.map((r) => expenseRow(r, true)).join(''));
     document.getElementById('emd-company-list').innerHTML = company.length === 0 ? '<div class="hint">この月の会社経費はありません。</div>' : company.map((r) => expenseRow(r, false)).join('');
+    const galleryBtn = document.getElementById('emd-receipt-gallery-btn');
+    if (galleryBtn) galleryBtn.addEventListener('click', () => openReceiptGallery(monthReceipts, 0));
+    // 各行のサムネイルはプロキシで読み込み、タップでその位置からギャラリーを開く。
+    hydrateSecureImages(document.getElementById('emd-advance-list'));
+    hydrateSecureImages(document.getElementById('emd-company-list'));
+    document.querySelectorAll('.emd-receipt-thumb').forEach((img) => {
+      img.addEventListener('click', (e) => { e.stopPropagation(); const idx = monthReceipts.findIndex((x) => String(x.document_id) === String(img.dataset.docId)); openReceiptGallery(monthReceipts, idx < 0 ? 0 : idx); }, true);
+    });
 
     document.querySelectorAll('.emd-pay-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
@@ -7616,8 +7656,9 @@ async function addDailyReportSubcontractorLine(prefill) {
 async function loadDrScSection(dateStr) {
   const card = document.getElementById('daily-report-subcontractor-card');
   if (!card) return;
-  // 外注人数は「自分の日報」入力時のみ表示(代理入力・外注作業員個別入力時は隠す)。
-  const showIt = (dailyReportTarget.type === 'self');
+  // 外注（応援）人数は「自分の日報」入力時、かつ外注を報告する権限/役割(日報担当・管理者)の
+  // 社員にだけ表示する(P0-5: 一般社員には出さない)。代理入力・外注個別入力時も隠す。
+  const showIt = (dailyReportTarget.type === 'self' && dailyReportIsNippoAdmin);
   card.style.display = showIt ? '' : 'none';
   if (!showIt) return;
   const list = document.getElementById('dr-sc-list');
@@ -11350,6 +11391,15 @@ function init() {
   const closeImageZoom = () => imageZoomOverlay.classList.remove('open');
   imageZoomOverlay.addEventListener('click', closeImageZoom);
   document.getElementById('image-zoom-close').addEventListener('click', (e) => { e.stopPropagation(); closeImageZoom(); });
+  // 領収書ギャラリー操作(前/次/閉じる/スワイプ)
+  document.getElementById('rg-close').addEventListener('click', (e) => { e.stopPropagation(); closeReceiptGallery(); });
+  document.getElementById('rg-prev').addEventListener('click', (e) => { e.stopPropagation(); rgStep(-1); });
+  document.getElementById('rg-next').addEventListener('click', (e) => { e.stopPropagation(); rgStep(1); });
+  (() => {
+    const stage = document.getElementById('rg-stage'); let sx = null;
+    stage.addEventListener('touchstart', (e) => { sx = e.changedTouches[0].clientX; }, { passive: true });
+    stage.addEventListener('touchend', (e) => { if (sx == null) return; const dx = e.changedTouches[0].clientX - sx; if (Math.abs(dx) > 40) rgStep(dx < 0 ? 1 : -1); sx = null; }, { passive: true });
+  })();
 
   document.getElementById('ai-guide-fab').addEventListener('click', openAiGuidePanel);
   document.getElementById('ai-guide-close').addEventListener('click', closeAiGuidePanel);

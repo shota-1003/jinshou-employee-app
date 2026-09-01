@@ -666,7 +666,9 @@ function resetRegisterSteps() {
 }
 
 async function doIdentifyForRegister() {
-  const firstCode = document.getElementById('pin-register-first-code').value.trim();
+  // 初回登録コードは大文字英数字のみ。コピペや一部キーボードで小文字・空白が混ざると
+  // bcrypt照合(サーバ側)で失敗するため、送信前に空白除去+大文字化して正規化する。
+  const firstCode = document.getElementById('pin-register-first-code').value.replace(/\s+/g, '').toUpperCase();
   hideError('pin-register-error');
   if (!firstCode) {
     showError('pin-register-error', '初回登録コードを入力してください。管理者から渡されていない場合は管理者へお問い合わせください。');
@@ -692,7 +694,9 @@ async function doIdentifyForRegister() {
 
 // 2段階目: 本人だと確認できたうえで、本人が自分の暗証番号を決める。
 async function doRegisterPin() {
-  const firstCode = document.getElementById('pin-register-first-code').value.trim();
+  // 初回登録コードは大文字英数字のみ。コピペや一部キーボードで小文字・空白が混ざると
+  // bcrypt照合(サーバ側)で失敗するため、送信前に空白除去+大文字化して正規化する。
+  const firstCode = document.getElementById('pin-register-first-code').value.replace(/\s+/g, '').toUpperCase();
   const pin = document.getElementById('pin-register-code').value.trim();
   const pinConfirm = document.getElementById('pin-register-confirm').value.trim();
   hideError('pin-register-error2');

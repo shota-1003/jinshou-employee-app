@@ -2981,9 +2981,45 @@ async function loadMySupplyHoldings() {
   }
 }
 
+// 支給品「申請状況」: 承認済み(支給予定日つき)/受渡完了/申請中/却下 を本人が確認できる。
+// 承認済みでもまだ受渡されていない間は「保有数」には出さず、ここに「◯月◯日 支給予定」と出す。
+const SUPPLY_REQ_STATE = {
+  pending: { label: '申請中', cls: '' },
+  approved: { label: '承認済み', cls: 'info' },
+  issued: { label: '受渡完了', cls: 'done' },
+  rejected: { label: '却下', cls: 'rejected' },
+};
+async function loadMySupplyRequests() {
+  const session = getSession();
+  const el = document.getElementById('my-supply-requests');
+  if (!el) return;
+  el.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_supply_requests', { p_employee_code: session.employeeCode });
+    // 受渡完了(issued)は「支給履歴」に出るので、ここでは進行中(申請中/承認済み)＋却下のみ表示。
+    const active = (rows || []).filter((r) => r.status !== 'issued');
+    if (active.length === 0) { el.innerHTML = '<div class="hint">進行中の支給品申請はありません。</div>'; return; }
+    el.innerHTML = active.map((r) => {
+      const st = SUPPLY_REQ_STATE[r.status] || { label: r.status, cls: '' };
+      const sched = (r.status === 'approved' && r.scheduled_issue_date)
+        ? `<span class="elapsed">${new Date(r.scheduled_issue_date).toLocaleDateString('ja-JP')} 支給予定</span>`
+        : (r.status === 'approved' ? '<span class="elapsed">支給予定日は調整中です</span>' : '');
+      return `
+      <div class="supply-item">
+        <div class="row1"><span>${r.item_name}${r.size ? '(' + r.size + ')' : ''}</span><span>${r.quantity}個</span></div>
+        <div class="row2"><span class="mini-tag ${st.cls}">${st.label}</span>${sched}</div>
+        ${r.status === 'rejected' && r.reject_reason ? `<div class="row2">却下理由: ${r.reject_reason}</div>` : ''}
+      </div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
 async function loadMySupply() {
   const session = getSession();
   loadMySupplyHoldings();
+  loadMySupplyRequests();
   const listEl = document.getElementById('my-supply-list');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
@@ -6033,10 +6069,14 @@ async function loadSupplyRequestAdminList() {
           <div class="supply-item" data-item-request-id="${it.item_request_id}">
             <div class="row1"><span>${it.item_name}</span></div>
             ${it.reason ? `<div class="row2">${it.reason}</div>` : ''}
-            <div class="row2" style="display:flex; gap:6px; align-items:center;">
+            <div class="row2" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
               数量 <input type="number" min="1" class="decide-qty-input" style="width:56px;" value="${it.quantity}">
               サイズ <input type="text" class="decide-size-input" style="width:64px;" value="${it.size || ''}">
             </div>
+            <div class="row2" style="display:flex; gap:6px; align-items:center;">
+              支給予定日 <input type="date" class="decide-schedule-input" style="width:150px;">
+            </div>
+            <div class="hint-inline">承認しても保有数はまだ増えません。実際に渡したら「受渡待ち」から受渡完了を押してください。</div>
             <div class="qual-verify-btns">
               <button type="button" class="approve-btn decide-approve-btn">承認する</button>
               <button type="button" class="reject-btn decide-reject-btn">却下する</button>
@@ -6054,8 +6094,9 @@ async function loadSupplyRequestAdminList() {
           item_request_id: Number(item.dataset.itemRequestId), action: 'approve',
           quantity: Number(item.querySelector('.decide-qty-input').value) || 1,
           size: item.querySelector('.decide-size-input').value.trim() || null,
+          scheduled_issue_date: item.querySelector('.decide-schedule-input').value || null,
         };
-        try { await rpc('admin_decide_supply_items', { p_admin_employee_code: session.employeeCode, p_decisions: [decision] }); await loadSupplyRequestAdminList(); }
+        try { await rpc('admin_decide_supply_items', { p_admin_employee_code: session.employeeCode, p_decisions: [decision] }); await loadSupplyRequestAdminList(); await loadSupplyDeliveryQueue(); }
         catch (e) { window.alert(e.message || '承認に失敗しました。'); }
       });
     });
@@ -6076,13 +6117,59 @@ async function loadSupplyRequestAdminList() {
           item_request_id: Number(item.dataset.itemRequestId), action: 'approve',
           quantity: Number(item.querySelector('.decide-qty-input').value) || 1,
           size: item.querySelector('.decide-size-input').value.trim() || null,
+          scheduled_issue_date: item.querySelector('.decide-schedule-input').value || null,
         }));
-        try { await rpc('admin_decide_supply_items', { p_admin_employee_code: session.employeeCode, p_decisions: decisions }); await loadSupplyRequestAdminList(); }
+        try { await rpc('admin_decide_supply_items', { p_admin_employee_code: session.employeeCode, p_decisions: decisions }); await loadSupplyRequestAdminList(); await loadSupplyDeliveryQueue(); }
         catch (e) { window.alert(e.message || '承認に失敗しました。'); }
       });
     });
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
+// 受渡待ち(承認済み・未受渡)の一覧。受渡完了で初めて本人の保有へ加算される。
+async function loadSupplyDeliveryQueue() {
+  const session = getSession();
+  const el = document.getElementById('supply-delivery-queue-list');
+  if (!el) return;
+  el.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_supply_pending_delivery', { p_admin_employee_code: session.employeeCode });
+    if (!rows || rows.length === 0) { el.innerHTML = '<div class="hint">受渡待ちの支給品はありません。</div>'; return; }
+    el.innerHTML = rows.map((r) => `
+      <div class="card supply-delivery-row" data-item-request-id="${r.item_request_id}">
+        <div class="row1"><span>${r.employee_name}(${r.employee_code})</span><span class="mini-tag info">承認済み</span></div>
+        <div class="row2">${r.item_name}${r.size ? `・${r.size}` : ''}　数量${r.quantity}</div>
+        <div class="row2" style="display:flex; gap:6px; align-items:center;">
+          支給予定日 <input type="date" class="dq-schedule-input" style="width:150px;" value="${r.scheduled_issue_date ? String(r.scheduled_issue_date).slice(0, 10) : ''}">
+          <button type="button" class="secondary dq-save-schedule">予定日を保存</button>
+        </div>
+        <div class="row2 hint-inline">承認: ${r.decided_by || ''}${r.decided_at ? '（' + new Date(r.decided_at).toLocaleDateString('ja-JP') + '）' : ''}</div>
+        <div class="qual-verify-btns">
+          <button type="button" class="approve-btn dq-deliver-btn">受渡完了(本人へ渡した)</button>
+        </div>
+      </div>
+    `).join('');
+    el.querySelectorAll('.dq-save-schedule').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const row = btn.closest('.supply-delivery-row');
+        const d = row.querySelector('.dq-schedule-input').value;
+        if (!d) { window.alert('支給予定日を入力してください。'); return; }
+        try { await rpc('admin_set_supply_schedule', { p_admin_employee_code: session.employeeCode, p_item_request_id: Number(row.dataset.itemRequestId), p_scheduled_issue_date: d }); await loadSupplyDeliveryQueue(); }
+        catch (e) { window.alert(e.message || '保存に失敗しました。'); }
+      });
+    });
+    el.querySelectorAll('.dq-deliver-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const row = btn.closest('.supply-delivery-row');
+        if (!window.confirm('本人へ渡したものとして受渡完了にします。本人の保有数に加算されます。よろしいですか？')) return;
+        try { await rpc('admin_mark_supply_delivered', { p_admin_employee_code: session.employeeCode, p_deliveries: [{ item_request_id: Number(row.dataset.itemRequestId) }] }); await loadSupplyDeliveryQueue(); }
+        catch (e) { window.alert(e.message || '受渡完了に失敗しました。'); }
+      });
+    });
+  } catch (e) {
+    el.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }
 }
 
@@ -11169,6 +11256,7 @@ function init() {
   SCREEN_ENTER_HOOKS['supply-request-admin'] = () => {
     if (!isAdmin()) { enterMenu(); return; }
     loadSupplyRequestAdminList();
+    loadSupplyDeliveryQueue();
   };
   SCREEN_ENTER_HOOKS['my-supply'] = loadMySupply;
   SCREEN_ENTER_HOOKS.myinfo = loadMyInfo;

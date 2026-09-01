@@ -1404,7 +1404,7 @@
                         + '変更しても、この一覧に戻ります。'));
                     const list = el('div', 'ac-list');
                     for (const m of s.members) {
-                        const it = el('div', 'ac-listitem ac-mrow');
+                        const it = el('div', 'ac-listitem ac-memrow');
                         const nm = el('div', 'ac-mrowname');
                         const tag = memberRoleTag(m);
                         nm.append(el('span', 'ac-rtag ac-role-' + tag.key, tag.label));

@@ -2465,10 +2465,13 @@ async function loadBulkExpenseDetail() {
             ${it.duplicate_warning ? `<div class="mini-tag warn">${icon('alert-triangle')}重複の疑いあり</div>` : ''}
           </span>
         </label>
-        ${it.receipt_url ? `<a href="${it.receipt_url}" target="_blank" rel="noopener" class="secondary" style="display:inline-block;text-decoration:none;text-align:center;">元画像を見る</a>` : ''}
+        ${it.document_id
+          ? `<div class="receipt-thumb-wrap"><img class="receipt-proxy-thumb" data-document-id="${it.document_id}" alt="領収書" loading="lazy"></div>`
+          : '<div class="hint-inline">領収書画像なし</div>'}
       </div>
     `).join('');
     hydrateIcons(document.getElementById('bed-item-list'));
+    hydrateReceiptImages(document.getElementById('bed-item-list'));
     document.querySelectorAll('.bed-item-check').forEach((cb) => {
       cb.checked = bulkExpenseSelectedItems.has(cb.dataset.id);
       cb.addEventListener('change', () => {
@@ -2641,6 +2644,46 @@ function openImageZoom(url) {
   if (!url) return;
   document.getElementById('image-zoom-img').src = url;
   document.getElementById('image-zoom-overlay').classList.add('open');
+}
+
+// 領収書原本(Google Drive 非公開)を Edge Function receipt-image 経由で認証付き取得し、
+// Blob→objectURL でインライン表示する。Drive URL も Google 認証情報もフロントへ出さない。
+// container 内の img.receipt-proxy-thumb[data-document-id] を対象に、サムネイル表示＋タップ拡大を配線する。
+async function fetchReceiptObjectUrl(documentId) {
+  const session = getSession();
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/receipt-image?document_id=${encodeURIComponent(documentId)}`, {
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      'x-employee-code': (session && session.employeeCode) || '',
+      'x-device-token': currentDeviceToken || '',
+    },
+  });
+  if (!res.ok) throw new Error('receipt_fetch_' + res.status);
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+function hydrateReceiptImages(container) {
+  if (!container) return;
+  container.querySelectorAll('img.receipt-proxy-thumb[data-document-id]').forEach((img) => {
+    if (img.dataset.hydrated) return;
+    img.dataset.hydrated = '1';
+    const docId = img.dataset.documentId;
+    fetchReceiptObjectUrl(docId)
+      .then((objUrl) => {
+        img.src = objUrl;
+        img.dataset.zoom = objUrl;
+        img.addEventListener('click', () => openImageZoom(objUrl));
+        img.style.cursor = 'zoom-in';
+      })
+      .catch(() => {
+        const note = document.createElement('div');
+        note.className = 'hint-inline';
+        note.textContent = '領収書画像を表示できませんでした';
+        img.replaceWith(note);
+      });
+  });
 }
 
 let currentMyRequestDetail = null;

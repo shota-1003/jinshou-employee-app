@@ -1087,12 +1087,20 @@ async function renderHomeDailyReportStatusBanner(session) {
   restBtn.style.display = 'none';
   const today = todayJST();
   try {
-    const [rows, leaveRows] = await Promise.all([
+    // §6: 「休みとして登録」は、有効配置あり(勤務日)・休暇・休日(システム自動判定)のいずれでも
+    // 出さない。正式判定 daily_report_employee_bucket を唯一の根拠にした get_my_today_tasks を参照し、
+    // 勤務日(own_daily_report)・休日/有給/その他休暇(rest_*)が出る日はボタンを隠す。
+    // 休日が確定できる日はシステムが自動記録するため、社員が勤務日を誤って休日化する導線を残さない。
+    const [rows, leaveRows, tasks] = await Promise.all([
       rpc('get_my_daily_report_detail', { p_employee_code: session.employeeCode, p_report_date: today }),
       rpc('get_my_leave_status_for_date', { p_employee_code: session.employeeCode, p_date: today }),
+      rpc('get_my_today_tasks', { p_employee_code: session.employeeCode }),
     ]);
     const leave = leaveRows && leaveRows[0] && leaveRows[0].is_on_leave ? leaveRows[0] : null;
-    if ((!rows || rows.length === 0) && !leave) {
+    const keys = (tasks || []).map((t) => t.task_key);
+    const isWorkDay = keys.includes('own_daily_report');
+    const isRestDay = keys.some((k) => k === 'rest_holiday' || k === 'rest_paid_leave' || k === 'rest_other_leave');
+    if ((!rows || rows.length === 0) && !leave && !isWorkDay && !isRestDay) {
       restBtn.style.display = '';
       restBtn.onclick = () => openQuickRestRegisterFromHome(today);
     }
@@ -8405,6 +8413,18 @@ async function loadMyDailyReports() {
     list.innerHTML = '';
     rows.forEach((r) => {
       const isCancelled = r.report_status === 'cancelled';
+      // 休日(システム自動登録): 本人が出していない休日日報。人工0・タップ詳細なしのお休み表示にする。
+      if (!isCancelled && r.is_system_holiday) {
+        const hdiv = document.createElement('div');
+        hdiv.className = 'history-item is-holiday-auto';
+        hdiv.innerHTML = `
+          <div class="row1"><span>${r.report_date}</span><span class="mini-tag muted">お休み</span></div>
+          <div class="row2">休日（システム自動登録）</div>
+          <div class="hint-inline">勤務予定がないため、システムが休日として記録しました</div>
+        `;
+        list.appendChild(hdiv);
+        return;
+      }
       const div = document.createElement('div');
       div.className = 'history-item' + (isCancelled ? ' is-cancelled' : '');
       div.style.cursor = 'pointer';
@@ -9362,6 +9382,20 @@ function sortDrmGroups(groupList) {
   return sorted;
 }
 
+// 日報一覧/詳細の担当者表示ラベル(§9: 「null(外注:)」を出さない)。外注は3モデルを吸収する:
+//  1) 応援(会社×現場×人数)モデル … 作業員名が無いので「外注（応援） 会社名」+ 人数/人工。
+//  2) 旧・作業員紐付けモデル … 作業員名(外注:会社名)。
+//  3) 社員 … 氏名。いずれの値も欠けたら (不明) を出し、null文字は絶対に出さない。
+function drmWorkerLabel(f) {
+  if (f && f.worker_type === 'subcontractor') {
+    const co = f.subcontractor_company_name || '(会社未設定)';
+    if (f.subcontractor_worker_name) return `${f.subcontractor_worker_name}(外注:${co})`;
+    const ppl = (f.subcontractor_headcount != null && f.subcontractor_headcount !== '') ? ` ${Number(f.subcontractor_headcount)}名` : '';
+    return `外注（応援） ${co}${ppl}`;
+  }
+  return (f && f.employee_name) || '(不明)';
+}
+
 function renderDrmAll() {
   // report_date + 対象者 でグループ化し、現場1/現場2を横に並べる(スプレッドシートの
   // 「1日=現場1行+現場2行」構造とも対応させやすいよう、スロット順に並べる)。
@@ -9387,7 +9421,7 @@ function renderDrmAll() {
 
   listEl.innerHTML = groupList.map((g) => {
     const f = g.first;
-    const personName = f.worker_type === 'subcontractor' ? `${f.subcontractor_worker_name}(外注:${f.subcontractor_company_name || ''})` : (f.employee_name || '(不明)');
+    const personName = drmWorkerLabel(f);
     const sites = g.rows.map((r) => `${r.site_name || '(現場不明)'}・${r.work_type || ''}`).join(' / ');
     const statusBadgeClass = f.report_status === 'confirmed' ? 'done' : (f.report_status === 'rejected' ? 'rejected' : '');
     return `
@@ -9466,7 +9500,7 @@ async function openDailyReportDetail(groupKey) {
     return;
   }
   const f = rows[0];
-  const personName = f.worker_type === 'subcontractor' ? `${f.subcontractor_worker_name}(外注:${f.subcontractor_company_name || ''})` : (f.employee_name || '(不明)');
+  const personName = drmWorkerLabel(f);
   document.getElementById('drd-title').textContent = `${personName}・${f.report_date}`;
   document.getElementById('drd-meta').textContent = `提出状況: ${DRM_STATUS_LABEL[f.report_status] || f.report_status}`;
 

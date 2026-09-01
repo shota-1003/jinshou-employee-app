@@ -681,6 +681,7 @@
     <button type="button" class="back-link back-to-origin" data-nav="admin-dashboard">ダッシュボードに戻る</button>
     <div class="form-title">日報管理</div>
 
+    <div id="drm-breakdown" style="margin-bottom:14px;"></div>
     <div class="dash-card-grid" id="drm-summary-grid" style="margin-bottom:14px;"></div>
 
     <div class="today-item urgent" id="drm-missing-banner" style="cursor:default;">
@@ -789,6 +790,14 @@
         <tbody id="drm-table-body"></tbody>
       </table>
     </div>
+  </section>
+
+  <!-- 日報 分類別 対象者一覧(未提出/対象外/要確認/配置未確認) -->
+  <section id="screen-daily-report-people" class="screen">
+    <button type="button" class="back-link" data-nav="daily-report-management">日報管理に戻る</button>
+    <div class="form-title" id="drp-title">対象者一覧</div>
+    <div class="hint" id="drp-sub" style="margin-bottom:10px;"></div>
+    <div id="drp-list"></div>
   </section>
 
   <!-- 日報詳細(原本と管理者反映値) -->

@@ -410,6 +410,19 @@ button.link {
 /* 経費承認画面などで領収書原本(Edge Function receipt-image 経由)をサムネイル表示する。
    読み込み完了までは薄い枠のプレースホルダーを見せ、タップで拡大(openImageZoom)する。 */
 .receipt-thumb-wrap { margin-top: 8px; }
+/* 日報管理: 本日の社員の分類内訳(提出対象/対象外)。数字はタップで対象者一覧へ。 */
+.drm-breakdown-card { padding: 12px 14px; }
+.drm-bd-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 3px 0; font-size: 14px; }
+.drm-bd-total { font-size: 15px; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 4px; }
+.drm-bd-sub { color: var(--text-muted); font-size: 13px; }
+.drm-bd-num {
+  -webkit-appearance: none; appearance: none; background: var(--surface-2, rgba(128,128,128,0.1));
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 12px; font-weight: 800; font-size: 13.5px;
+  color: var(--text); cursor: pointer; min-width: 56px; text-align: center;
+}
+.drm-bd-num.alert { color: var(--danger); border-color: var(--danger); }
+.drm-bd-num.good { color: var(--success); }
+.drm-bd-num:active { transform: translateY(1px); }
 .receipt-proxy-thumb, .secure-proxy-thumb {
   width: 88px; height: 88px; object-fit: cover; border-radius: var(--radius-sm);
   border: 1px solid var(--border); background: var(--surface-2, rgba(128,128,128,0.12));

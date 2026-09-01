@@ -239,7 +239,7 @@ const ADMIN_SCREENS = new Set([
   'supply-master-admin', 'entertainment-admin', 'site-admin', 'leave-admin', 'leave-grant',
   'employee-summary', 'employee-monthly-detail', 'attendance-matrix', 'bulk-expense-admin', 'bulk-expense-detail',
   'expense-payment', 'joyo-denpyo-admin', 'event-admin', 'license-admin', 'health-admin',
-  'daily-report-admin', 'daily-report-management', 'daily-report-detail', 'purpose-admin',
+  'daily-report-admin', 'daily-report-management', 'daily-report-detail', 'daily-report-people', 'purpose-admin',
   'daily-report-needs-review-admin', 'daily-report-edit-requests-admin',
   'subcontractor-company-admin', 'subcontractor-worker-admin', 'personnel-ledger-hub',
   'supply-holdings-admin', 'supply-request-admin', 'joyo-denpyo-summary', 'master-management-hub', 'employee-create',
@@ -3617,6 +3617,7 @@ async function doAdminChangeAnonStatus() {
 // 外注日報タスクをタップしたときは、日報入力画面を開いてから「誰の日報を入力しますか」を
 // 外注作業員モードへ自動で切り替える(担当者が毎回手動でプルダウンを操作しなくて済むように)。
 async function navigateToTodayTask(nav, taskKey) {
+  if (!nav) return; // お休み・有給などの通知行はタップ先なし
   showScreen(nav);
   if (taskKey === 'subcontractor_daily_report' && nav === 'daily-report') {
     await resetDailyReportForm();
@@ -3892,13 +3893,18 @@ async function renderAdminTodayTasks(session) {
     }
     el.innerHTML = actionable.map((r) => {
       const color = r.severity === 'urgent' ? 'var(--danger)' : (r.severity === 'attention' ? 'var(--gold, #c9a227)' : 'var(--primary)');
-      return `<button type="button" class="history-item admin-today-task" data-nav="${r.nav_screen}" style="width:100%;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;border-left:3px solid ${color};">
+      return `<button type="button" class="history-item admin-today-task" data-nav="${r.nav_screen}" data-task-key="${r.task_key}" style="width:100%;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;border-left:3px solid ${color};">
         <span style="flex:1;min-width:0;">${r.label}</span>
         <span style="font-weight:800;font-size:18px;color:${color};flex:none;">${r.cnt}</span>
         <span aria-hidden="true" style="color:var(--muted);flex:none;">›</span>
       </button>`;
     }).join('');
-    el.querySelectorAll('.admin-today-task').forEach((btn) => btn.addEventListener('click', () => showScreen(btn.dataset.nav)));
+    // 日報系(要確認/未提出/配置未確認)は「誰か」まで分かる対象者一覧へ直接遷移する。
+    const TASK_TO_PEOPLE = { daily_report_anomaly: 'anomaly', daily_report_missing: 'missing', assignment_unconfirmed: 'unconfirmed' };
+    el.querySelectorAll('.admin-today-task').forEach((btn) => btn.addEventListener('click', () => {
+      const b = TASK_TO_PEOPLE[btn.dataset.taskKey];
+      if (b) openDailyReportPeople(b); else showScreen(btn.dataset.nav);
+    }));
   } catch (e) {
     // 集約が取れなくても下のカードは別途表示されるため、静かに隠す
     el.innerHTML = '';
@@ -9129,21 +9135,54 @@ const DRM_SUMMARY_CARDS = [
   { key: 'pending_confirm_count', label: '確認待ち' },
   { key: 'rejected_count', label: '差し戻し' },
   { key: 'confirmed_count', label: '確認済み' },
+  { key: 'exempt_count', label: '日報対象外' },
 ];
+
+// 本日の社員を「提出対象(提出済み/未提出)」と「対象外(休日/有給/その他休暇/その他)」へ
+// 重複なく分類して表示する。各数字はタップで対象者一覧へ遷移する(誰なのかが分かる)。
+async function loadDrmBreakdown() {
+  const session = getSession();
+  const el = document.getElementById('drm-breakdown');
+  if (!el) return;
+  try {
+    const rows = await rpc('admin_daily_report_breakdown', { p_admin_employee_code: session.employeeCode, p_date: todayJST() });
+    const b = rows && rows[0];
+    if (!b) { el.innerHTML = ''; return; }
+    const num = (bucket, n, cls) => `<button type="button" class="drm-bd-num ${cls || ''}" data-bucket="${bucket}">${n}</button>`;
+    el.innerHTML = `
+      <div class="card drm-breakdown-card">
+        <div class="drm-bd-row drm-bd-total"><span>本日の社員</span><strong>${b.total_employees}名</strong></div>
+        <div class="drm-bd-row"><span>├ 日報提出対象</span><strong>${b.target_total}名</strong></div>
+        <div class="drm-bd-row drm-bd-sub"><span>│　├ 提出済み</span>${num('target_submitted', b.target_submitted + '名', 'good')}</div>
+        <div class="drm-bd-row drm-bd-sub"><span>│　└ 未提出</span>${num('missing', b.target_missing + '名', b.target_missing > 0 ? 'alert' : '')}</div>
+        <div class="drm-bd-row"><span>└ 日報対象外</span><strong>${b.exempt_total}名</strong></div>
+        <div class="drm-bd-row drm-bd-sub"><span>　├ 休日/勤務予定なし</span>${num('holiday', b.exempt_holiday + '名')}</div>
+        <div class="drm-bd-row drm-bd-sub"><span>　├ 有給</span>${num('paid_leave', b.exempt_paid_leave + '名')}</div>
+        <div class="drm-bd-row drm-bd-sub"><span>　├ その他休暇</span>${num('other_leave', b.exempt_other_leave + '名')}</div>
+        <div class="drm-bd-row drm-bd-sub"><span>　└ その他対象外</span>${num('other_exempt', b.exempt_other + '名')}</div>
+      </div>`;
+    el.querySelectorAll('.drm-bd-num').forEach((btn) => {
+      btn.addEventListener('click', () => openDailyReportPeople(btn.dataset.bucket));
+    });
+    return b;
+  } catch (e) { el.innerHTML = ''; }
+}
 
 async function loadDrmSummary() {
   const session = getSession();
   const grid = document.getElementById('drm-summary-grid');
   grid.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
-    const rows = await rpc('admin_get_daily_report_summary', { p_admin_employee_code: session.employeeCode, p_date: todayJST() });
-    const d = rows && rows[0];
+    const [rows, bd] = await Promise.all([
+      rpc('admin_get_daily_report_summary', { p_admin_employee_code: session.employeeCode, p_date: todayJST() }),
+      loadDrmBreakdown(),
+    ]);
+    const d = Object.assign({}, rows && rows[0]);
+    if (bd) d.exempt_count = bd.exempt_total; // 対象外は breakdown から
     grid.innerHTML = DRM_SUMMARY_CARDS.map((c) => {
       const count = d ? (d[c.key] || 0) : 0;
-      // 数字カードはタップで本日のその状態だけに一覧を絞り込む(ユーザー要望: 提出/未提出/
-      // 確認待ち/差し戻し/確認済みの数字をタップして該当日報へ辿れるようにする)。
       return `
-        <button type="button" class="dash-card drm-summary-card" data-card="${c.key}" title="タップで${c.label}に絞り込み">
+        <button type="button" class="dash-card drm-summary-card" data-card="${c.key}" title="タップで${c.label}の対象者を表示">
           <span class="dash-card-top"><span class="dash-card-count ${count === 0 ? 'zero' : 'alert'}">${count}</span></span>
           <span class="dash-card-label">${c.label}</span>
         </button>
@@ -9157,6 +9196,42 @@ async function loadDrmSummary() {
   }
 }
 
+// 分類別の対象者一覧画面へ。bucket 例: missing/exempt/holiday/paid_leave/other_leave/other_exempt/
+// target_submitted/anomaly/unconfirmed。
+const DRP_TITLES = {
+  missing: '本日の未提出', target_submitted: '本日の提出', exempt: '日報対象外',
+  holiday: '休日 / 勤務予定なし', paid_leave: '有給', other_leave: 'その他休暇', other_exempt: 'その他対象外',
+  anomaly: '要確認の日報', unconfirmed: '配置を未確認の社員',
+};
+let dailyReportPeopleState = null;
+function openDailyReportPeople(bucket, title) {
+  dailyReportPeopleState = { bucket, title: title || DRP_TITLES[bucket] || '対象者一覧', date: todayJST() };
+  showScreen('daily-report-people');
+}
+async function loadDailyReportPeople() {
+  if (!dailyReportPeopleState) return;
+  const session = getSession();
+  const { bucket, title, date } = dailyReportPeopleState;
+  document.getElementById('drp-title').textContent = title;
+  const listEl = document.getElementById('drp-list');
+  const subEl = document.getElementById('drp-sub');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_daily_report_people', { p_admin_employee_code: session.employeeCode, p_date: date, p_bucket: bucket });
+    subEl.textContent = `${(rows || []).length}名`;
+    if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">対象者はいません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="history-item">
+        <div class="row1"><span>${r.employee_name}</span><span class="mini-tag">${r.employee_code}</span></div>
+        ${r.line1 ? `<div class="row2">${r.line1}</div>` : ''}
+        ${r.line2 ? `<div class="row2">${r.line2}</div>` : ''}
+      </div>
+    `).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
+}
+
 // 本日サマリーの数字カードのタップで、その状態の本日分だけに日報一覧を絞り込む。
 // 未提出カードは一覧(=提出済みの行)には現れないため、未提出者リストを開いてそこへ誘導する。
 const DRM_CARD_TO_STATUS = {
@@ -9167,16 +9242,9 @@ const DRM_CARD_TO_STATUS = {
 };
 function applyDrmCardFilter(cardKey) {
   const today = todayJST();
-  if (cardKey === 'missing_count') {
-    const el = document.getElementById('drm-missing-today-list');
-    if (el) {
-      el.style.display = 'block';
-      const tg = document.getElementById('drm-missing-toggle');
-      if (tg) tg.textContent = '未提出者を隠す';
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-    return;
-  }
+  // 未提出/対象外は日報一覧(=提出済みの行)には出ないため、専用の対象者一覧へ遷移する。
+  if (cardKey === 'missing_count') { openDailyReportPeople('missing'); return; }
+  if (cardKey === 'exempt_count') { openDailyReportPeople('exempt'); return; }
   const status = DRM_CARD_TO_STATUS[cardKey] || '';
   // 本日分に日付を固定
   drmFilters.dateFrom = today; drmFilters.dateTo = today;
@@ -11768,6 +11836,10 @@ function init() {
   SCREEN_ENTER_HOOKS['daily-report-management'] = async () => {
     if (!(await isNippoAdmin())) { enterMenu(); return; }
     loadDailyReportManagement();
+  };
+  SCREEN_ENTER_HOOKS['daily-report-people'] = async () => {
+    if (!(await isNippoAdmin())) { enterMenu(); return; }
+    loadDailyReportPeople();
   };
   SCREEN_ENTER_HOOKS['request-detail'] = () => { loadRequestDetailContent(); };
   SCREEN_ENTER_HOOKS['my-request-detail'] = () => { loadMyRequestDetailContent(); };

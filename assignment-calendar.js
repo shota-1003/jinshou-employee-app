@@ -37,19 +37,41 @@
     // (assignment_validate_day の no_leader)が role ILIKE '%職長%' を見ているため、
     // 画面から付ける文字列もここに固定して両者がずれないようにする。
     const LEADER_ROLE = '職長';
+
+    // 下請け請負は「普通の外注応援」と一目で違って見える必要がある。
+    // 既存の種別色(青・黄緑・緑・濃青緑・オレンジ)と重ならない濃いピンクを専用色にし、
+    // 月表示のタグ・日別の左帯・バッジのすべてで同じ色を使う。
+    const SUBCONTRACT_COLOR = '#c2185b';
     function isLeaderRole(role) { return !!role && String(role).includes(LEADER_ROLE); }
 
     // 人の区分。色だけに頼らず必ず文字も出す(色覚差への配慮)。
-    // 自社/外注 × 職人/事務/運搬 の5通りに整理し、増やしすぎない。
+    //
+    // 2026-09-02: 表示の元を day_role(その日その人が何として数えられているか)へ変更した。
+    // 以前は社員マスターの職種を出していたため、「チップは事務なのに人数は職人」という
+    // 食い違いが実機で起きていた。人数サマリーと同じ判定元を使う。
+    const ROLE_LABELS = {
+        craft: { key: 'own-field', label: '職人' },
+        office: { key: 'own-office', label: '事務' },
+        sales: { key: 'own-sales', label: '営業' },
+        haul: { key: 'own-haul', label: '運搬' },
+        other: { key: 'own-other', label: 'その他' },
+    };
     function memberRoleTag(m) {
         const isSub = m.member_type === 'subcontractor' || m.member_type === 'subcontractor_company';
-        if ((m.assignment_kind || 'work') === 'haul') {
-            return isSub ? { key: 'sub-haul', label: '外注運搬' } : { key: 'own-haul', label: '運搬' };
+        if (isSub) {
+            return ((m.assignment_kind || 'work') === 'haul')
+                ? { key: 'sub-haul', label: '外注運搬' }
+                : { key: 'sub-field', label: '外注' };
         }
-        if (isSub) return { key: 'sub-field', label: '外注' };
-        return (m.work_category === 'office')
-            ? { key: 'own-office', label: '事務' }
-            : { key: 'own-field', label: '職人' };
+        // その配置が運搬なら、その行は運搬として見せる(人数は日単位で別途判定)。
+        if ((m.assignment_kind || 'work') === 'haul') return ROLE_LABELS.haul;
+        const r = ROLE_LABELS[m.day_role];
+        if (!r) return ROLE_LABELS.craft;
+        // 「その他」は何のその他かを出す(ラーメン店・研修など)
+        if (m.day_role === 'other' && m.headcount_role_label) {
+            return { key: r.key, label: m.headcount_role_label };
+        }
+        return r;
     }
 
     // ---------------------------------------------------------------
@@ -192,6 +214,8 @@
                 btn('▶', () => shiftMonth(1), 'ac-icon'),
                 btn('今日', goToday),
                 btn('日付', openJumpSheet),
+                // 月の延べ人工。画面を数字だらけにしないよう、押したときだけシートで出す。
+                btn('月集計', openMonthTotalSheet),
                 el('div', 'ac-spacer'),
                 btn('🔍', openSearchSheet, 'ac-icon'),
                 btn('☰', openMenuSheet, 'ac-icon'),
@@ -649,10 +673,13 @@
                 const base = hol ? Math.max(2, chipLimit - 1) : chipLimit;
                 const limit = state.showNames ? Math.max(2, Math.floor(base / 2)) : base;
                 list.slice(0, limit).forEach((s) => {
+                    const chipColor = s.is_subcontracted ? SUBCONTRACT_COLOR : (s.color || '#1a73e8');
                     const chip = el('div', 'ac-chip'
-                        + (isLightColor(s.color) ? ' ac-light' : '')
-                        + (s.status === 'confirmed' ? '' : ' ac-draft'), s.label);
-                    chip.style.background = s.color || '#1a73e8';
+                        + (isLightColor(chipColor) ? ' ac-light' : '')
+                        + (s.is_subcontracted ? ' ac-subcchip' : '')
+                        + (s.status === 'confirmed' ? '' : ' ac-draft'),
+                        (s.is_subcontracted ? '下請 ' : '') + s.label);
+                    chip.style.background = chipColor;
                     chip.title = `${s.label} (${s.member_count}名)`;
                     cell.append(chip);
                     if (state.showNames && s.member_names) cell.append(el('div', 'ac-chipnames', s.member_names));
@@ -780,7 +807,7 @@
                         if (target) {
                             line.classList.add('ac-issue-tap');
                             line.append(el('span', 'ac-issuego', '職長を決める ›'));
-                            line.addEventListener('click', () => openEntrySheet(target));
+                            line.addEventListener('click', () => openLeaderSheet(target));
                         }
                     }
                     if (i.rule === 'double_booking' && i.employee_code) {
@@ -862,7 +889,9 @@
 
         function renderSchedule(s, conf) {
             const box = el('div', 'ac-sched');
-            box.style.borderLeftColor = s.color || '#1a73e8';
+            // 左帯は種別色。下請け請負だけは専用色にして、流し見でも区別できるようにする。
+            box.style.borderLeftColor = s.is_subcontracted ? SUBCONTRACT_COLOR : (s.color || '#1a73e8');
+            if (s.is_subcontracted) box.classList.add('ac-subc');
 
             // 現場ヘッダーは独立した大きなタップ領域にする。
             // 人数の多い現場では社員名チップが画面を埋め、現場自体を押しにくかった。
@@ -875,7 +904,20 @@
             });
             const name = el('div', 'ac-schedname', s.label);
             top.append(name);
-            top.append(el('span', 'ac-badge', s.category_name));
+            // 種別バッジ自体にも種別色を塗る。左の細い帯だけでは実機で見分けが付かない、
+            // という指摘への対応。色だけに頼らないよう文字(仕事/常傭/応援…)は必ず出す。
+            const catBadge = el('span', 'ac-badge ac-catbadge', s.category_name);
+            const catColor = s.color || '#1a73e8';
+            catBadge.style.background = catColor;
+            catBadge.style.borderColor = catColor;
+            catBadge.style.color = isLightColor(catColor) ? '#16202e' : '#fff';
+            top.append(catBadge);
+            // 下請け請負は種別より先に、いちばん目立つ位置へ出す。
+            if (s.is_subcontracted) {
+                const sc = el('span', 'ac-badge ac-subcbadge', '下請け');
+                sc.title = '協力会社だけで施工する現場です(自社は入りません)';
+                top.append(sc);
+            }
             if (s.status !== 'confirmed') top.append(el('span', 'ac-badge ac-warn', '未確定'));
             if (conf && Number(conf.total) > 0) {
                 const ok = Number(conf.confirmed) === Number(conf.total);
@@ -909,6 +951,11 @@
                 const lb = el('span', 'ac-badge ac-leadbadge', `職長 ${leader.short_name || leader.name}`);
                 lb.title = 'この現場の職長';
                 top.insertBefore(lb, top.children[2] || null);
+            } else if (s.leader_undecided) {
+                // 「まだ誰も決めていない」ではなく「今は決められないと判断済み」の印。
+                const ub = el('span', 'ac-badge ac-leadundecided', '職長未定');
+                ub.title = '職長は今は決められないと判断済みです。あとから決められます。';
+                top.insertBefore(ub, top.children[2] || null);
             }
             if (s.haul_count > 0) {
                 const hb = el('span', 'ac-badge ac-haul', `🚚${s.haul_count}`);
@@ -953,7 +1000,18 @@
                 } else if (m.meeting_time) {
                     chip.append(el('span', 'ac-mt', m.meeting_time));
                 }
-                // 一覧では社員名をタップしても何も起きないようにしている。
+                // 2026-09-02: 一覧の社員チップから直接操作できるようにした。
+                // 「今日だけ役割を変える」「別現場へ移す」を現場詳細まで開かずに済ませたい、
+                // という実機の要望による。押せることが分かるよう記号を付ける。
+                if (state.canEdit && m.member_type === 'employee') {
+                    chip.classList.add('ac-tappable');
+                    chip.append(el('span', 'ac-chevron', '▾'));
+                    chip.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        openMemberActionSheet(m, s);
+                    });
+                }
+                // (以前は)一覧では社員名をタップしても何も起きないようにしていた。
                 // 人数の多い現場では名前チップが画面を埋めるため、
                 // 現場を見たいのに社員を押してしまう事故が起きていた。
                 // 「1人を別の現場へ移す」操作は現場詳細の中から行う。
@@ -1015,6 +1073,7 @@
 
                 row('日付', labelDate(state.selected) + (rokuyouOf(state.selected) ? `（${rokuyouOf(state.selected)}）` : ''));
                 row('種別', s.category_name + (s.counts_as_deployment ? '' : '（配置人数に含めない）'));
+                if (s.is_subcontracted) row('請負区分', '下請け請負（協力会社だけで施工）');
                 if (s.prime_contractor) row('元請', s.prime_contractor);
                 row('集合時間', s.meeting_time);
                 row('開始 / 終了', [s.start_time, s.end_time].filter(Boolean).join(' 〜 '));
@@ -1040,7 +1099,7 @@
                         // 一覧に置くと、現場を見たいのに社員を押してしまう事故が起きた。
                         if (state.canEdit) {
                             chip.classList.add('ac-movable');
-                            chip.addEventListener('click', () => { api.close(); openMoveSheet(m, s); });
+                            chip.addEventListener('click', () => { api.close(); openMemberActionSheet(m, s); });
                         }
                         wrap2.append(chip);
                     }
@@ -1126,6 +1185,74 @@
         // -----------------------------------------------------------
         // その日の二次的な操作(操作バーの「⋯」)
         // -----------------------------------------------------------
+        // 月の延べ人工。「月間売上 ÷ 月間人工」で1人工あたりの出来高を出すための数字。
+        // 同じ社員が20日働けば20人工。1日の中で複数現場・作業+運搬でも、その日は1人工。
+        async function openMonthTotalSheet() {
+            let d = null;
+            try {
+                d = await rpc('assignment_get_month_headcount',
+                    { p_employee_code: me, p_year: state.year, p_month: state.month });
+            } catch (e) { fail(e); return; }
+
+            sheet(`${state.year}年${state.month}月 の月間集計`, (box) => {
+                box.append(el('div', 'ac-schedmeta',
+                    '延べ人工です。同じ人が20日働けば20人工、同じ日に何現場入っても1人工として数えます。'));
+                const rows = [
+                    ['職人', d.craft, 'ac-hc-craft'],
+                    ['事務', d.office, 'ac-hc-office'],
+                    ['営業', d.sales, 'ac-hc-sales'],
+                    ['外注', d.sub, 'ac-hc-sub'],
+                    ['運搬', d.haul, 'ac-hc-haul'],
+                    ['その他', d.other, 'ac-hc-other'],
+                ];
+                const list = el('div', 'ac-list');
+                for (const [label, n, cls] of rows) {
+                    const it = el('div', 'ac-listitem ac-mrow');
+                    const nm = el('div', 'ac-mrowname');
+                    nm.append(el('span', `ac-hc ${cls}`, label));
+                    it.append(nm);
+                    it.append(el('div', 'ac-dstrong', `${n} 人工`));
+                    // その他は内訳、外注は通常/下請けの内訳を出す
+                    if (label === 'その他' && Number(n) > 0) {
+                        it.classList.add('ac-tappable');
+                        it.append(el('span', 'ac-chevron', '▾'));
+                        it.addEventListener('click', () => openMonthOtherSheet(d));
+                    }
+                    if (label === '外注' && Number(n) > 0) {
+                        it.append(el('div', 'ac-sub2',
+                            `通常の応援 ${d.sub_normal} 人工／下請け請負 ${d.sub_contracted} 人工`));
+                    }
+                    list.append(it);
+                }
+                box.append(list);
+
+                const total = el('div', 'ac-listitem');
+                total.append(el('div', 'ac-menutitle', '計'));
+                total.append(el('div', 'ac-dstrong', `${d.total} 人工`));
+                box.append(total);
+
+                box.append(el('div', 'ac-schedmeta',
+                    `参考: この月に1日でも配置された社員は ${d.unique_employees} 人`
+                    + `／配置のあった日は ${d.worked_days} 日`));
+            });
+        }
+
+        function openMonthOtherSheet(d) {
+            sheet(`${state.year}年${state.month}月 その他の内訳`, (box) => {
+                box.append(el('div', 'ac-schedmeta', '種別ごとの延べ人工です。'));
+                const rows = d.other_breakdown || [];
+                if (!rows.length) { box.append(el('div', 'ac-empty', '内訳はありません')); return; }
+                const list = el('div', 'ac-list');
+                for (const r of rows) {
+                    const it = el('div', 'ac-listitem');
+                    it.append(el('div', 'ac-menutitle', r.label));
+                    it.append(el('div', 'ac-sub2', `${r.count} 人工`));
+                    list.append(it);
+                }
+                box.append(list);
+            });
+        }
+
         // 「その他」の内訳。種別名(研修・健康診断・ラーメン店…)ごとの人数を出す。
         // 種別は管理者が自由に追加できるので、ここは追加した名前がそのまま並ぶ。
         function openOtherBreakdown(h) {
@@ -1186,6 +1313,213 @@
         }
 
         // -----------------------------------------------------------
+        // 社員チップを押したときの操作メニュー。
+        // 「表示だけに見える」という実機の指摘への対応で、操作をここへ集約する。
+        function openMemberActionSheet(member, fromSchedule) {
+            sheet(member.name, (box, api) => {
+                box.append(el('div', 'ac-schedmeta', fromSchedule.label + '／' + (member.time_label || '終日')));
+                const items = [
+                    ['当日の役割を変える', dayRoleText(member),
+                        () => { api.close(); openDayRoleSheet(member, fromSchedule); }],
+                    ['別の現場へ移す', 'この日の他の現場へ移します',
+                        () => { api.close(); openMoveSheet(member, fromSchedule); }],
+                    ['時間を変える', member.time_label || '終日',
+                        () => { api.close(); openEntrySheet(fromSchedule); }],
+                    [isLeaderRole(member.role) ? '職長を解除する' : 'この人を職長にする',
+                        isLeaderRole(member.role) ? '現在この現場の職長です' : 'この現場の職長にします',
+                        async () => { api.close(); await toggleLeader(member, fromSchedule); }],
+                    ['運搬を追加する', '同じ人を運搬にも入れます(兼務できます)',
+                        () => { api.close(); openEntrySheet(fromSchedule); }],
+                ];
+                const list = el('div', 'ac-list');
+                for (const [title, desc, fn] of items) {
+                    const it = el('div', 'ac-listitem');
+                    it.append(el('div', 'ac-menutitle', title));
+                    if (desc) it.append(el('div', 'ac-sub2', desc));
+                    it.addEventListener('click', fn);
+                    list.append(it);
+                }
+                box.append(list);
+            });
+        }
+
+        function dayRoleText(m) {
+            if (!m.headcount_role) {
+                return '自動（いまは' + (ROLE_LABELS[m.day_role] || ROLE_LABELS.craft).label + '）';
+            }
+            if (m.headcount_role === 'other') {
+                return 'その他（' + (m.headcount_role_label || '内訳なし') + '）';
+            }
+            return (ROLE_LABELS[m.headcount_role] || ROLE_LABELS.craft).label + '（この日だけ）';
+        }
+
+        // その日・その配置だけの役割を決める。社員マスターは書き換えない。
+        function openDayRoleSheet(member, fromSchedule) {
+            sheet(member.name + ' の当日の役割', (box, api) => {
+                box.append(el('div', 'ac-schedmeta',
+                    'この日・この現場だけの役割です。社員マスターの区分は変わらないので、'
+                    + '翌日はいつもどおりに戻ります。'));
+                const choices = [
+                    ['', '自動', '種別と社員マスターから判定します'],
+                    ['craft', '職人', '現場作業として数えます'],
+                    ['office', '事務', '事務仕事として数えます'],
+                    ['sales', '営業', '営業として数えます'],
+                    ['haul', '運搬', '運搬として数えます'],
+                ];
+                const list = el('div', 'ac-list');
+                for (const [val, label, desc] of choices) {
+                    const it = el('div', 'ac-listitem' + ((member.headcount_role || '') === val ? ' ac-on' : ''));
+                    it.append(el('div', 'ac-menutitle', label));
+                    it.append(el('div', 'ac-sub2', desc));
+                    it.addEventListener('click', async () => {
+                        api.close();
+                        await saveDayRole(member, fromSchedule, val, null);
+                    });
+                    list.append(it);
+                }
+                box.append(list);
+
+                // 「その他」は何のその他かまで決めないと後から分からないので、
+                // 選べる名前を並べて選ばせる(種別マスターの「その他」枠がそのまま候補)。
+                box.append(el('div', 'ac-label', 'その他（内訳を選ぶ）'));
+                const others = (state.categories || []).filter((c) => c.headcount_group === 'other');
+                const tokens = el('div', 'ac-tokens');
+                for (const c of others) {
+                    const on = member.headcount_role === 'other' && member.headcount_role_label === c.name;
+                    const t = el('button', 'ac-token' + (on ? ' ac-on' : ''), c.name);
+                    t.addEventListener('click', async () => {
+                        api.close();
+                        await saveDayRole(member, fromSchedule, 'other', c.name);
+                    });
+                    tokens.append(t);
+                }
+                if (!others.length) {
+                    tokens.append(el('div', 'ac-schedmeta', '「その他」の種別がまだありません。'));
+                }
+                box.append(tokens);
+                box.append(el('div', 'ac-schedmeta',
+                    'ここに無い業務(ラーメン店・研修など)は、「⋯ → カレンダー設定」で種別を追加し、'
+                    + '枠を「その他」にすると候補に出ます(管理者のみ)。'));
+            });
+        }
+
+        // 役割の保存。既存の保存RPCへ、その配置のメンバーをそのまま渡し直す。
+        async function saveDayRole(member, fromSchedule, role, label) {
+            const members = (fromSchedule.members || []).map((x) => memberToPayload(x,
+                x.member_id === member.member_id
+                    ? { headcount_role: role, headcount_role_label: role === 'other' ? (label || '') : '' }
+                    : {}));
+            try {
+                await saveScheduleWithMembers(fromSchedule, members, {});
+                toast(role ? '当日の役割を変えました' : '自動に戻しました');
+            } catch (e) { fail(e); }
+        }
+
+        // 画面が持っているメンバー表示用のデータを、保存RPCが受け取る形へ戻す。
+        function memberToPayload(x, patch) {
+            let base;
+            if (x.member_type === 'employee') {
+                base = {
+                    member_type: 'employee', employee_code: x.employee_code,
+                    role: x.role || '', meeting_time: x.meeting_time || '',
+                    start_time: x.start_time || '', end_time: x.end_time || '',
+                    assignment_kind: x.assignment_kind || 'work',
+                    headcount_role: x.headcount_role || '',
+                    headcount_role_label: x.headcount_role_label || '',
+                };
+            } else if (x.member_type === 'subcontractor_company') {
+                base = {
+                    member_type: 'subcontractor_company',
+                    subcontractor_company_id: x.subcontractor_company_id,
+                    headcount: x.headcount || 1,
+                    workers: (x.workers || []).map((w) => ({
+                        subcontractor_worker_id: w.subcontractor_worker_id || null,
+                        name: w.name || '', phone: w.phone || '',
+                    })),
+                };
+            } else {
+                base = { member_type: 'subcontractor', subcontractor_worker_id: x.subcontractor_worker_id };
+            }
+            return Object.assign(base, patch || {});
+        }
+
+        // 現場の内容はそのままに、メンバーだけ入れ替えて保存する共通処理。
+        async function saveScheduleWithMembers(s, members, extra) {
+            await rpc('assignment_save_schedule', Object.assign({
+                p_employee_code: me, p_schedule_id: s.id, p_date: state.selected,
+                p_site_id: s.site_id, p_category_id: s.category_id, p_title: s.title || null,
+                p_start_time: s.start_time || null, p_end_time: s.end_time || null,
+                p_meeting_time: s.meeting_time || null, p_note: s.note || null,
+                p_important_note: s.important_note || null,
+                p_members: members, p_status: s.status,
+            }, extra || {}));
+            await Promise.all([loadMonth(), loadDay()]);
+            render();
+        }
+
+        // 職長の付け外し。編集画面を開かずにここからも切り替えられるようにする。
+        async function toggleLeader(member, fromSchedule) {
+            const on = !isLeaderRole(member.role);
+            const members = (fromSchedule.members || []).map((x) => memberToPayload(x,
+                x.member_id === member.member_id ? { role: on ? LEADER_ROLE : '' } : {}));
+            try {
+                // 職長を決めたら「職長未定」の印は外す
+                await saveScheduleWithMembers(fromSchedule, members, on ? { p_leader_undecided: false } : {});
+                toast(on ? member.name + ' を職長にしました' : '職長を解除しました');
+            } catch (e) { fail(e); }
+        }
+
+        // 職長を決める / 今は決められない(職長未定)を選ぶ
+        function openLeaderSheet(s) {
+            sheet(s.label + ' の職長', (box, api) => {
+                box.append(el('div', 'ac-schedmeta',
+                    '職長を選ぶか、今は決められない場合は「職長未定」にしてください。'
+                    + '未定にすると警告は出なくなり、あとから決め直せます。'));
+                const emps = (s.members || []).filter((m) => m.member_type === 'employee'
+                    && (m.assignment_kind || 'work') !== 'haul');
+                const list = el('div', 'ac-list');
+                for (const m of emps) {
+                    const it = el('div', 'ac-listitem' + (isLeaderRole(m.role) ? ' ac-on' : ''));
+                    it.append(el('div', 'ac-menutitle', m.name));
+                    it.append(el('div', 'ac-sub2', isLeaderRole(m.role) ? '現在の職長' : 'この人を職長にする'));
+                    it.addEventListener('click', async () => { api.close(); await toggleLeader(m, s); });
+                    list.append(it);
+                }
+                if (!emps.length) {
+                    list.append(el('div', 'ac-empty', 'この現場にはまだ社員が入っていません。'));
+                }
+                box.append(list);
+
+                const und = el('button', 'ac-btn' + (s.leader_undecided ? ' ac-primary' : ''),
+                    s.leader_undecided ? '職長未定のまま' : '職長未定にする（いまは決められない）');
+                und.style.width = '100%';
+                und.addEventListener('click', async () => {
+                    api.close();
+                    const members = (s.members || []).map((x) => memberToPayload(x,
+                        isLeaderRole(x.role) ? { role: '' } : {}));
+                    try {
+                        await saveScheduleWithMembers(s, members, { p_leader_undecided: true });
+                        toast('職長未定にしました');
+                    } catch (e) { fail(e); }
+                });
+                box.append(und);
+                if (s.leader_undecided) {
+                    const clear = el('button', 'ac-btn', '未定をやめる（また警告を出す）');
+                    clear.style.width = '100%';
+                    clear.style.marginTop = '6px';
+                    clear.addEventListener('click', async () => {
+                        api.close();
+                        try {
+                            await saveScheduleWithMembers(s, (s.members || []).map((x) => memberToPayload(x, {})),
+                                { p_leader_undecided: false });
+                            toast('未定をやめました');
+                        } catch (e) { fail(e); }
+                    });
+                    box.append(clear);
+                }
+            });
+        }
+
         // 「この人を別の現場へ移す」(同じ日の中での移動)
         // -----------------------------------------------------------
         function openMoveSheet(member, fromSchedule) {
@@ -1482,6 +1816,7 @@
                 meeting_time: existing ? (existing.meeting_time || '') : '',
                 note: existing ? (existing.note || '') : '',
                 important_note: existing ? (existing.important_note || '') : '',
+                is_subcontracted: existing ? !!existing.is_subcontracted : false,
                 members: existing
                     ? existing.members.filter((m) => m.member_type === 'employee').map((m) => ({
                         member_type: 'employee', employee_code: m.employee_code, name: m.name,
@@ -1924,6 +2259,24 @@
                 renderHaulRows();
             }
 
+            // ---------- 下請け請負 ----------
+            // 現場単位のスイッチにした。会社ごとに選ばせるより1タップで済み、
+            // 「この現場は自社が入らない」という現場の性質そのものを表せるため。
+            const subcField = el('div', 'ac-field');
+            subcField.append(el('div', 'ac-label', '請負区分'));
+            const subcBtn = el('button', 'ac-token' + (draft.is_subcontracted ? ' ac-on' : ''),
+                draft.is_subcontracted ? '下請け請負（自社は入らない）' : '通常（自社＋外注応援）');
+            subcBtn.addEventListener('click', () => {
+                draft.is_subcontracted = !draft.is_subcontracted;
+                subcBtn.textContent = draft.is_subcontracted ? '下請け請負（自社は入らない）' : '通常（自社＋外注応援）';
+                subcBtn.classList.toggle('ac-on', draft.is_subcontracted);
+            });
+            subcField.append(subcBtn);
+            subcField.append(el('div', 'ac-schedmeta',
+                '下請け請負にすると、自社社員が0人でも警告を出しません。'
+                + '現場一覧・月表示に「下請け」と専用色で表示され、人数は外注として数えます。'));
+            box.append(subcField);
+
             // ---------- 運搬(運送要員) ----------
             // 迅翔興業ではトラックで資材・人員を運ぶ担当がいる。LifeBearではタイヤ印で
             // 識別していた。運搬だけの人も、運搬してそのまま現場で働く人もいるため、
@@ -2024,6 +2377,7 @@
                     p_meeting_time: draft.meeting_time || null,
                     p_note: draft.note || null,
                     p_important_note: draft.important_note || null,
+                    p_is_subcontracted: !!draft.is_subcontracted,
                     p_members: draft.members.concat(draft.subs.map((x) => ({
                         member_type: 'subcontractor_company',
                         subcontractor_company_id: x.subcontractor_company_id,

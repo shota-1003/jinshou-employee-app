@@ -177,7 +177,7 @@
          今日やること内の同内容の行に一本化する(同じ情報を複数箇所へ出さない)。 -->
     <div class="section-title">今日やること</div>
     <div class="today-list" id="today-list"></div>
-    <button type="button" class="link" id="home-daily-report-mark-rest-btn" style="display:none;margin:2px 0 10px 0;">今日は休みとして登録する</button>
+<!-- §2: 「今日は休みとして登録する」は撤去。休日はカレンダー/休暇情報からシステムが判定する。 -->
 
     <div id="announce-banner-area"></div>
 
@@ -355,8 +355,9 @@
         <select id="daily-report-target-type">
           <option value="self">自分</option>
           <option value="employee">他の社員(代理入力)</option>
+          <option value="subcontractor_support">外注（応援）</option>
         </select>
-        <div class="hint-inline">外注(応援)は「自分」を選び、下の「外注(応援)」で会社・人数を登録してください。</div>
+        <div class="hint-inline">「外注（応援）」を選ぶと、社員の日報フォームは表示されず、外注専用の入力に切り替わります。</div>
         <div id="daily-report-target-employee-wrap" style="display:none;">
           <input type="text" class="participant-search-input" id="daily-report-target-employee-search" placeholder="社員名で検索...">
           <div id="daily-report-target-employee-results" class="candidate-results"></div>
@@ -373,6 +374,7 @@
       <input type="date" id="daily-report-date">
       <div class="hint-inline" id="daily-report-existing-hint" style="display:none;"></div>
 
+      <div id="daily-report-normal-form">
       <div id="daily-report-assignment-sites" style="display:none;">
         <div class="hint-inline">📍 配置カレンダーの予定(タップで現場を入れられます)</div>
         <div class="filter-row" id="daily-report-assignment-sites-row"></div>
@@ -419,6 +421,7 @@
       <div class="error" id="daily-report-error"></div>
       <button id="daily-report-submit">日報を提出する</button>
       <button type="button" class="secondary" id="daily-report-save-draft">下書きとして保存する</button>
+      </div><!-- /daily-report-normal-form -->
     </div>
 
     <div class="card" id="daily-report-subcontractor-card">
@@ -443,20 +446,22 @@
       <label>現場<span class="required-mark">(必須)</span></label>
       <input type="text" class="dr-sc-site-search" placeholder="現場名で検索...">
       <select class="dr-sc-site-select"></select>
-      <div style="display:flex;gap:10px;">
+      <div class="hint-inline">同じ会社・現場の 終日 / 午前 / 午後 の人数を一度に入力できます(人工は自動計算)。</div>
+      <div style="display:flex;gap:8px;">
         <div style="flex:1;">
-          <label>人数<span class="required-mark">(必須)</span></label>
-          <input type="number" class="dr-sc-headcount" inputmode="numeric" pattern="[0-9]*" min="1" max="99" step="1" placeholder="例: 3">
+          <label>終日人数(×1.0)</label>
+          <input type="number" class="dr-sc-fullday" inputmode="numeric" pattern="[0-9]*" min="0" max="99" step="1" placeholder="0">
         </div>
         <div style="flex:1;">
-          <label>勤務区分<span class="required-mark">(必須)</span></label>
-          <select class="dr-sc-work-type">
-            <option value="終日">終日(×1.0)</option>
-            <option value="午前">午前(×0.5)</option>
-            <option value="午後">午後(×0.5)</option>
-          </select>
+          <label>午前人数(×0.5)</label>
+          <input type="number" class="dr-sc-am" inputmode="numeric" pattern="[0-9]*" min="0" max="99" step="1" placeholder="0">
+        </div>
+        <div style="flex:1;">
+          <label>午後人数(×0.5)</label>
+          <input type="number" class="dr-sc-pm" inputmode="numeric" pattern="[0-9]*" min="0" max="99" step="1" placeholder="0">
         </div>
       </div>
+      <div class="hint-inline dr-sc-row-summary" style="margin-top:4px;">合計 0名 / 0人工</div>
       <label>備考(任意)</label>
       <input type="text" class="dr-sc-notes" placeholder="任意">
       <button type="button" class="link dr-sc-remove" style="color:var(--danger);">この外注を削除</button>

@@ -1083,28 +1083,11 @@ async function renderHomeUpcomingEvents(session) {
 // 「今日は休みとして登録する」のワンタップ導線だけを、今日やることの直下に残す
 // (提出済み・休暇登録済みの日は表示しない)。
 async function renderHomeDailyReportStatusBanner(session) {
+  // §2: 社員が自分で勤務日を休日に変更できる導線は不要。「今日は休みとして登録する」は完全撤去。
+  // 休日はカレンダー(配置)・休暇情報からシステムが判定し、確定できる日はシステムが自動記録する。
+  // 判定不能/競合時は勝手に休日化せず、管理者の要確認へ回す(サーバ側 daily_report_employee_bucket)。
   const restBtn = document.getElementById('home-daily-report-mark-rest-btn');
-  restBtn.style.display = 'none';
-  const today = todayJST();
-  try {
-    // §6: 「休みとして登録」は、有効配置あり(勤務日)・休暇・休日(システム自動判定)のいずれでも
-    // 出さない。正式判定 daily_report_employee_bucket を唯一の根拠にした get_my_today_tasks を参照し、
-    // 勤務日(own_daily_report)・休日/有給/その他休暇(rest_*)が出る日はボタンを隠す。
-    // 休日が確定できる日はシステムが自動記録するため、社員が勤務日を誤って休日化する導線を残さない。
-    const [rows, leaveRows, tasks] = await Promise.all([
-      rpc('get_my_daily_report_detail', { p_employee_code: session.employeeCode, p_report_date: today }),
-      rpc('get_my_leave_status_for_date', { p_employee_code: session.employeeCode, p_date: today }),
-      rpc('get_my_today_tasks', { p_employee_code: session.employeeCode }),
-    ]);
-    const leave = leaveRows && leaveRows[0] && leaveRows[0].is_on_leave ? leaveRows[0] : null;
-    const keys = (tasks || []).map((t) => t.task_key);
-    const isWorkDay = keys.includes('own_daily_report');
-    const isRestDay = keys.some((k) => k === 'rest_holiday' || k === 'rest_paid_leave' || k === 'rest_other_leave');
-    if ((!rows || rows.length === 0) && !leave && !isWorkDay && !isRestDay) {
-      restBtn.style.display = '';
-      restBtn.onclick = () => openQuickRestRegisterFromHome(today);
-    }
-  } catch (e) { /* 取れなくても今日やること側の表示は別途機能する */ }
+  if (restBtn) restBtn.style.display = 'none';
 }
 
 // executiveはadmin-dashboard(全管理メニュー)、日報担当(nippo_admin、executiveではない)は
@@ -3934,9 +3917,10 @@ async function renderAdminTodayTasks(session) {
         <span aria-hidden="true" style="color:var(--muted);flex:none;">›</span>
       </button>`;
     }).join('');
-    // 日報系(要確認/未提出/配置未確認)は「誰か」まで分かる対象者一覧へ直接遷移する。
-    const TASK_TO_PEOPLE = { daily_report_anomaly: 'anomaly', daily_report_missing: 'missing', assignment_unconfirmed: 'unconfirmed' };
+    // 日報系: 未提出/配置未確認は対象者一覧へ。要確認(§3)は処理できる要確認一覧(確定/修正依頼/取消)へ。
+    const TASK_TO_PEOPLE = { daily_report_missing: 'missing', assignment_unconfirmed: 'unconfirmed' };
     el.querySelectorAll('.admin-today-task').forEach((btn) => btn.addEventListener('click', () => {
+      if (btn.dataset.taskKey === 'daily_report_anomaly') { showScreen('daily-report-needs-review-admin'); return; }
       const b = TASK_TO_PEOPLE[btn.dataset.taskKey];
       if (b) openDailyReportPeople(b); else showScreen(btn.dataset.nav);
     }));
@@ -7627,12 +7611,18 @@ async function loadDrScCompanies() {
   } catch (e) { drScCompanies = []; }
   return drScCompanies;
 }
+// §7: 1行 = 会社×現場 につき 終日/午前/午後 の人数を同時入力。人工 = 終日×1.0 + (午前+午後)×0.5。
 function updateDrScTotals() {
   let people = 0; let hc = 0;
   document.querySelectorAll('#dr-sc-list .dr-sc-entry').forEach((el) => {
-    const n = Number(el.querySelector('.dr-sc-headcount').value) || 0;
-    const wt = el.querySelector('.dr-sc-work-type').value;
-    people += n; hc += n * (wt === '終日' ? 1.0 : 0.5);
+    const fd = Number(el.querySelector('.dr-sc-fullday').value) || 0;
+    const am = Number(el.querySelector('.dr-sc-am').value) || 0;
+    const pm = Number(el.querySelector('.dr-sc-pm').value) || 0;
+    const rowPeople = fd + am + pm;
+    const rowHc = fd * 1.0 + (am + pm) * 0.5;
+    people += rowPeople; hc += rowHc;
+    const sum = el.querySelector('.dr-sc-row-summary');
+    if (sum) sum.textContent = `合計 ${rowPeople}名 / ${String(rowHc).replace(/\.0$/, '')}人工`;
   });
   const p = document.getElementById('dr-sc-total-people'); const h = document.getElementById('dr-sc-total-headcount');
   if (p) p.textContent = String(people);
@@ -7650,13 +7640,16 @@ async function addDailyReportSubcontractorLine(prefill) {
   const siteSearch = clone.querySelector('.dr-sc-site-search');
   populateSiteSelect(siteSel, '', false).then(() => { if (prefill && prefill.site_id) siteSel.value = String(prefill.site_id); });
   siteSearch.addEventListener('input', () => populateSiteSelect(siteSel, siteSearch.value.trim(), false));
-  const wt = clone.querySelector('.dr-sc-work-type');
-  if (prefill && prefill.work_type) wt.value = prefill.work_type;
-  const hcInput = clone.querySelector('.dr-sc-headcount');
-  if (prefill && prefill.headcount != null) hcInput.value = prefill.headcount;
+  const fdInput = clone.querySelector('.dr-sc-fullday');
+  const amInput = clone.querySelector('.dr-sc-am');
+  const pmInput = clone.querySelector('.dr-sc-pm');
+  if (prefill) {
+    if (prefill.fullday != null) fdInput.value = prefill.fullday;
+    if (prefill.am != null) amInput.value = prefill.am;
+    if (prefill.pm != null) pmInput.value = prefill.pm;
+  }
   if (prefill && prefill.notes) clone.querySelector('.dr-sc-notes').value = prefill.notes;
-  hcInput.addEventListener('input', updateDrScTotals);
-  wt.addEventListener('change', updateDrScTotals);
+  [fdInput, amInput, pmInput].forEach((inp) => inp.addEventListener('input', updateDrScTotals));
   clone.querySelector('.dr-sc-remove').addEventListener('click', () => { wrap.remove(); updateDrScTotals(); });
   document.getElementById('dr-sc-list').appendChild(clone);
   updateDrScTotals();
@@ -7664,9 +7657,9 @@ async function addDailyReportSubcontractorLine(prefill) {
 async function loadDrScSection(dateStr) {
   const card = document.getElementById('daily-report-subcontractor-card');
   if (!card) return;
-  // 外注（応援）人数は「自分の日報」入力時、かつ外注を報告する権限/役割(日報担当・管理者)の
-  // 社員にだけ表示する(P0-5: 一般社員には出さない)。代理入力・外注個別入力時も隠す。
-  const showIt = (dailyReportTarget.type === 'self' && dailyReportIsNippoAdmin);
+  // §6: 外注（応援）は「誰の日報」で外注（応援）を選んだ時だけ表示する専用モード。
+  // 通常社員フォームは別途 setDailyReportMode で非表示にする(外注選択時は通常フォームを出さない)。
+  const showIt = (dailyReportTarget.type === 'subcontractor_support');
   card.style.display = showIt ? '' : 'none';
   if (!showIt) return;
   const list = document.getElementById('dr-sc-list');
@@ -7677,12 +7670,22 @@ async function loadDrScSection(dateStr) {
     const session = getSession();
     const rows = await rpc('get_my_subcontractor_headcount_report', { p_employee_code: session.employeeCode, p_report_date: dateStr });
     if (rows && rows.length > 0) {
+      // 既存(company×site×work_type別)を、会社×現場ごとに 終日/午前/午後 の1行へ集約してprefillする。
+      const grouped = new Map();
       for (const r of rows) {
+        const key = `${r.subcontractor_company_id}__${r.site_id}`;
+        if (!grouped.has(key)) grouped.set(key, { subcontractor_company_id: r.subcontractor_company_id, site_id: r.site_id, fullday: 0, am: 0, pm: 0, notes: r.notes });
+        const g = grouped.get(key);
+        const n = Number(r.subcontractor_headcount != null ? r.subcontractor_headcount : r.headcount) || 0;
+        if (r.work_type === '午前') g.am += n; else if (r.work_type === '午後') g.pm += n; else g.fullday += n;
+      }
+      for (const g of grouped.values()) {
         // eslint-disable-next-line no-await-in-loop
-        await addDailyReportSubcontractorLine({ subcontractor_company_id: r.subcontractor_company_id, site_id: r.site_id, work_type: r.work_type, headcount: r.headcount, notes: r.notes });
+        await addDailyReportSubcontractorLine(g);
       }
     }
   } catch (e) { /* 取得失敗でも新規追加は可能 */ }
+  if (document.querySelectorAll('#dr-sc-list .dr-sc-entry').length === 0) await addDailyReportSubcontractorLine();
   updateDrScTotals();
 }
 async function doSubmitSubcontractorHeadcount() {
@@ -7694,12 +7697,17 @@ async function doSubmitSubcontractorHeadcount() {
   for (const el of document.querySelectorAll('#dr-sc-list .dr-sc-entry')) {
     const companyId = el.querySelector('.dr-sc-company').value;
     const siteId = el.querySelector('.dr-sc-site-select').value;
-    const headcount = el.querySelector('.dr-sc-headcount').value;
-    const workType = el.querySelector('.dr-sc-work-type').value;
+    const notes = el.querySelector('.dr-sc-notes').value.trim() || null;
+    const fd = Number(el.querySelector('.dr-sc-fullday').value) || 0;
+    const am = Number(el.querySelector('.dr-sc-am').value) || 0;
+    const pm = Number(el.querySelector('.dr-sc-pm').value) || 0;
     if (!companyId) { showError('dr-sc-error', '外注会社を選択してください。'); return; }
     if (!siteId || siteId === '__new__') { showError('dr-sc-error', '外注の現場を選択してください。'); return; }
-    if (!headcount || Number(headcount) < 1) { showError('dr-sc-error', '人数を1以上で入力してください。'); return; }
-    entries.push({ company_id: companyId, headcount: String(headcount), site_id: siteId, work_type: workType, is_night_shift: false, notes: el.querySelector('.dr-sc-notes').value.trim() || null });
+    if (fd + am + pm < 1) { showError('dr-sc-error', '終日・午前・午後のいずれかに人数を入力してください。'); return; }
+    // §7/§8: 1行(会社×現場)を 終日/午前/午後 の勤務区分ごとに分けて保存する(人数>0のみ)。
+    if (fd > 0) entries.push({ company_id: companyId, headcount: String(fd), site_id: siteId, work_type: '終日', is_night_shift: false, notes });
+    if (am > 0) entries.push({ company_id: companyId, headcount: String(am), site_id: siteId, work_type: '午前', is_night_shift: false, notes });
+    if (pm > 0) entries.push({ company_id: companyId, headcount: String(pm), site_id: siteId, work_type: '午後', is_night_shift: false, notes });
   }
   if (entries.length === 0) { showError('dr-sc-error', '外注を1件以上追加してください。'); return; }
   const btn = document.getElementById('dr-sc-submit');
@@ -8191,8 +8199,7 @@ function onDailyReportCalDayClick(dateStr, info) {
   const reportBlock = (info && info.report_status)
     ? `<button type="button" data-open-detail="${dateStr}">この日の日報を確認する</button>`
     : `${leaveLine || '<div class="hint-inline">この日の日報はありません</div>'}
-       <button type="button" class="secondary" data-open-input="${dateStr}">日報を書く</button>
-       ${!info || !info.is_paid_leave ? `<button type="button" class="secondary" data-mark-rest="${dateStr}" style="margin-top:6px;">今日は休みとして登録する</button>` : ''}`;
+       <button type="button" class="secondary" data-open-input="${dateStr}">日報を書く</button>`;
 
   detailEl.innerHTML = `
     <div class="card">
@@ -8637,48 +8644,69 @@ async function loadDailyReportNeedsReviewAdmin() {
       const wrap = document.createElement('div');
       wrap.className = 'card';
       wrap.style.marginBottom = '10px';
-      const memberLines = g.rows.map((r) => `
-        <div class="field-row">
-          <span>${r.employee_name}</span>
-          <span>${r.work_type}${r.overtime_hours != null ? ' 残業' + r.overtime_hours + 'h' : ''}${r.is_early_commute ? ' 通勤早出あり' : ''}${r.is_commute_overtime ? ' 通勤残業あり' : ''}</span>
-        </div>
-      `).join('');
-      const issueTexts = [...new Set(g.rows.flatMap((r) => (r.consistency_issues || []).map((iss) => iss.message)))];
-      wrap.innerHTML = `
-        <div class="row1"><span>${g.report_date}</span><span>${g.site_name || ''}</span></div>
-        ${memberLines}
-        ${issueTexts.map((t) => `<div class="mini-tag danger" style="display:block;margin-top:4px;">⚠ ${t}</div>`).join('')}
-        <div class="button-row" style="margin-top:10px;">
-          ${g.rows.map((r) => `<button type="button" class="secondary" data-ack-id="${r.id}">${r.employee_name}を確認済みにする</button>`).join('')}
-        </div>
-        <div class="button-row">
-          ${g.rows.map((r) => `<button type="button" class="link" data-correct-id="${r.id}">${r.employee_name}へ修正依頼</button>`).join('')}
-        </div>
-      `;
+      // §3: 判断に必要な情報(社員番号・対象日・日報現場・配置現場・勤務区分・人工・提出日時・理由)を
+      // 出し、各日報に【問題なしとして確定】【修正依頼】【日報を取消】を用意する。
+      const memberLines = g.rows.map((r) => {
+        const siteMismatch = r.assignment_site && r.site_name && r.assignment_site !== r.site_name;
+        return `
+        <div class="card" style="margin-top:8px;padding:10px;background:var(--surface-2,rgba(255,255,255,0.03));">
+          <div class="row1"><span style="font-weight:700;">${r.employee_name}</span><span class="mini-tag">${r.employee_code}</span></div>
+          <div class="field-row"><span>日報現場</span><span>${r.site_name || '(未設定)'}</span></div>
+          <div class="field-row"><span>配置現場</span><span>${r.assignment_site || '(配置なし)'}${siteMismatch ? ' <span class="mini-tag danger">不一致</span>' : ''}</span></div>
+          <div class="field-row"><span>勤務区分 / 人工</span><span>${r.work_type || '-'} / ${Number(r.headcount || 0)}人工${r.overtime_hours ? ' ・残業' + r.overtime_hours + 'h' : ''}</span></div>
+          <div class="field-row"><span>提出日時</span><span>${r.submitted_at ? new Date(r.submitted_at).toLocaleString('ja-JP') : '-'}</span></div>
+          <div class="mini-tag danger" style="display:block;margin-top:4px;">⚠ ${(r.consistency_issues || []).map((iss) => iss.message).join(' / ') || r.review_reason || '要確認'}</div>
+          <div class="button-row" style="margin-top:8px;">
+            <button type="button" class="secondary" data-ack-id="${r.id}">問題なしとして確定</button>
+            <button type="button" class="link" data-correct-id="${r.id}">修正依頼</button>
+            <button type="button" class="link" data-cancel-id="${r.id}" style="color:var(--danger);">日報を取消</button>
+          </div>
+        </div>`;
+      }).join('');
+      wrap.innerHTML = `<div class="row1"><span style="font-weight:700;">${g.report_date}</span><span>${g.site_name || ''}</span></div>${memberLines}`;
       list.appendChild(wrap);
     });
+    // 問題なしとして確定 → report_status=confirmed(要確認一覧から消える)。
     list.querySelectorAll('[data-ack-id]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         btn.disabled = true;
         try {
-          await rpc('admin_resolve_daily_report_review', { p_admin_employee_code: session.employeeCode, p_daily_report_id: Number(btn.dataset.ackId), p_action: 'acknowledge', p_reason: null });
+          await rpc('admin_confirm_daily_reports', { p_admin_employee_code: session.employeeCode, p_daily_report_ids: [Number(btn.dataset.ackId)], p_action: 'confirmed', p_reason: null });
           loadDailyReportNeedsReviewAdmin();
-        } catch (e) { btn.disabled = false; }
+        } catch (e) { alert(e.message || '確定に失敗しました。'); btn.disabled = false; }
       });
     });
+    // 修正依頼 → 本人へ差し戻し(rejected)。本人HOMEの「今日やること」へ表示され理由が通知される。
     list.querySelectorAll('[data-correct-id]').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        const reason = window.prompt('修正依頼の理由を入力してください。');
+        const reason = window.prompt('修正依頼の理由を入力してください（本人へ通知されます）。');
         if (!reason || !reason.trim()) return;
         btn.disabled = true;
         try {
           await rpc('admin_resolve_daily_report_review', { p_admin_employee_code: session.employeeCode, p_daily_report_id: Number(btn.dataset.correctId), p_action: 'request_correction', p_reason: reason.trim() });
           loadDailyReportNeedsReviewAdmin();
-        } catch (e) { btn.disabled = false; }
+        } catch (e) { alert(e.message || '修正依頼に失敗しました。'); btn.disabled = false; }
+      });
+    });
+    // 日報を取消 → 論理取消(集計・人工・Spreadsheet反映の対象外、監査ログ保持)。
+    list.querySelectorAll('[data-cancel-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!window.confirm('この日報を取り消しますか？\n\n取消すと、集計・人工・Spreadsheet反映の対象から除外されます。\n履歴には「取消済み」として残ります。')) return;
+        const reason = window.prompt('取消理由を入力してください。');
+        if (reason === null) return;
+        if (!reason.trim()) { alert('取消理由を入力してください。'); return; }
+        btn.disabled = true;
+        try {
+          await rpc('admin_cancel_daily_report_by_id', { p_admin_employee_code: session.employeeCode, p_report_id: Number(btn.dataset.cancelId), p_reason: reason.trim() });
+          loadDailyReportNeedsReviewAdmin();
+        } catch (e) { alert(e.message || '取消に失敗しました。'); btn.disabled = false; }
       });
     });
   } catch (e) {
-    list.innerHTML = '<div class="empty-state">読み込みに失敗しました</div>';
+    // §4: 取得失敗と0件を混同しない。
+    list.innerHTML = '<div class="empty-state" style="color:var(--danger);">読み込みに失敗しました。</div><button type="button" class="secondary" id="nr-retry" style="margin-top:8px;">再読み込み</button>';
+    const rb = document.getElementById('nr-retry');
+    if (rb) rb.addEventListener('click', () => loadDailyReportNeedsReviewAdmin());
   }
 }
 
@@ -11388,12 +11416,22 @@ function init() {
     const type = e.target.value;
     document.getElementById('daily-report-target-employee-wrap').style.display = type === 'employee' ? 'block' : 'none';
     document.getElementById('daily-report-target-worker-wrap').style.display = type === 'subcontractor' ? 'block' : 'none';
+    // §6: 外注（応援）モードでは通常の社員日報フォームを完全に非表示にし、外注専用フォームだけ出す。
+    const isSupport = type === 'subcontractor_support';
+    const normalForm = document.getElementById('daily-report-normal-form');
+    if (normalForm) normalForm.style.display = isSupport ? 'none' : '';
+    if (isSupport) {
+      dailyReportTarget = { type: 'subcontractor_support', employeeCode: null, employeeName: null, subcontractorWorkerId: null, workerName: null };
+      loadDrScSection(document.getElementById('daily-report-date').value);
+      return;
+    }
     if (type === 'self') {
       dailyReportTarget = { type: 'self', employeeCode: session.employeeCode, employeeName: session.employeeName, subcontractorWorkerId: null, workerName: null };
       loadDailyReportForDate(document.getElementById('daily-report-date').value);
     } else {
       dailyReportTarget = { type, employeeCode: null, employeeName: null, subcontractorWorkerId: null, workerName: null };
     }
+    loadDrScSection(document.getElementById('daily-report-date').value);
   });
   document.getElementById('daily-report-target-employee-search').addEventListener('input', async (e) => {
     const q = e.target.value.trim();

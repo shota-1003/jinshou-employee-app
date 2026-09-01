@@ -2649,9 +2649,11 @@ function openImageZoom(url) {
 // 領収書原本(Google Drive 非公開)を Edge Function receipt-image 経由で認証付き取得し、
 // Blob→objectURL でインライン表示する。Drive URL も Google 認証情報もフロントへ出さない。
 // container 内の img.receipt-proxy-thumb[data-document-id] を対象に、サムネイル表示＋タップ拡大を配線する。
-async function fetchReceiptObjectUrl(documentId) {
+// Edge Function receipt-image を認証付きで呼び、画像 Blob の objectURL を返す(汎用)。
+// query 例: 'document_id=12'(領収書) / 'kind=qualification_photo&id=34'(資格証・免許証・健診)。
+async function fetchSecureImageObjectUrl(query) {
   const session = getSession();
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/receipt-image?document_id=${encodeURIComponent(documentId)}`, {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/receipt-image?${query}`, {
     headers: {
       apikey: SUPABASE_ANON_KEY,
       Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
@@ -2659,9 +2661,44 @@ async function fetchReceiptObjectUrl(documentId) {
       'x-device-token': currentDeviceToken || '',
     },
   });
-  if (!res.ok) throw new Error('receipt_fetch_' + res.status);
+  if (!res.ok) throw new Error('secure_image_fetch_' + res.status);
   const blob = await res.blob();
   return URL.createObjectURL(blob);
+}
+async function fetchReceiptObjectUrl(documentId) {
+  return fetchSecureImageObjectUrl(`document_id=${encodeURIComponent(documentId)}`);
+}
+
+// 資格証/免許証/健診結果などの Drive 画像を、img.secure-proxy-thumb[data-secure-kind][data-secure-id]
+// に対してプロキシ経由で読み込み、タップ拡大を配線する(領収書と同じ仕組みの汎用版)。
+function hydrateSecureImages(container) {
+  if (!container) return;
+  container.querySelectorAll('img.secure-proxy-thumb[data-secure-kind][data-secure-id]').forEach((img) => {
+    if (img.dataset.hydrated) return;
+    img.dataset.hydrated = '1';
+    const q = `kind=${encodeURIComponent(img.dataset.secureKind)}&id=${encodeURIComponent(img.dataset.secureId)}`;
+    fetchSecureImageObjectUrl(q)
+      .then((objUrl) => { img.src = objUrl; img.dataset.zoom = objUrl; img.addEventListener('click', () => openImageZoom(objUrl)); img.style.cursor = 'zoom-in'; })
+      .catch(() => { const note = document.createElement('div'); note.className = 'hint-inline'; note.textContent = '画像を表示できませんでした'; img.replaceWith(note); });
+  });
+  // PDF はプロキシ経由でBlob取得し新規タブで開く(Drive URL/認証情報を出さない)。
+  container.querySelectorAll('button.secure-proxy-pdf[data-secure-kind][data-secure-id]').forEach((btn) => {
+    if (btn.dataset.wired) return; btn.dataset.wired = '1';
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; const old = btn.textContent; btn.textContent = '読み込み中...';
+      try { const u = await fetchSecureImageObjectUrl(`kind=${encodeURIComponent(btn.dataset.secureKind)}&id=${encodeURIComponent(btn.dataset.secureId)}`); window.open(u, '_blank'); }
+      catch (e) { alert('PDFを表示できませんでした。'); }
+      finally { btn.disabled = false; btn.textContent = old; }
+    });
+  });
+}
+// 資格証/健診などの Drive 画像・PDF を、画面内サムネイル＋タップ拡大／PDFは新規タブで開く形にする共通HTML。
+function secureFileBlockHtml(photoKind, pdfKind, refId, hasPhoto, hasPdf) {
+  let h = '';
+  if (hasPhoto) h += `<img class="secure-proxy-thumb" data-secure-kind="${photoKind}" data-secure-id="${refId}" alt="画像" loading="lazy">`;
+  if (hasPdf) h += `<button type="button" class="secondary secure-proxy-pdf" data-secure-kind="${pdfKind}" data-secure-id="${refId}" style="margin-left:6px; vertical-align:top;">PDFを開く</button>`;
+  if (!hasPhoto && !hasPdf) return '';
+  return `<div class="secure-file-block" style="margin-top:8px;">${h}</div>`;
 }
 
 function hydrateReceiptImages(container) {
@@ -4222,13 +4259,11 @@ async function loadMyQualifications() {
           <div class="row1"><span>${q.category === 'license' ? '<span class="mini-tag info">免許</span> ' : ''}${q.qualification_name}</span><span class="status-badge ${q.status === 'active' ? 'done' : (q.status === 'rejected' ? 'rejected' : '')}">${QUAL_STATUS_LABEL[q.status] || q.status}</span></div>
           <div class="row2">${expiryText}</div>
           <div class="row2">${q.qualification_number ? `番号: ${q.qualification_number}` : ''}</div>
-          <div style="margin-top:8px;">
-            ${q.certificate_photo_url ? `<a class="file-link" href="${q.certificate_photo_url}" target="_blank" rel="noopener">写真を見る</a>` : ''}
-            ${q.certificate_pdf_url ? `<a class="file-link" href="${q.certificate_pdf_url}" target="_blank" rel="noopener">PDFを見る</a>` : ''}
-          </div>
+          ${secureFileBlockHtml('qualification_photo', 'qualification_pdf', q.id, !!q.certificate_photo_url, !!q.certificate_pdf_url)}
         </div>
       `;
     }).join('');
+    hydrateSecureImages(listEl);
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }
@@ -4261,10 +4296,7 @@ async function loadQualAdminList() {
           <div class="row2">${expiryText}</div>
           <div class="row2">${q.qualification_number ? `番号: ${q.qualification_number}` : ''}</div>
           ${q.note ? `<div class="row2">備考: ${q.note}</div>` : ''}
-          <div style="margin-top:8px;">
-            ${q.certificate_photo_url ? `<a class="file-link" href="${q.certificate_photo_url}" target="_blank" rel="noopener">写真を見る</a>` : ''}
-            ${q.certificate_pdf_url ? `<a class="file-link" href="${q.certificate_pdf_url}" target="_blank" rel="noopener">PDFを見る</a>` : ''}
-          </div>
+          ${secureFileBlockHtml('qualification_photo', 'qualification_pdf', q.id, !!q.certificate_photo_url, !!q.certificate_pdf_url)}
           ${q.status === 'pending_verification' ? `
             <div class="qual-verify-btns">
               <button type="button" class="approve-btn">有効化する</button>
@@ -4280,6 +4312,7 @@ async function loadQualAdminList() {
     listEl.querySelectorAll('.reject-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => doVerifyQualification(e.target.closest('.qual-item').dataset.id, 'rejected'));
     });
+    hydrateSecureImages(listEl);
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }
@@ -5762,9 +5795,11 @@ async function loadEmployeeDetailQual() {
     listEl.innerHTML = mine.map((q) => `
       <div class="qual-item">
         <div class="row1"><span>${q.category === 'license' ? '<span class="mini-tag info">免許</span> ' : ''}${q.qualification_name}</span><span class="status-badge ${q.status === 'active' ? 'done' : (q.status === 'rejected' ? 'rejected' : '')}">${QUAL_STATUS_LABEL[q.status] || q.status}</span></div>
-        <div class="row2">${q.expiry_date ? `有効期限: ${new Date(q.expiry_date).toLocaleDateString('ja-JP')}` : ''}</div>
+        <div class="row2">${q.expiry_date ? `有効期限: ${new Date(q.expiry_date).toLocaleDateString('ja-JP')}${q.days_until_expiry != null ? `(残り${q.days_until_expiry}日)` : ''}` : '期限未登録'}</div>
+        ${secureFileBlockHtml('qualification_photo', 'qualification_pdf', q.id, !!q.certificate_photo_url, !!q.certificate_pdf_url)}
       </div>
     `).join('');
+    hydrateSecureImages(listEl);
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }
@@ -6310,9 +6345,10 @@ async function loadMyHealthList() {
         <div class="row2">${h.institution || ''}</div>
         <div class="row2">${h.next_due_date ? `次回予定: ${new Date(h.next_due_date).toLocaleDateString('ja-JP')}` : ''}${h.needs_retest ? '・再検査あり' : ''}</div>
         <div class="row2">${h.note || ''}</div>
-        ${h.result_file_url ? `<a class="file-link" href="${h.result_file_url}" target="_blank" rel="noopener">結果を見る</a>` : ''}
+        ${secureFileBlockHtml('health', 'health', h.id, !!h.result_file_url, false)}
       </div>
     `).join('');
+    hydrateSecureImages(listEl);
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }

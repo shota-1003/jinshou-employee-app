@@ -410,7 +410,7 @@ button.link {
 /* 経費承認画面などで領収書原本(Edge Function receipt-image 経由)をサムネイル表示する。
    読み込み完了までは薄い枠のプレースホルダーを見せ、タップで拡大(openImageZoom)する。 */
 .receipt-thumb-wrap { margin-top: 8px; }
-.receipt-proxy-thumb {
+.receipt-proxy-thumb, .secure-proxy-thumb {
   width: 88px; height: 88px; object-fit: cover; border-radius: var(--radius-sm);
   border: 1px solid var(--border); background: var(--surface-2, rgba(128,128,128,0.12));
   display: inline-block; vertical-align: top; min-width: 88px;

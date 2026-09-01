@@ -2770,9 +2770,24 @@ async function renderMyPaymentCard(requestId, head) {
       <div class="mrd-payment-row"><span>支払済み</span><span>${yen(head.paid_total)}</span></div>
       <div class="mrd-payment-row emphasis"><span>未払い</span><span>${yen(head.unpaid_total)}</span></div>
       ${Number(head.unconfirmed_total) > 0 ? `<div class="mrd-payment-row emphasis"><span>受取確認待ち</span><span>${yen(head.unconfirmed_total)}</span></div>` : ''}
+      <div id="mrd-payment-schedule" class="mrd-payment-row"></div>
       <div id="mrd-payment-list"></div>
     </div>
   `;
+  try {
+    const schRows = await rpc('get_my_expense_payment_schedule', { p_employee_code: session.employeeCode, p_employee_request_id: Number(requestId) });
+    const s = schRows && schRows[0];
+    const schEl = document.getElementById('mrd-payment-schedule');
+    if (s && schEl) {
+      if (s.payment_status === 'paid') {
+        schEl.innerHTML = `<span>精算状況</span><span class="status-badge done">精算完了${s.paid_at ? '（' + new Date(s.paid_at).toLocaleDateString('ja-JP') + '）' : ''}</span>`;
+      } else if (s.scheduled_payment_date) {
+        schEl.innerHTML = `<span>精算状況</span><span class="mini-tag info">${new Date(s.scheduled_payment_date).toLocaleDateString('ja-JP')} 精算予定</span>`;
+      } else {
+        schEl.innerHTML = '<span>精算状況</span><span class="mini-tag">承認済み（精算予定日は調整中）</span>';
+      }
+    }
+  } catch (e) { /* 予定情報が無ければ表示しない */ }
   try {
     const payments = await rpc('get_my_expense_payments', { p_employee_code: session.employeeCode, p_employee_request_id: Number(requestId) });
     const listEl = document.getElementById('mrd-payment-list');
@@ -5465,6 +5480,27 @@ async function openExpensePayment(requestId, employeeName, employeeCode) {
   } catch (e) {
     showError('ep-error', e.message || '状態の取得に失敗しました。');
   }
+  loadExpensePaymentSchedule(requestId);
+}
+
+// 精算予定日の現在値を表示する(承認済み→精算予定→精算完了の状態)。
+async function loadExpensePaymentSchedule(requestId) {
+  const session = getSession();
+  const el = document.getElementById('ep-schedule-current');
+  if (!el) return;
+  try {
+    const rows = await rpc('admin_get_expense_payment_schedule', { p_admin_employee_code: session.employeeCode, p_employee_request_id: Number(requestId) });
+    const s = rows && rows[0];
+    if (!s) { el.textContent = ''; return; }
+    if (s.payment_status === 'paid') {
+      el.innerHTML = `<span class="status-badge done">精算完了${s.paid_at ? '（' + new Date(s.paid_at).toLocaleDateString('ja-JP') + '）' : ''}</span>`;
+    } else if (s.scheduled_payment_date) {
+      el.innerHTML = `現在の精算予定日: <strong>${new Date(s.scheduled_payment_date).toLocaleDateString('ja-JP')}</strong>`;
+      document.getElementById('ep-schedule-date').value = String(s.scheduled_payment_date).slice(0, 10);
+    } else {
+      el.textContent = '精算予定日は未設定です。';
+    }
+  } catch (e) { el.textContent = ''; }
 }
 
 async function doSubmitExpensePayment() {
@@ -11401,6 +11437,17 @@ function init() {
   });
   document.getElementById('employee-detail-leave-method').addEventListener('change', updateEmployeeDetailStatutoryHint);
   document.getElementById('ep-submit').addEventListener('click', doSubmitExpensePayment);
+  document.getElementById('ep-schedule-save').addEventListener('click', async () => {
+    const session = getSession();
+    if (!expensePaymentTarget) return;
+    const d = document.getElementById('ep-schedule-date').value;
+    if (!d) { showError('ep-error', '精算予定日を入力してください。'); return; }
+    hideError('ep-error');
+    try {
+      await rpc('admin_set_expense_payment_schedule', { p_admin_employee_code: session.employeeCode, p_employee_request_id: Number(expensePaymentTarget.requestId), p_scheduled_payment_date: d });
+      await loadExpensePaymentSchedule(expensePaymentTarget.requestId);
+    } catch (e) { showError('ep-error', e.message || '精算予定日の設定に失敗しました。'); }
+  });
 
   document.getElementById('expense-bulk-receipts-input').addEventListener('change', (e) => {
     handleBulkReceiptFiles(e.target.files);

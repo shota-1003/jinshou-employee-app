@@ -5706,6 +5706,7 @@ async function openEmployeeEditBasic() {
   document.getElementById('employee-edit-furigana').value = '';
   document.getElementById('employee-edit-birth').value = '';
   document.getElementById('employee-edit-department').value = '';
+  document.getElementById('employee-edit-headcount-category').value = '';
   hideError('employee-edit-error');
   showScreen('employee-edit-basic');
   // 現在値の読み込み完了までは保存ボタンを無効化する。以前ここが無防備だったため、
@@ -5726,6 +5727,7 @@ async function openEmployeeEditBasic() {
       document.getElementById('employee-edit-birth').value = p.birth_date ? p.birth_date.slice(0, 10) : '';
       document.getElementById('employee-edit-show-birthday').checked = p.show_birthday_on_calendar !== false;
       document.getElementById('employee-edit-department').value = p.department || '';
+      document.getElementById('employee-edit-headcount-category').value = p.headcount_category || '';
       document.getElementById('employee-edit-is-driver').checked = !!p.is_driver;
       document.getElementById('employee-edit-can-overtime').checked = !!p.can_overtime;
       document.getElementById('employee-edit-can-site-duty').checked = !!p.can_input_site_duty;
@@ -5763,6 +5765,8 @@ async function doSaveEmployeeBasic() {
       p_can_input_qualification: document.getElementById('employee-edit-can-qualification').checked,
       p_can_backdate_entertainment_preapproval: document.getElementById('employee-edit-can-backdate-ent').checked,
       p_show_birthday_on_calendar: document.getElementById('employee-edit-show-birthday').checked,
+      // 空文字は「自動判定へ戻す」。RPC側がその意味で受け取る(nullは変更しない)。
+      p_headcount_category: document.getElementById('employee-edit-headcount-category').value,
     });
     showScreen('employee-detail');
     await loadEmployeeDetailBasic();

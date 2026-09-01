@@ -9226,7 +9226,13 @@ async function loadDrmBreakdown() {
       btn.addEventListener('click', () => openDailyReportPeople(btn.dataset.bucket));
     });
     return b;
-  } catch (e) { el.innerHTML = ''; }
+  } catch (e) {
+    // §4: 取得失敗は空表示にせず、古い件数も残さず、明示エラー+再読み込み。
+    el.innerHTML = '<div class="card drm-breakdown-card"><div class="hint" style="color:var(--danger);">内訳の読み込みに失敗しました。</div><button type="button" class="secondary" id="drm-bd-retry" style="margin-top:8px;">再読み込み</button></div>';
+    const rb = document.getElementById('drm-bd-retry');
+    if (rb) rb.addEventListener('click', () => loadDrmSummary());
+    return null;
+  }
 }
 
 async function loadDrmSummary() {
@@ -9253,7 +9259,10 @@ async function loadDrmSummary() {
       btn.addEventListener('click', () => applyDrmCardFilter(btn.dataset.card));
     });
   } catch (e) {
-    grid.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+    // §4: 取得失敗はカードの古い件数を残さず、明示エラー+再読み込み導線。
+    grid.innerHTML = '<div class="hint" style="color:var(--danger);">読み込みに失敗しました。</div><button type="button" class="secondary" id="drm-sum-retry" style="margin-top:8px;">再読み込み</button>';
+    const rb = document.getElementById('drm-sum-retry');
+    if (rb) rb.addEventListener('click', () => loadDrmSummary());
   }
 }
 
@@ -9277,8 +9286,10 @@ async function loadDailyReportPeople() {
   const listEl = document.getElementById('drp-list');
   const subEl = document.getElementById('drp-sub');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  subEl.textContent = '';
   try {
     const rows = await rpc('admin_list_daily_report_people', { p_admin_employee_code: session.employeeCode, p_date: date, p_bucket: bucket });
+    // §4: 取得成功して初めて件数を出す。0件は「対象者はいません」と明示(取得失敗と混同しない)。
     subEl.textContent = `${(rows || []).length}名`;
     if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">対象者はいません。</div>'; return; }
     listEl.innerHTML = rows.map((r) => `
@@ -9289,7 +9300,11 @@ async function loadDailyReportPeople() {
       </div>
     `).join('');
   } catch (e) {
-    listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+    // §4: 取得失敗は 0件 と絶対に混同しない。古い件数も残さず、再読み込み導線を出す。
+    subEl.textContent = '取得エラー';
+    listEl.innerHTML = '<div class="hint" style="color:var(--danger);">読み込みに失敗しました。通信状況をご確認ください。</div><button type="button" class="secondary" id="drp-retry" style="margin-top:8px;">再読み込み</button>';
+    const rb = document.getElementById('drp-retry');
+    if (rb) rb.addEventListener('click', () => loadDailyReportPeople());
   }
 }
 
@@ -9489,7 +9504,9 @@ function renderDrmAll() {
 // 「原本(本人が提出した内容)」は表示専用、「スプレッドシートへ反映する内容」は
 // 管理者が調整できる(reflect_override_*)。既にloadDailyReportManagementListで
 // 取得済みのdrmRowsから該当グループを探すだけで、追加のRPC呼び出しは不要。
+let currentDrdGroupKey = null;
 async function openDailyReportDetail(groupKey) {
+  currentDrdGroupKey = groupKey;
   const rows = drmRows.filter((r) => drmGroupKey(r) === groupKey).sort((a, b) => (a.entry_slot || 0) - (b.entry_slot || 0));
   showScreen('daily-report-detail');
   if (rows.length === 0) {
@@ -9502,7 +9519,15 @@ async function openDailyReportDetail(groupKey) {
   const f = rows[0];
   const personName = drmWorkerLabel(f);
   document.getElementById('drd-title').textContent = `${personName}・${f.report_date}`;
-  document.getElementById('drd-meta').textContent = `提出状況: ${DRM_STATUS_LABEL[f.report_status] || f.report_status}`;
+  // 外注(応援)は 合計人数・合計人工 を要約表示(§9)。取消済み行は合計から除外。
+  const activeRows = rows.filter((r) => r.report_status !== 'cancelled');
+  let metaText = `提出状況: ${DRM_STATUS_LABEL[f.report_status] || f.report_status}`;
+  if (f.worker_type === 'subcontractor') {
+    const totalPeople = activeRows.reduce((a, r) => a + (r.subcontractor_headcount != null ? Number(r.subcontractor_headcount) : 0), 0);
+    const totalManDays = activeRows.reduce((a, r) => a + Number(r.headcount || 0), 0);
+    metaText = `外注（応援）｜合計 ${totalPeople}名 / ${totalManDays}人工　${metaText}`;
+  }
+  document.getElementById('drd-meta').textContent = metaText;
 
   document.getElementById('drd-slots').innerHTML = rows.map((r, idx) => {
     const effWorkType = r.reflect_override_work_type || r.work_type;
@@ -9512,11 +9537,19 @@ async function openDailyReportDetail(groupKey) {
       <div class="card" data-slot-id="${r.id}">
         <div class="form-title" style="font-size:15px;">現場${idx + 1}(スロット${r.entry_slot || idx + 1})</div>
         <div class="field-group">
-          <div class="field-row"><span class="field-label">【原本】現場</span><span class="field-value">${r.site_name || '-'}</span></div>
+          ${f.worker_type === 'subcontractor' ? `
+          <div class="field-row"><span class="field-label">外注会社</span><span class="field-value">${f.subcontractor_company_name || '(会社未設定)'}</span></div>` : ''}
+          <div class="field-row"><span class="field-label">【原本】現場</span><span class="field-value">${r.site_name || r.site_raw_name || '-'}</span></div>
           <div class="field-row"><span class="field-label">【原本】勤務区分</span><span class="field-value">${r.work_type || '-'}${r.is_leader ? '・リーダー' : ''}${r.is_night_shift ? '・夜勤' : ''}</span></div>
-          <div class="field-row"><span class="field-label">スプレッドシート反映</span><span class="field-value">${r.reflected_to_sheet_at ? `反映済み(${new Date(r.reflected_to_sheet_at).toLocaleString('ja-JP')})` : '未反映'}</span></div>
+          ${f.worker_type === 'subcontractor' ? `
+          <div class="field-row"><span class="field-label">人数</span><span class="field-value">${r.subcontractor_headcount != null ? Number(r.subcontractor_headcount) + '名' : '-'}</span></div>` : ''}
+          <div class="field-row"><span class="field-label">人工</span><span class="field-value">${Number(r.headcount || 0)}人工</span></div>
+          <div class="field-row"><span class="field-label">スプレッドシート反映</span><span class="field-value">${r.report_status === 'cancelled' ? '対象外(取消済み)' : (r.reflected_to_sheet_at ? `反映済み(${new Date(r.reflected_to_sheet_at).toLocaleString('ja-JP')})` : '未反映')}</span></div>
           ${r.reflect_override_work_type ? `<div class="field-row"><span class="field-label">反映値を調整</span><span class="field-value">${r.reflect_override_by || ''} ${r.reflect_override_at ? new Date(r.reflect_override_at).toLocaleString('ja-JP') : ''}${r.reflect_override_reason ? `(${r.reflect_override_reason})` : ''}</span></div>` : ''}
         </div>
+        ${r.report_status === 'cancelled'
+          ? '<div class="mini-tag muted">この行は取消済みです(集計・人工・シート反映の対象外)</div>'
+          : `<button type="button" class="secondary drd-cancel-row" data-report-id="${r.id}" data-date="${r.report_date}" style="color:var(--danger);border-color:var(--danger);">この日報を取消する</button>`}
         <div class="form-title" style="font-size:14px;">スプレッドシートへ反映する内容</div>
         <label>現場</label>
         <input type="text" class="drd-site-search" data-slot-id="${r.id}" placeholder="現場名で検索" value="${r.reflect_override_site_name || r.site_name || ''}">
@@ -9557,6 +9590,31 @@ async function openDailyReportDetail(groupKey) {
 
 function wireDailyReportDetailSlots(rows) {
   const slotsEl = document.getElementById('drd-slots');
+  // §10: 管理者が誤登録の日報行(外注含む)を id 指定で論理取消する。取消後は集計・人工・
+  // Spreadsheet 反映対象から除外され、監査ログが残る。
+  slotsEl.querySelectorAll('.drd-cancel-row').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const reportId = Number(btn.dataset.reportId);
+      if (!window.confirm('この日報を取り消しますか？\n\n取消すと、出勤・人工・給与・Spreadsheet反映の集計対象から除外されます。\n履歴には「取消済み」として残ります。')) return;
+      const reason = window.prompt('取消理由を入力してください（例: 誤って登録した / 会社・人数を間違えた など）');
+      if (reason === null) return;
+      if (!reason.trim()) { alert('取消理由を入力してください。'); return; }
+      btn.disabled = true;
+      try {
+        const session = getSession();
+        const res = await rpc('admin_cancel_daily_report_by_id', { p_admin_employee_code: session.employeeCode, p_report_id: reportId, p_reason: reason.trim() });
+        const hadReflected = Array.isArray(res) && res[0] && res[0].out_had_reflected;
+        alert('この日報を取消しました。集計・人工・Spreadsheet反映の対象から除外されます。' + (hadReflected ? '\n\n※既にシート反映済みだったため、次回の反映処理で訂正されます。' : ''));
+        // 一覧(drmRows)を再取得してから同じ詳細を開き直す(取消済み表示に更新)。
+        await loadDailyReportManagementList();
+        if (currentDrdGroupKey) openDailyReportDetail(currentDrdGroupKey);
+        else showScreen('daily-report-management');
+      } catch (e) {
+        alert(e.message || '取消に失敗しました。');
+        btn.disabled = false;
+      }
+    });
+  });
   slotsEl.querySelectorAll('.drd-worktype').forEach((row) => {
     row.querySelectorAll('.filter-chip').forEach((btn) => {
       btn.addEventListener('click', () => {

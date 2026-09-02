@@ -38,6 +38,18 @@ const DEVICE_AUTH_KEY = 'jinshou_device_auth'; // localStorage({employeeCode, to
 
 let currentDeviceToken = null; // このタブで現在有効な端末トークン(rpc()が毎回ヘッダーへ載せる)
 
+// 2026-09-02(ユーザー指示: Production障害の可視化マップ検知、共通モジュール化・重複禁止)。
+// 実装は共通webapp/lib/client-error-reporter.js(index.htmlでこのファイルより前に読込済み)へ
+// 集約し、画面ごとの複製をしない。
+const EMPLOYEE_APP_AGENT_NAME = 'jinshou-employee-app-agent';
+window.ClientErrorReporter.init({
+  supabaseUrl: SUPABASE_URL,
+  supabaseAnonKey: SUPABASE_ANON_KEY,
+  agentName: EMPLOYEE_APP_AGENT_NAME,
+  getEmployeeCode: () => { const s = getSession(); return (s && s.employeeCode) || null; },
+  getDeviceToken: () => currentDeviceToken,
+});
+
 async function rpc(name, params) {
   const headers = {
     apikey: SUPABASE_ANON_KEY,
@@ -66,6 +78,10 @@ async function rpc(name, params) {
         showScreen('login');
         showError('login-error', message === 'このアカウントは現在ご利用いただけません' ? message : 'ログイン状態が無効になりました。もう一度ログインしてください。');
       }
+    } else {
+      // 2026-09-02: セッション失効(想定内の通常フロー)以外は、可視化マップが検知できるよう
+      // 実際のProductionエラーとして報告する。
+      window.ClientErrorReporter.reportHttpError(`rpc/${name}`, res.status, message);
     }
     throw new Error(message);
   }
@@ -9345,22 +9361,35 @@ async function renderDrmDaySummary() {
   if (!el) return;
   const session = getSession();
   try {
-    const rows = await rpc('admin_search_daily_reports', {
-      p_admin_employee_code: session.employeeCode, p_date_from: drmSelectedDate, p_date_to: drmSelectedDate,
-      p_employee_code: null, p_site_id: null, p_validation_status: null,
-      p_worker_type: null, p_subcontractor_company_id: null, p_report_status: null,
-    });
+    // 内訳バケット(admin_daily_report_breakdown)を単一の正として、社員の「提出済み(対象内)」件数を得る。
+    const [rows, bdRows] = await Promise.all([
+      rpc('admin_search_daily_reports', {
+        p_admin_employee_code: session.employeeCode, p_date_from: drmSelectedDate, p_date_to: drmSelectedDate,
+        p_employee_code: null, p_site_id: null, p_validation_status: null,
+        p_worker_type: null, p_subcontractor_company_id: null, p_report_status: null,
+      }),
+      rpc('admin_daily_report_breakdown', { p_admin_employee_code: session.employeeCode, p_date: drmSelectedDate }).catch(() => []),
+    ]);
+    const bd = (bdRows && bdRows[0]) || {};
+    // 社員は「同一社員×同一日=1名」で数える(drmGroupKeyが社員は date|employee|employee_code)。
     const groups = new Map();
     rows.forEach((r) => { const k = drmGroupKey(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
     const cards = Array.from(groups.values()).map((g) => ({ worker: g[0].worker_type, status: (g.every((r) => r.report_status === 'cancelled') ? 'cancelled' : (g.find((r) => r.report_status !== 'cancelled') || g[0]).report_status) }));
     const active = cards.filter((c) => c.status !== 'cancelled');
-    const cnt = (pred) => active.filter(pred).length;
+    const emp = active.filter((c) => c.worker === 'employee');
+    const sc = active.filter((c) => c.worker === 'subcontractor');
+    // 通常提出=submitted/confirmed(通常日報は自動確定するため二重定義しない)。差し戻しは要確認側。
+    const empSubmitted = emp.filter((c) => c.status === 'submitted' || c.status === 'confirmed').length;
+    const empRejected = emp.filter((c) => c.status === 'rejected').length;
+    const empDraft = emp.filter((c) => c.status === 'draft').length;
+    // 配置外(要確認)= 提出したが日報提出対象(配置あり)でない社員 = 提出者 − 対象内提出(bucket)。
+    const offAssign = Math.max(0, empSubmitted - Number(bd.target_submitted || 0));
     el.innerHTML = `
-      <div style="font-weight:700;margin-bottom:6px;">合計 ${active.length}件</div>
+      <div style="font-weight:700;margin-bottom:6px;">合計 ${active.length}件（社員 ${emp.length}名 / 外注 ${sc.length}件）</div>
       <div class="drm-day-sum-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;font-size:14px;overflow-wrap:anywhere;">
-        <span>社員 ${cnt((c) => c.worker === 'employee')}件</span><span>外注 ${cnt((c) => c.worker === 'subcontractor')}件</span>
-        <span>提出済み ${cnt((c) => c.status === 'submitted')}件</span><span>確認済み ${cnt((c) => c.status === 'confirmed')}件</span>
-        <span>差し戻し ${cnt((c) => c.status === 'rejected')}件</span><span>下書き ${cnt((c) => c.status === 'draft')}件</span>
+        <span>社員 提出済み ${empSubmitted}名</span><span>外注 ${sc.length}件</span>
+        ${offAssign > 0 ? `<span style="color:var(--warning,#e0a021);">└ うち配置外(要確認) ${offAssign}名</span><span></span>` : ''}
+        <span>差し戻し ${empRejected}名</span><span>下書き ${empDraft}名</span>
         <span>取消 ${cards.length - active.length}件</span>
       </div>`;
   } catch (e) { el.innerHTML = ''; }
@@ -9741,6 +9770,49 @@ function renderDrmAll() {
 // 管理者が調整できる(reflect_override_*)。既にloadDailyReportManagementListで
 // 取得済みのdrmRowsから該当グループを探すだけで、追加のRPC呼び出しは不要。
 let currentDrdGroupKey = null;
+// 日報詳細の「原本」表示: 社員が入力した給与・勤怠・手当に必要な全項目をグループ表示する。
+// 給与判定に直結するP0項目(現場/勤務区分/人工/リーダー/夜勤/残業/出張/100km/通勤/早出)は
+// false/0でも「あり/なし」を明示して未登録と区別する。副次項目は値がある時のみ表示する。
+function drdFieldRow(label, value) {
+  return `<div class="field-row"><span class="field-label">${label}</span><span class="field-value">${value}</span></div>`;
+}
+function drdEmployeeOriginalHtml(r, effWorkType, effLeader, effNight) {
+  const yn = (v) => (v ? 'あり' : 'なし');
+  const num = (v) => (v == null ? 0 : Number(v));
+  const site = r.site_name || r.site_raw_name || '-';
+  // 【勤務情報】P0: 常に表示
+  const work = [
+    drdFieldRow('現場', site),
+    drdFieldRow('勤務区分', (r.work_type || '-') + (r.is_leader ? '・リーダー' : '') + (r.is_night_shift ? '・夜勤' : '')),
+    drdFieldRow('人工', num(r.headcount) + '人工'),
+    drdFieldRow('リーダー/職長', yn(r.is_leader)),
+    drdFieldRow('夜勤', yn(r.is_night_shift)),
+    drdFieldRow('残業時間', num(r.overtime_hours) > 0 ? num(r.overtime_hours) + '時間' : 'なし'),
+  ].join('');
+  // 【勤怠・手当】P0 + 副次(値ありのみ)
+  const attend = [];
+  attend.push(drdFieldRow('早出', num(r.early_commute_hours) > 0 ? num(r.early_commute_hours) + '時間' : 'なし'));
+  attend.push(drdFieldRow('通勤時間外', num(r.commute_overtime_hours) > 0 ? num(r.commute_overtime_hours) + '時間' : 'なし'));
+  attend.push(drdFieldRow('100km以上', yn(r.is_over_100km)));
+  attend.push(drdFieldRow('出張', r.is_business_trip ? ('あり' + (r.is_overnight ? `（${num(r.overnight_nights)}泊）` : '')) : 'なし'));
+  if (r.is_business_trip && (r.business_trip_allowance_eligible || num(r.business_trip_allowance_amount) > 0)) {
+    attend.push(drdFieldRow('出張手当', (r.business_trip_allowance_eligible ? '対象' : '対象外') + (num(r.business_trip_allowance_amount) > 0 ? `（${num(r.business_trip_allowance_amount).toLocaleString()}円）` : '')));
+  }
+  if (r.is_transport) attend.push(drdFieldRow('運搬/交通', 'あり'));
+  if (r.is_field_duty) attend.push(drdFieldRow('現場作業', 'あり'));
+  if (r.is_sales) attend.push(drdFieldRow('営業', 'あり'));
+  if (r.is_out_of_prefecture || r.prefecture) attend.push(drdFieldRow('県外', r.prefecture || 'あり'));
+  if (r.is_absence) attend.push(drdFieldRow('欠勤', 'あり'));
+  // 【作業内容】
+  const content = [];
+  const memo = r.notes || r.note;
+  if (memo) content.push(drdFieldRow('備考', String(memo).replace(/</g, '&lt;')));
+  return `
+    <div class="field-subgroup"><div class="field-subhead">勤務情報</div>${work}</div>
+    <div class="field-subgroup"><div class="field-subhead">勤怠・手当</div>${attend.join('')}</div>
+    ${content.length ? `<div class="field-subgroup"><div class="field-subhead">作業内容</div>${content.join('')}</div>` : ''}`;
+}
+
 async function openDailyReportDetail(groupKey) {
   currentDrdGroupKey = groupKey;
   const rows = drmRows.filter((r) => drmGroupKey(r) === groupKey).sort((a, b) => (a.entry_slot || 0) - (b.entry_slot || 0));
@@ -9776,12 +9848,13 @@ async function openDailyReportDetail(groupKey) {
         <div class="form-title" style="font-size:15px;">現場${idx + 1}${rows.length > 1 ? `（${idx + 1}件目 / 全${rows.length}件）` : ''}</div>
         <div class="field-group">
           ${f.worker_type === 'subcontractor' ? `
-          <div class="field-row"><span class="field-label">外注会社</span><span class="field-value">${f.subcontractor_company_name || '(会社未設定)'}</span></div>` : ''}
-          <div class="field-row"><span class="field-label">【原本】現場</span><span class="field-value">${r.site_name || r.site_raw_name || '-'}</span></div>
-          <div class="field-row"><span class="field-label">【原本】勤務区分</span><span class="field-value">${r.work_type || '-'}${r.is_leader ? '・リーダー' : ''}${r.is_night_shift ? '・夜勤' : ''}</span></div>
-          ${f.worker_type === 'subcontractor' ? `
-          <div class="field-row"><span class="field-label">人数</span><span class="field-value">${r.subcontractor_headcount != null ? Number(r.subcontractor_headcount) + '名' : '-'}</span></div>` : ''}
+          <div class="field-row"><span class="field-label">外注会社</span><span class="field-value">${f.subcontractor_company_name || '(会社未設定)'}</span></div>
+          <div class="field-row"><span class="field-label">現場</span><span class="field-value">${r.site_name || r.site_raw_name || '-'}</span></div>
+          <div class="field-row"><span class="field-label">勤務区分</span><span class="field-value">${r.work_type || '-'}${r.is_night_shift ? '・夜勤' : ''}</span></div>
+          <div class="field-row"><span class="field-label">人数</span><span class="field-value">${r.subcontractor_headcount != null ? Number(r.subcontractor_headcount) + '名' : '-'}</span></div>
           <div class="field-row"><span class="field-label">人工</span><span class="field-value">${Number(r.headcount || 0)}人工</span></div>
+          ${r.notes || r.note ? `<div class="field-row"><span class="field-label">備考</span><span class="field-value">${String(r.notes || r.note).replace(/</g, '&lt;')}</span></div>` : ''}
+          ` : drdEmployeeOriginalHtml(r, effWorkType, effLeader, effNight)}
           <div class="field-row"><span class="field-label">スプレッドシート反映</span><span class="field-value">${r.report_status === 'cancelled' ? '対象外(取消済み)' : (r.reflected_to_sheet_at ? `反映済み(${new Date(r.reflected_to_sheet_at).toLocaleString('ja-JP')})` : '未反映')}</span></div>
           ${r.reflect_override_work_type ? `<div class="field-row"><span class="field-label">反映値を調整</span><span class="field-value">${r.reflect_override_by || ''} ${r.reflect_override_at ? new Date(r.reflect_override_at).toLocaleString('ja-JP') : ''}${r.reflect_override_reason ? `(${r.reflect_override_reason})` : ''}</span></div>` : ''}
         </div>

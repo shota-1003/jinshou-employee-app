@@ -9634,10 +9634,36 @@ function applyDrmCardFilter(cardKey) {
 }
 
 function drmGroupKey(r) {
-  // 外注(応援)は作業員名を持たないため、従来キー(worker_name)だと同日の別会社・別現場が
-  // 1カードに束ねられていた。外注は日報行(id)ごとに独立カードにし、会社×現場×勤務区分を分ける。
-  if (r.worker_type === 'subcontractor') return `${r.report_date}|sc|${r.id}`;
+  // 外注(応援): 会社×現場×日付で1カードに集約する(終日/午前/午後の勤務区分は同じカード内に
+  // まとめ、人数合計・人工合計で表示する。3枚に分けない)。別会社または別現場は別カード。
+  // 作業員紐付けの旧モデル(subcontractor_worker_id)がある行は、作業員単位で分ける。
+  if (r.worker_type === 'subcontractor') {
+    if (r.subcontractor_worker_name) return `${r.report_date}|scw|${r.id}`;
+    const co = r.subcontractor_company_id != null ? r.subcontractor_company_id : 'x';
+    // admin_search_daily_reports は site_name(=COALESCE(sites.site_name, site_raw_name))を返す。
+    // site_id が無い(新規/未マージ現場)場合は現場名で区別する。
+    const site = r.site_id != null ? 's' + r.site_id : 'n' + (r.site_name || r.site_raw_name || '');
+    return `${r.report_date}|sc|${co}|${site}`;
+  }
   return `${r.report_date}|${r.worker_type}|${r.employee_code}`;
+}
+// 外注カードの集約サマリー: 会社名・現場・勤務区分別人数(終日/午前/午後)・人数合計・人工合計。
+function drmSubcontractorSummary(rows) {
+  const active = rows.filter((r) => r.report_status !== 'cancelled');
+  const use = active.length ? active : rows;
+  const co = use[0].subcontractor_company_name || '会社未設定・要修正';
+  const site = use[0].site_name || use[0].site_raw_name || '(現場不明)';
+  const slotLabel = { '終日': '終日', '午前': '午前', '午後': '午後' };
+  const bySlot = {};
+  let people = 0, manDays = 0;
+  use.forEach((r) => {
+    const n = r.subcontractor_headcount != null ? Number(r.subcontractor_headcount) : 0;
+    people += n; manDays += Number(r.headcount || 0);
+    const k = slotLabel[r.work_type] || r.work_type || '';
+    bySlot[k] = (bySlot[k] || 0) + n;
+  });
+  const slots = Object.entries(bySlot).filter(([, n]) => n > 0).map(([k, n]) => `${k}${n}名`).join('・');
+  return { co, site, slots, people, manDays: Math.round(manDays * 100) / 100 };
 }
 
 async function loadDailyReportManagementList() {
@@ -9750,8 +9776,17 @@ function renderDrmAll() {
 
   listEl.innerHTML = groupList.map((g) => {
     const f = g.first;
-    const personName = drmWorkerLabel(f);
-    const sites = g.rows.map((r) => `${r.site_name || '(現場不明)'}・${r.work_type || ''}`).join(' / ');
+    const isSc = f.worker_type === 'subcontractor' && !f.subcontractor_worker_name;
+    let personName, sites;
+    if (isSc) {
+      // 外注(応援): 会社×現場で1カード。勤務区分別人数・人数合計・人工合計を集約表示。
+      const s = drmSubcontractorSummary(g.rows);
+      personName = `外注（応援） ${s.co}`;
+      sites = `${s.site}｜${s.slots || '-'}｜人数${s.people}名 / ${s.manDays}人工`;
+    } else {
+      personName = drmWorkerLabel(f);
+      sites = g.rows.map((r) => `${r.site_name || r.site_raw_name || '(現場不明)'}・${r.work_type || ''}`).join(' / ');
+    }
     const statusBadgeClass = f.report_status === 'confirmed' ? 'done' : (f.report_status === 'rejected' ? 'rejected' : '');
     return `
       <div class="history-item" data-key="${g.key}">

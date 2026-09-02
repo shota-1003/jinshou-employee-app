@@ -3726,7 +3726,9 @@ async function loadAnnounceBanner() {
     // ここで重複表示しない(2026-08-28、ユーザー指摘: 「会社からのお知らせ」と「今日やること」で
     // 実質同じ内容が重複表示される)。
     const importantOnes = (rows || [])
-      .filter((a) => (a.importance === 'important' || a.importance === 'critical') && shouldShowOnHome(a) && a.related_type !== 'daily_reports')
+      // item5: 配置(assignment_member)は毎日発生する日常通知。「重要なお知らせ」には積まず、
+      // 「配置予定」カードと「今日やること」に集約する(日報の自動通知 daily_reports も同様に除外)。
+      .filter((a) => (a.importance === 'important' || a.importance === 'critical') && shouldShowOnHome(a) && a.related_type !== 'daily_reports' && a.related_type !== 'assignment_member')
       .sort((a, b) => (a.importance === b.importance ? 0 : a.importance === 'critical' ? -1 : 1) || new Date(b.created_at) - new Date(a.created_at));
     if (importantOnes.length === 0) return;
     // ホームが重要お知らせだけで埋まらないよう表示は3件まで(最重要優先・新しい順は上のsort済み)。
@@ -3835,6 +3837,7 @@ async function loadAnnouncements(includeArchived) {
         <div class="body">${a.body}${a.attachment_url ? `<br><a href="${a.attachment_url}" target="_blank" rel="noopener">添付ファイルを開く</a>` : ''}</div>
         ${a.related_type === 'employee_requests' ? `<button type="button" class="secondary announce-detail-btn" data-request-id="${a.related_id}">この申請の詳細を見る</button>` : ''}
         ${a.related_type === 'assignment_member' ? `<button type="button" class="secondary announce-assign-btn">配置を確認する</button>` : ''}
+        ${a.related_type === 'employees' ? `<button type="button" class="secondary announce-admin-btn">社員管理で対応する</button>` : ''}
         ${a.importance !== 'normal' ? `
           <div class="announce-ack-row">
             ${a.acknowledged_at
@@ -3847,7 +3850,7 @@ async function loadAnnouncements(includeArchived) {
     hydrateIcons(listEl);
     listEl.querySelectorAll('.announce-item').forEach((el) => {
       el.addEventListener('click', async (e) => {
-        if (e.target.closest('.announce-ack-btn') || e.target.closest('.announce-detail-btn') || e.target.closest('.announce-assign-btn') || e.target.closest('a')) return;
+        if (e.target.closest('.announce-ack-btn') || e.target.closest('.announce-detail-btn') || e.target.closest('.announce-assign-btn') || e.target.closest('.announce-admin-btn') || e.target.closest('a')) return;
         const wasUnread = el.classList.contains('unread');
         el.classList.toggle('expanded');
         if (wasUnread) {
@@ -3868,6 +3871,18 @@ async function loadAnnouncements(includeArchived) {
           try { await rpc('mark_announcement_read', { p_employee_code: session.employeeCode, p_announcement_id: Number(item.dataset.id) }); } catch (e2) { /* 無視 */ }
         }
         openMyRequestDetail(btn.dataset.requestId, 'announcements');
+      });
+    });
+    // item4: PIN再設定依頼等(related_type='employees')→ 管理者社員管理へdeep link(対象社員選択済み)。
+    listEl.querySelectorAll('.announce-admin-btn').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const item = btn.closest('.announce-item');
+        if (item && item.classList.contains('unread')) {
+          item.classList.remove('unread');
+          try { rpc('mark_announcement_read', { p_employee_code: session.employeeCode, p_announcement_id: Number(item.dataset.id) }); } catch (e2) { /* 無視 */ }
+        }
+        announceDeepLink(Number(item.dataset.id));
       });
     });
     listEl.querySelectorAll('.announce-assign-btn').forEach((btn) => {
@@ -4198,11 +4213,24 @@ async function loadAnnounceAdminList() {
       <div class="announce-admin-item" data-id="${a.id}" data-title="${a.title.replace(/"/g, '&quot;')}">
         <div class="row1"><span>${a.importance === 'important' ? `<span class="icon-slot" data-icon="alert-triangle"></span> ` : ''}${a.title}</span><span>${a.read_count}/${a.recipient_count} 既読</span></div>
         <div class="row2">${new Date(a.created_at).toLocaleString('ja-JP')}${a.source_system && a.source_system !== 'admin_manual' ? `・自動通知(${safeText(a.source_system, '不明')})` : ''}${a.importance === 'important' ? `・確認済み${safeText(a.acknowledged_count, 0)}/${safeText(a.recipient_count, 0)}` : ''}</div>
+        <button type="button" class="link announce-hide-btn" data-id="${a.id}" style="color:var(--danger);margin-top:4px;">このお知らせを削除(非公開)する</button>
       </div>
     `).join('');
     hydrateIcons(listEl);
     listEl.querySelectorAll('.announce-admin-item').forEach((el) => {
-      el.addEventListener('click', () => openAnnounceStatus(Number(el.dataset.id), el.dataset.title));
+      el.addEventListener('click', (e) => { if (e.target.closest('.announce-hide-btn')) return; openAnnounceStatus(Number(el.dataset.id), el.dataset.title); });
+    });
+    // item8: 会社お知らせの削除(論理非公開)。社員側お知らせから消える(履歴・監査は残す)。
+    listEl.querySelectorAll('.announce-hide-btn').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!window.confirm('このお知らせを削除(非公開)しますか？\n\n社員のお知らせから消えます。履歴・監査には残ります。')) return;
+        btn.disabled = true;
+        try {
+          await rpc('admin_hide_announcement', { p_admin_employee_code: session.employeeCode, p_announcement_id: Number(btn.dataset.id), p_reason: null });
+          loadAnnounceAdminList();
+        } catch (e2) { alert(e2.message || '削除に失敗しました。'); btn.disabled = false; }
+      });
     });
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';

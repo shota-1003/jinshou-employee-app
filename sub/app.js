@@ -105,6 +105,8 @@ function bindEvents() {
 
   // プロフィール保存
   $('profile-save-btn').addEventListener('click', saveProfile);
+  $('qual-add-btn').addEventListener('click', addQualification);
+  $('health-add-btn').addEventListener('click', addHealthCheckup);
 
   // 勤務区分セグメント → 人工の自動セット
   document.querySelectorAll('#att-worktype .seg').forEach((seg) => seg.addEventListener('click', () => {
@@ -207,9 +209,9 @@ async function openProfile() {
     $('pf-ec-name').value = p.emergency_contact_name || '';
     $('pf-ec-rel').value = p.emergency_contact_relation || '';
     $('pf-ec-phone').value = p.emergency_contact_phone || '';
-    $('pf-qual').value = p.qualifications || '';
-    $('pf-qual-expiry').value = p.qualification_expiry_date || '';
-    $('pf-health').value = p.health_checkup_date || '';
+    // ④⑤ 資格・健診(複数・専用マスター)
+    await loadQualifications();
+    await loadHealthCheckups();
     // ③ 会社
     if (p.company_locked) {
       $('pf-company-locked').style.display = 'block';
@@ -237,9 +239,6 @@ async function saveProfile() {
     p_emergency_contact_name: $('pf-ec-name').value.trim() || null,
     p_emergency_contact_relation: $('pf-ec-rel').value.trim() || null,
     p_emergency_contact_phone: $('pf-ec-phone').value.trim() || null,
-    p_qualifications: $('pf-qual').value.trim() || null,
-    p_qualification_expiry_date: $('pf-qual-expiry').value || null,
-    p_health_checkup_date: $('pf-health').value || null,
   };
   if ($('pf-company-select-wrap').style.display !== 'none') {
     const cv = $('pf-company-select').value;
@@ -254,6 +253,48 @@ async function saveProfile() {
     $('done-sub').textContent = '';
     showScreen('done');
   } catch (e) { setErr('profile-error', e.message || '保存に失敗しました。'); }
+}
+
+// ④ 資格(複数・専用マスター employee_qualifications を共通利用)
+async function loadQualifications() {
+  try {
+    const rows = await rpc('get_my_subcontractor_qualifications', { p_login_code: loginCode });
+    const list = $('pf-qual-list'); const empty = $('pf-qual-empty');
+    if (!rows || !rows.length) { list.innerHTML = ''; empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+    list.innerHTML = rows.map((q) => `<div class="recent-item">${escapeHtml(q.qualification_name)}${q.qualification_number ? '（' + escapeHtml(q.qualification_number) + '）' : ''}${q.expiry_date ? '<span class="chip">期限 ' + q.expiry_date + '</span>' : ''} <button type="button" class="qual-del" data-id="${q.id}" style="float:right;background:none;color:var(--danger);width:auto;margin:0;padding:0 6px;">削除</button></div>`).join('');
+    list.querySelectorAll('.qual-del').forEach((b) => b.addEventListener('click', async () => { await rpc('delete_my_subcontractor_qualification', { p_login_code: loginCode, p_id: Number(b.dataset.id) }).catch(() => {}); loadQualifications(); }));
+  } catch (e) { $('pf-qual-list').innerHTML = ''; }
+}
+async function addQualification() {
+  setErr('qual-error', '');
+  const name = $('pf-qual-name').value.trim();
+  if (!name) { setErr('qual-error', '資格・免許の名称を入力してください。'); return; }
+  try {
+    await rpc('submit_my_subcontractor_qualification', { p_login_code: loginCode, p_qualification_name: name, p_qualification_number: $('pf-qual-number').value.trim() || null, p_obtained_date: $('pf-qual-obtained').value || null, p_expiry_date: $('pf-qual-expiry').value || null });
+    $('pf-qual-name').value = ''; $('pf-qual-number').value = ''; $('pf-qual-obtained').value = ''; $('pf-qual-expiry').value = '';
+    await loadQualifications();
+  } catch (e) { setErr('qual-error', e.message || '資格の追加に失敗しました。'); }
+}
+// ⑤ 健康診断(専用マスター employee_health_checkups を共通利用)
+async function loadHealthCheckups() {
+  try {
+    const rows = await rpc('get_my_subcontractor_health_checkups', { p_login_code: loginCode });
+    const list = $('pf-health-list'); const empty = $('pf-health-empty');
+    if (!rows || !rows.length) { list.innerHTML = ''; empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+    list.innerHTML = rows.map((h) => `<div class="recent-item">実施 ${h.checkup_date}${h.next_due_date ? '<span class="chip">次回 ' + h.next_due_date + '</span>' : ''}</div>`).join('');
+  } catch (e) { $('pf-health-list').innerHTML = ''; }
+}
+async function addHealthCheckup() {
+  setErr('health-error', '');
+  const d = $('pf-health-date').value;
+  if (!d) { setErr('health-error', '健康診断の実施日を入力してください。'); return; }
+  try {
+    await rpc('submit_my_subcontractor_health_checkup', { p_login_code: loginCode, p_checkup_date: d, p_next_due_date: $('pf-health-next').value || null });
+    $('pf-health-date').value = ''; $('pf-health-next').value = '';
+    await loadHealthCheckups();
+  } catch (e) { setErr('health-error', e.message || '健康診断の追加に失敗しました。'); }
 }
 
 // ⑤〜⑨ 出面

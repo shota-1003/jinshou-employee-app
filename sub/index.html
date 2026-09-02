@@ -122,16 +122,34 @@
         <div class="hint">一度選ぶと、以後はご自身では変更できません(会社担当者のみ変更可)。</div>
       </div>
     </div>
-    <div class="card">
-      <div class="section-title">④ 資格・健康診断</div>
-      <label for="pf-qual">保有資格(自由記入)</label>
-      <textarea id="pf-qual" rows="3" placeholder="例: 玉掛け技能講習、フォークリフト運転技能講習、職長・安全衛生責任者教育 など"></textarea>
-      <label for="pf-qual-expiry" style="margin-top:10px">資格の有効期限(代表的なもの・任意)</label>
-      <input type="date" id="pf-qual-expiry">
-      <label for="pf-health" style="margin-top:10px">直近の健康診断日(任意)</label>
-      <input type="date" id="pf-health">
       <div class="error" id="profile-error"></div>
-      <button id="profile-save-btn">保存する</button>
+      <button id="profile-save-btn">基本情報を保存する</button>
+    </div>
+    <div class="card">
+      <div class="section-title">④ 資格・免許（複数登録できます）</div>
+      <div id="pf-qual-list" class="recent-item-list"></div>
+      <div class="hint" id="pf-qual-empty" style="display:none">まだ登録がありません。下から追加してください。</div>
+      <label for="pf-qual-name" style="margin-top:10px">資格・免許の名称</label>
+      <input type="text" id="pf-qual-name" placeholder="例: 玉掛け技能講習" autocomplete="off">
+      <label for="pf-qual-number" style="margin-top:8px">番号(任意)</label>
+      <input type="text" id="pf-qual-number" autocomplete="off">
+      <label for="pf-qual-obtained" style="margin-top:8px">取得日(任意)</label>
+      <input type="date" id="pf-qual-obtained">
+      <label for="pf-qual-expiry" style="margin-top:8px">有効期限(ある場合)</label>
+      <input type="date" id="pf-qual-expiry">
+      <div class="error" id="qual-error"></div>
+      <button id="qual-add-btn" class="secondary">この資格を追加</button>
+    </div>
+    <div class="card">
+      <div class="section-title">⑤ 健康診断</div>
+      <div id="pf-health-list" class="recent-item-list"></div>
+      <div class="hint" id="pf-health-empty" style="display:none">まだ登録がありません。下から追加してください。</div>
+      <label for="pf-health-date" style="margin-top:10px">健康診断の実施日</label>
+      <input type="date" id="pf-health-date">
+      <label for="pf-health-next" style="margin-top:8px">次回受診の期限(任意)</label>
+      <input type="date" id="pf-health-next">
+      <div class="error" id="health-error"></div>
+      <button id="health-add-btn" class="secondary">健康診断を追加</button>
     </div>
   </section>
 

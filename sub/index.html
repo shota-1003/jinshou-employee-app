@@ -97,8 +97,9 @@
     <div class="card">
       <div class="home-greeting">こんにちは、<span id="home-worker-name">-</span> さん</div>
       <div class="home-company" id="home-company-name" style="color:#5b6b8a;font-size:.9rem;margin-bottom:14px"></div>
-      <button class="menu-btn" id="home-attendance-btn">📋 本日の日報を出す</button>
-      <button class="menu-btn" id="home-profile-btn">👤 個人情報・資格の登録／確認</button>
+      <button class="menu-btn" id="home-attendance-btn" style="font-size:19px;padding:20px;background:var(--primary);color:#fff;border-color:var(--primary);">📋 今日の出勤を報告する</button>
+      <div class="hint" style="margin:6px 2px 0;">毎日はこれだけでOK（現場→勤務区分→残業→出張→送信）</div>
+      <button class="menu-btn" id="home-profile-btn" style="margin-top:16px;">👤 個人情報・資格・健康診断（登録・確認）</button>
       <button class="menu-btn secondary" id="home-logout-btn">ログアウト</button>
     </div>
     <div class="card" id="home-recent-wrap" style="display:none">
@@ -122,14 +123,15 @@
       <input type="tel" id="pf-phone" inputmode="tel" autocomplete="off">
       <label for="pf-address" style="margin-top:10px">住所</label>
       <input type="text" id="pf-address" autocomplete="off">
-      <label for="pf-blood" style="margin-top:10px">血液型(任意)</label>
+      <label for="pf-blood" style="margin-top:10px">血液型<span style="color:#e23b3b">（必須）</span></label>
       <input type="text" id="pf-blood" placeholder="例: A" autocomplete="off">
-      <label for="pf-ec-name" style="margin-top:10px">緊急連絡先 氏名(任意)</label>
+      <label for="pf-ec-name" style="margin-top:10px">緊急連絡先 氏名<span style="color:#e23b3b">（必須）</span></label>
       <input type="text" id="pf-ec-name" autocomplete="off">
-      <label for="pf-ec-rel" style="margin-top:10px">緊急連絡先 続柄(任意)</label>
-      <input type="text" id="pf-ec-rel" autocomplete="off">
-      <label for="pf-ec-phone" style="margin-top:10px">緊急連絡先 電話(任意)</label>
+      <label for="pf-ec-rel" style="margin-top:10px">緊急連絡先 続柄<span style="color:#e23b3b">（必須）</span></label>
+      <input type="text" id="pf-ec-rel" autocomplete="off" placeholder="例: 妻・父・兄 など">
+      <label for="pf-ec-phone" style="margin-top:10px">緊急連絡先 電話<span style="color:#e23b3b">（必須）</span></label>
       <input type="tel" id="pf-ec-phone" inputmode="tel" autocomplete="off">
+      <div class="hint" id="pf-required-notice" style="display:none;color:#e23b3b;margin-top:8px;">未入力の必須項目があります。血液型・緊急連絡先(氏名・続柄・電話)をすべて入力してください。</div>
     </div>
     <div class="card">
       <div class="section-title">③ 所属外注会社</div>
@@ -148,18 +150,13 @@
     </div>
     <div class="card">
       <div class="section-title">④ 資格・免許（複数登録できます）</div>
+      <div class="hint" style="margin-top:0;">持っている資格を一覧から選ぶだけです。番号や期限の入力は不要です。</div>
       <div id="pf-qual-list" class="recent-item-list"></div>
-      <div class="hint" id="pf-qual-empty" style="display:none">まだ登録がありません。下から追加してください。</div>
-      <label for="pf-qual-name" style="margin-top:10px">資格・免許の名称</label>
-      <input type="text" id="pf-qual-name" placeholder="例: 玉掛け技能講習" autocomplete="off">
-      <label for="pf-qual-number" style="margin-top:8px">番号(任意)</label>
-      <input type="text" id="pf-qual-number" autocomplete="off">
-      <label for="pf-qual-obtained" style="margin-top:8px">取得日(任意)</label>
-      <input type="date" id="pf-qual-obtained">
-      <label for="pf-qual-expiry" style="margin-top:8px">有効期限(ある場合)</label>
-      <input type="date" id="pf-qual-expiry">
+      <div class="hint" id="pf-qual-empty" style="display:none">まだ登録がありません。下から選んで追加してください。</div>
+      <label for="pf-qual-select" style="margin-top:10px">持っている資格を選ぶ</label>
+      <select id="pf-qual-select"></select>
       <div class="error" id="qual-error"></div>
-      <button id="qual-add-btn" class="secondary">この資格を追加</button>
+      <button id="qual-add-btn" class="secondary">選んだ資格を追加</button>
     </div>
     <div class="card">
       <div class="section-title">⑤ 健康診断</div>
@@ -202,6 +199,7 @@
       <input type="number" id="att-overtime" inputmode="decimal" step="0.5" min="0" value="0">
 
       <label style="margin-top:14px" class="checkbox-row"><input type="checkbox" id="att-night"> 夜勤</label>
+      <label style="margin-top:10px" class="checkbox-row"><input type="checkbox" id="att-trip"> 出張（今日は出張扱い）</label>
 
       <label for="att-notes" style="margin-top:10px">備考(任意)</label>
       <input type="text" id="att-notes" autocomplete="off">

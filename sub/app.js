@@ -233,7 +233,11 @@ async function openProfile() {
     $('pf-ec-name').value = p.emergency_contact_name || '';
     $('pf-ec-rel').value = p.emergency_contact_relation || '';
     $('pf-ec-phone').value = p.emergency_contact_phone || '';
-    // ④⑤ 資格・健診(複数・専用マスター)
+    // 必須未入力(既存データが空の場合)は破壊的補完せず、開いた時に入力を促す(仕様1)
+    const missing = !(p.worker_name) || !(p.phone) || !(p.blood_type) || !(p.emergency_contact_name) || !(p.emergency_contact_relation) || !(p.emergency_contact_phone);
+    const notice = $('pf-required-notice'); if (notice) notice.style.display = missing ? 'block' : 'none';
+    // ④⑤ 資格・健診(複数・共通マスター)。資格はマスター選択式。
+    await loadQualMaster();
     await loadQualifications();
     await loadHealthCheckups();
     // ③ 会社
@@ -252,17 +256,23 @@ async function openProfile() {
 
 async function saveProfile() {
   setErr('profile-error', '');
+  // 必須: 氏名・電話・血液型・緊急連絡先(氏名・続柄・電話)。未入力は保存不可(仕様1)。
+  const blood = $('pf-blood').value.trim(), ecName = $('pf-ec-name').value.trim(), ecRel = $('pf-ec-rel').value.trim(), ecPhone = $('pf-ec-phone').value.trim();
+  const name = $('pf-name').value.trim(), phone = $('pf-phone').value.trim();
+  const missing = !name || !phone || !blood || !ecName || !ecRel || !ecPhone;
+  const notice = $('pf-required-notice'); if (notice) notice.style.display = missing ? 'block' : 'none';
+  if (missing) { setErr('profile-error', '必須項目(氏名・電話・血液型・緊急連絡先の氏名/続柄/電話)をすべて入力してください。'); return; }
   const params = {
     p_login_code: loginCode,
-    p_worker_name: $('pf-name').value.trim() || null,
+    p_worker_name: name || null,
     p_furigana: $('pf-furigana').value.trim() || null,
     p_birth_date: $('pf-birth').value || null,
-    p_phone: $('pf-phone').value.trim() || null,
+    p_phone: phone || null,
     p_address: $('pf-address').value.trim() || null,
-    p_blood_type: $('pf-blood').value.trim() || null,
-    p_emergency_contact_name: $('pf-ec-name').value.trim() || null,
-    p_emergency_contact_relation: $('pf-ec-rel').value.trim() || null,
-    p_emergency_contact_phone: $('pf-ec-phone').value.trim() || null,
+    p_blood_type: blood || null,
+    p_emergency_contact_name: ecName || null,
+    p_emergency_contact_relation: ecRel || null,
+    p_emergency_contact_phone: ecPhone || null,
   };
   if ($('pf-company-select-wrap').style.display !== 'none') {
     const cv = $('pf-company-select').value;
@@ -290,13 +300,27 @@ async function loadQualifications() {
     list.querySelectorAll('.qual-del').forEach((b) => b.addEventListener('click', async () => { await rpc('delete_my_subcontractor_qualification', { p_login_code: loginCode, p_id: Number(b.dataset.id) }).catch(() => {}); loadQualifications(); }));
   } catch (e) { $('pf-qual-list').innerHTML = ''; }
 }
+// 資格マスターをカテゴリ別(optgroup)に読み込み、選択式にする(自由入力ではなくマスター選択・仕様2/3)
+async function loadQualMaster() {
+  try {
+    const rows = await rpc('list_qualification_master', { p_login_code: loginCode });
+    const sel = $('pf-qual-select');
+    const cats = {};
+    (rows || []).forEach((r) => { (cats[r.category] = cats[r.category] || []).push(r); });
+    let html = '<option value="">選択してください</option>';
+    Object.keys(cats).forEach((cat) => {
+      html += `<optgroup label="${escapeHtml(cat)}">` + cats[cat].map((r) => `<option value="${r.id}">${escapeHtml(r.qualification_name)}</option>`).join('') + '</optgroup>';
+    });
+    sel.innerHTML = html;
+  } catch (e) { $('pf-qual-select').innerHTML = '<option value="">(資格一覧を取得できませんでした)</option>'; }
+}
 async function addQualification() {
   setErr('qual-error', '');
-  const name = $('pf-qual-name').value.trim();
-  if (!name) { setErr('qual-error', '資格・免許の名称を入力してください。'); return; }
+  const masterId = $('pf-qual-select').value;
+  if (!masterId) { setErr('qual-error', '持っている資格を一覧から選んでください。'); return; }
   try {
-    await rpc('submit_my_subcontractor_qualification', { p_login_code: loginCode, p_qualification_name: name, p_qualification_number: $('pf-qual-number').value.trim() || null, p_obtained_date: $('pf-qual-obtained').value || null, p_expiry_date: $('pf-qual-expiry').value || null });
-    $('pf-qual-name').value = ''; $('pf-qual-number').value = ''; $('pf-qual-obtained').value = ''; $('pf-qual-expiry').value = '';
+    await rpc('submit_my_subcontractor_qualification_selected', { p_login_code: loginCode, p_master_id: Number(masterId) });
+    $('pf-qual-select').value = '';
     await loadQualifications();
   } catch (e) { setErr('qual-error', e.message || '資格の追加に失敗しました。'); }
 }
@@ -330,17 +354,17 @@ async function openAttendance() {
   // 区分・人工リセット
   document.querySelectorAll('#att-worktype .seg').forEach((s, i) => s.classList.toggle('active', i === 0));
   $('att-headcount').value = '1'; $('att-overtime').value = '0'; $('att-night').checked = false; $('att-notes').value = '';
+  if ($('att-trip')) $('att-trip').checked = false;
   $('att-newsite-wrap').style.display = 'none'; $('att-newsite').value = '';
-  // ⑤ 現場候補: 当日の配置
+  // ⑤ 現場候補: 正式な現場マスター(配置カレンダー→最近→有効現場マスターの優先順)。カテゴリタグは出さない。
   let sites = [];
   try {
-    const asg = await rpc('get_my_subcontractor_assignments', { p_login_code: loginCode, p_report_date: d });
-    sites = (asg || []).filter((a) => a.site_id).map((a) => ({ id: a.site_id, label: a.site_label || '(現場)' }));
+    const cand = await rpc('get_my_subcontractor_site_candidates', { p_login_code: loginCode, p_date: d });
+    sites = (cand || []).filter((a) => a.site_id).map((a) => ({ id: a.site_id, label: (a.site_name || '(現場)') + (a.source === '配置' ? '（本日の配置）' : a.source === '最近' ? '（最近）' : '') }));
   } catch (e) {}
-  // 重複site_id除去
   const seen = {}; sites = sites.filter((s) => (seen[s.id] ? false : (seen[s.id] = true)));
   const opts = sites.map((s) => `<option value="${s.id}">${escapeHtml(s.label)}</option>`).join('');
-  $('att-site').innerHTML = (opts || '') + '<option value="__new__">その他(現場名を入力)</option>';
+  $('att-site').innerHTML = (opts || '') + '<option value="__new__">その他(一覧にない現場を入力)</option>';
   if (!sites.length) { $('att-site').value = '__new__'; $('att-newsite-wrap').style.display = 'block'; }
   // 既存の登録
   loadTodayAttendance(d);
@@ -362,7 +386,7 @@ async function submitAttendance() {
   const wtEl = document.querySelector('#att-worktype .seg.active');
   const workType = wtEl ? wtEl.getAttribute('data-wt') : '終日';
   const siteVal = $('att-site').value;
-  const entry = { work_type: workType, overtime_hours: Number($('att-overtime').value || 0), is_night_shift: $('att-night').checked, notes: $('att-notes').value.trim() || null };
+  const entry = { work_type: workType, overtime_hours: Number($('att-overtime').value || 0), is_night_shift: $('att-night').checked, is_business_trip: $('att-trip') ? $('att-trip').checked : false, notes: $('att-notes').value.trim() || null };
   if (siteVal === '__new__') {
     const nm = $('att-newsite').value.trim();
     if (!nm) { setErr('att-error', '現場名を入力してください。'); return; }

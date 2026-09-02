@@ -22,41 +22,62 @@
 </header>
 <main>
 
-  <!-- ① ログイン(ログインID入力。初回またはログイン先切替時のみ) -->
-  <section id="screen-login" class="screen">
+  <!-- 入口: はじめての方=外注登録 / 登録済みの方=機種変更。IDは入力させない(自動採番・端末保持)。 -->
+  <section id="screen-welcome" class="screen">
     <div class="login-wrap">
       <img src="brand/logo-gold.png" alt="迅翔興業" class="login-logo">
       <div class="login-company">株式会社 迅翔興業 外注ポータル</div>
       <div class="card">
-        <label for="login-code">ログインID</label>
-        <input type="text" id="login-code" inputmode="text" placeholder="会社から連絡されたID" autocomplete="off">
-        <div class="hint">最初の1回だけIDを入力すれば、次回から暗証番号だけでログインできます。IDが分からない場合は会社の担当者へお問い合わせください。</div>
-        <div class="error" id="login-error">ログインIDが確認できませんでした。</div>
-        <button id="login-btn">次へ</button>
+        <div class="hint" style="margin-top:0;">外注作業員の方の入口です。所属会社を選んで登録を始めてください。会社からIDを受け取る必要はありません。</div>
+        <button id="welcome-register-btn">はじめての方はこちら（外注登録）</button>
+        <button class="menu-btn secondary" id="welcome-relink-btn" style="margin-top:12px;">機種変更・別の端末で登録済みの方</button>
       </div>
     </div>
   </section>
 
-  <!-- ① 初回本人登録(発行された初回コード + 暗証番号の設定) -->
-  <section id="screen-first-login" class="screen">
-    <div class="login-wrap">
-      <img src="brand/logo-gold.png" alt="迅翔興業" class="login-logo">
-      <div class="login-company" id="first-login-name">初回登録</div>
-      <div class="card">
-        <label for="first-code">初回登録コード(会社から連絡された6桁)</label>
-        <input type="text" id="first-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="例: 123456" autocomplete="off">
-        <label for="first-pin" style="margin-top:12px">暗証番号を決めてください(4〜6桁)</label>
-        <input type="password" id="first-pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
-        <label for="first-pin2" style="margin-top:12px">暗証番号(確認のためもう一度)</label>
-        <input type="password" id="first-pin2" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
-        <div class="error" id="first-login-error"></div>
-        <button id="first-login-submit">登録してはじめる</button>
-        <button class="link" id="first-login-back">別のIDでログイン</button>
-      </div>
+  <!-- ① 外注 初回登録(自己登録・ID自動採番) -->
+  <section id="screen-register" class="screen">
+    <button class="back-btn" data-back="welcome">← もどる</button>
+    <div class="card">
+      <div class="section-title">① 外注 初回登録</div>
+      <div class="hint" style="margin-top:0;">所属している外注会社を選び、基本情報と暗証番号を登録してください。登録が完了すると、あなた専用の作業員IDが自動で発行されます（入力は不要です）。</div>
+      <label for="reg-company" style="margin-top:10px">所属する外注会社<span style="color:#e23b3b">（必須）</span></label>
+      <select id="reg-company"></select>
+      <label for="reg-name" style="margin-top:10px">氏名<span style="color:#e23b3b">（必須）</span></label>
+      <input type="text" id="reg-name" autocomplete="off">
+      <label for="reg-furigana" style="margin-top:8px">フリガナ</label>
+      <input type="text" id="reg-furigana" autocomplete="off">
+      <label for="reg-phone" style="margin-top:8px">電話番号<span style="color:#e23b3b">（必須）</span></label>
+      <input type="tel" id="reg-phone" inputmode="tel" autocomplete="off">
+      <label for="reg-pin" style="margin-top:10px">暗証番号を決めてください(4〜6桁)<span style="color:#e23b3b">（必須）</span></label>
+      <input type="password" id="reg-pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+      <label for="reg-pin2" style="margin-top:8px">暗証番号(確認のためもう一度)</label>
+      <input type="password" id="reg-pin2" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+      <div class="error" id="register-error"></div>
+      <button id="register-submit">登録してはじめる</button>
     </div>
   </section>
 
-  <!-- ② 以降: 暗証番号ログイン(2回目以降) -->
+  <!-- 機種変更/別端末: 会社+氏名+電話+暗証番号で本人再確認 -->
+  <section id="screen-relink" class="screen">
+    <button class="back-btn" data-back="welcome">← もどる</button>
+    <div class="card">
+      <div class="section-title">機種変更・別の端末でログイン</div>
+      <div class="hint" style="margin-top:0;">以前この外注ポータルに登録した方は、所属会社・氏名・電話番号・暗証番号で本人確認するとこの端末でも使えるようになります。</div>
+      <label for="relink-company" style="margin-top:10px">所属する外注会社</label>
+      <select id="relink-company"></select>
+      <label for="relink-name" style="margin-top:8px">氏名</label>
+      <input type="text" id="relink-name" autocomplete="off">
+      <label for="relink-phone" style="margin-top:8px">電話番号</label>
+      <input type="tel" id="relink-phone" inputmode="tel" autocomplete="off">
+      <label for="relink-pin" style="margin-top:8px">暗証番号</label>
+      <input type="password" id="relink-pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+      <div class="error" id="relink-error"></div>
+      <button id="relink-submit">本人確認してログイン</button>
+    </div>
+  </section>
+
+  <!-- 2回目以降: 暗証番号ログイン(IDは端末が記憶・入力不要) -->
   <section id="screen-pin-entry" class="screen">
     <div class="login-wrap">
       <img src="brand/logo-gold.png" alt="迅翔興業" class="login-logo">
@@ -66,7 +87,7 @@
         <input type="password" id="pin-entry-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
         <div class="error" id="pin-entry-error"></div>
         <button id="pin-entry-submit">ログイン</button>
-        <button class="link" id="pin-entry-switch">別のIDでログイン</button>
+        <button class="link" id="pin-entry-switch">別の方・機種変更はこちら</button>
       </div>
     </div>
   </section>

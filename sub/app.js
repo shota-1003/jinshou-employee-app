@@ -53,47 +53,31 @@ async function boot() {
   if (IS_STAGING) { const b = $('staging-banner'); if (b) b.style.display = 'block'; }
   bindEvents();
   if (loginCode && deviceToken) {
-    // 端末トークンでセッション再開を試す
+    // 端末トークンでセッション再開(IDは端末が保持・入力不要)
     try {
       const r = await rpc('subcontractor_resume_session', { p_login_code: loginCode });
       const row = Array.isArray(r) ? r[0] : r;
       if (row && row.out_worker_id) { currentWorker = { name: row.out_worker_name, company: row.out_company_name }; enterHome(); return; }
     } catch (e) { /* 期限切れ等 → 暗証番号ログインへ */ }
-    // トークンが無効: IDは覚えているので暗証番号画面へ
-    $('pin-entry-name').textContent = 'ログインID: ' + loginCode;
+    // トークンが無効: この端末は登録済みなので暗証番号だけで再ログイン
+    $('pin-entry-name').textContent = 'おかえりなさい';
     showScreen('pin-entry');
     return;
   }
-  showScreen('login');
+  showScreen('welcome');
 }
 
 function bindEvents() {
-  // ① ログインID入力 → 初回か2回目かを判定できないので、まず初回コード画面へ誘導しつつ、
-  //    実際はPINログインを試して失敗したら初回登録へ。ここではID確定のみ。
-  $('login-btn').addEventListener('click', () => {
-    const code = $('login-code').value.trim();
-    if (!code) { setErr('login-error', 'ログインIDを入力してください。'); return; }
-    setErr('login-error', '');
-    loginCode = code;
-    // 初回か既存かはサーバーにしか分からない。まずPINログイン画面を出し、
-    // 「初回の方はこちら」で初回登録へ行ける導線にする。
-    $('pin-entry-name').textContent = 'ログインID: ' + loginCode;
-    $('pin-entry-switch').textContent = '初回の方 / 別のIDでログイン';
-    showScreen('pin-entry');
-  });
+  // 入口: 外注登録(自己登録) / 機種変更(本人再確認)
+  $('welcome-register-btn').addEventListener('click', openRegister);
+  $('welcome-relink-btn').addEventListener('click', openRelink);
+  $('register-submit').addEventListener('click', doSelfRegister);
+  $('relink-submit').addEventListener('click', doRelink);
 
-  // 暗証番号ログイン(2回目以降)
+  // 暗証番号ログイン(2回目以降・IDは端末が記憶)
   $('pin-entry-submit').addEventListener('click', doPinLogin);
   $('pin-entry-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') doPinLogin(); });
-  $('pin-entry-switch').addEventListener('click', () => {
-    // 初回登録 or 別ID。初回登録画面へ。
-    $('first-login-name').textContent = 'ログインID: ' + (loginCode || '');
-    showScreen('first-login');
-  });
-
-  // 初回登録
-  $('first-login-submit').addEventListener('click', doFirstLogin);
-  $('first-login-back').addEventListener('click', () => { showScreen('login'); });
+  $('pin-entry-switch').addEventListener('click', () => { showScreen('welcome'); });
 
   // ホーム
   $('home-attendance-btn').addEventListener('click', openAttendance);
@@ -143,35 +127,75 @@ async function doPinLogin() {
   }
 }
 
-async function doFirstLogin() {
-  const code = $('first-code').value.trim();
-  const pin = $('first-pin').value.trim();
-  const pin2 = $('first-pin2').value.trim();
-  if (!code) { setErr('first-login-error', '初回登録コードを入力してください。'); return; }
-  if (!pin || pin.length < 4) { setErr('first-login-error', '暗証番号は4〜6桁で決めてください。'); return; }
-  if (pin !== pin2) { setErr('first-login-error', '暗証番号(確認)が一致しません。'); return; }
-  setErr('first-login-error', '');
+// 会社選択肢を(認証不要で)読み込む
+async function loadCompanyOptions(selectId) {
   try {
-    const r = await rpc('subcontractor_first_login', { p_login_code: loginCode, p_code: code, p_pin: pin });
+    const opts = await rpc('list_subcontractor_companies_public', {});
+    $(selectId).innerHTML = '<option value="">選択してください</option>' + (opts || []).map((c) => `<option value="${c.company_id}">${escapeHtml(c.company_name)}</option>`).join('');
+  } catch (e) { $(selectId).innerHTML = '<option value="">(会社一覧を取得できませんでした)</option>'; }
+}
+async function openRegister() {
+  setErr('register-error', ''); showScreen('register');
+  await loadCompanyOptions('reg-company');
+}
+async function openRelink() {
+  setErr('relink-error', ''); showScreen('relink');
+  await loadCompanyOptions('relink-company');
+}
+
+// 外注 自己登録(ID自動採番)。登録完了で loginCode/token を端末保持し、次回は暗証番号だけで再ログイン。
+async function doSelfRegister() {
+  setErr('register-error', '');
+  const companyId = $('reg-company').value;
+  const name = $('reg-name').value.trim();
+  const phone = $('reg-phone').value.trim();
+  const pin = $('reg-pin').value.trim();
+  const pin2 = $('reg-pin2').value.trim();
+  if (!companyId) { setErr('register-error', '所属する外注会社を選んでください。'); return; }
+  if (!name) { setErr('register-error', '氏名を入力してください。'); return; }
+  if (!phone) { setErr('register-error', '電話番号を入力してください。'); return; }
+  if (!pin || pin.length < 4) { setErr('register-error', '暗証番号は4〜6桁で決めてください。'); return; }
+  if (pin !== pin2) { setErr('register-error', '暗証番号(確認)が一致しません。'); return; }
+  try {
+    const r = await rpc('subcontractor_self_register', { p_company_id: Number(companyId), p_worker_name: name, p_pin: pin, p_furigana: $('reg-furigana').value.trim() || null, p_phone: phone });
     const row = Array.isArray(r) ? r[0] : r;
-    if (!row || !row.out_device_token) throw new Error('初回登録に失敗しました。');
-    deviceToken = row.out_device_token;
+    if (!row || !row.out_device_token) throw new Error('登録に失敗しました。');
+    loginCode = row.out_login_code; deviceToken = row.out_device_token;
     currentWorker = { name: row.out_worker_name, company: row.out_company_name };
     saveAuth();
-    $('first-code').value = ''; $('first-pin').value = ''; $('first-pin2').value = '';
-    // 初回はプロフィール登録へ誘導
+    ['reg-name', 'reg-furigana', 'reg-phone', 'reg-pin', 'reg-pin2'].forEach((id) => { $(id).value = ''; });
+    // 登録後は資格・健診の登録へ誘導
     enterHome();
     openProfile();
-  } catch (e) {
-    setErr('first-login-error', e.message || '初回登録に失敗しました。コードの有効期限や入力内容をご確認ください。');
-  }
+  } catch (e) { setErr('register-error', e.message || '登録に失敗しました。'); }
 }
+
+// 機種変更/別端末: 会社+氏名+電話+暗証番号で本人再確認 → 既存IDへ端末再紐付け(新規作成しない)。
+async function doRelink() {
+  setErr('relink-error', '');
+  const companyId = $('relink-company').value;
+  const name = $('relink-name').value.trim();
+  const phone = $('relink-phone').value.trim();
+  const pin = $('relink-pin').value.trim();
+  if (!companyId || !name || !phone || !pin) { setErr('relink-error', '会社・氏名・電話番号・暗証番号をすべて入力してください。'); return; }
+  try {
+    const r = await rpc('subcontractor_relink_device', { p_company_id: Number(companyId), p_worker_name: name, p_phone: phone, p_pin: pin });
+    const row = Array.isArray(r) ? r[0] : r;
+    if (!row || !row.out_device_token) throw new Error('本人確認に失敗しました。');
+    loginCode = row.out_login_code; deviceToken = row.out_device_token;
+    currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+    saveAuth();
+    ['relink-name', 'relink-phone', 'relink-pin'].forEach((id) => { $(id).value = ''; });
+    enterHome();
+  } catch (e) { setErr('relink-error', e.message || '本人確認に失敗しました。'); }
+}
+
+// (旧・会社発行コードによる初回ログイン doFirstLogin は廃止。自己登録 doSelfRegister に統合)
 
 function doLogout() {
   rpc('subcontractor_logout', { p_login_code: loginCode }).catch(() => {});
   clearAuth();
-  showScreen('login');
-  $('login-code').value = '';
+  showScreen('welcome');
 }
 
 function enterHome() {

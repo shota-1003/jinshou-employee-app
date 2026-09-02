@@ -951,10 +951,18 @@ async function renderHomeAssignmentCard(session) {
       const time = r.time_label || (r.is_allday ? '終日' : '');
       const meet = r.meeting_time ? `集合${r.meeting_time}` : '';
       const haul = r.assignment_kind === 'haul' ? '🚚 ' : '';
-      return `<div class="home-assignment-row" data-date="${r.date}" role="button" tabindex="0"
-        style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 2px;border-top:1px solid var(--line,rgba(128,128,128,0.2));cursor:pointer;">
-        <span class="row2" style="flex:1;min-width:0;">${when}: ${haul}${safeText(r.label, '現場未設定')}${time ? `　${time}` : ''}${meet ? `　${meet}` : ''}</span>
-        <span aria-hidden="true" style="color:var(--muted);font-size:18px;line-height:1;flex:none;">›</span>
+      // 配置確認: HOMEから1タップで正式な配置確認(assignment_confirm_my_assignment, member_id指定)を行う。
+      // 確認済みは confirmed_at で判定。既読(read_at)とは別。連打しても二重登録しない(idempotent)。
+      const confirmUi = r.confirmed_at
+        ? '<span class="mini-tag info" style="flex:none;">✓ 確認済み</span>'
+        : (r.member_id ? `<button type="button" class="secondary home-assign-confirm-btn" data-member-id="${r.member_id}" style="flex:none;padding:6px 10px;font-size:13px;">配置を確認する</button>` : '');
+      return `<div class="home-assignment-row-wrap" style="border-top:1px solid var(--line,rgba(128,128,128,0.2));padding:8px 2px;">
+        <div class="home-assignment-row" data-date="${r.date}" role="button" tabindex="0"
+          style="display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;">
+          <span class="row2" style="flex:1;min-width:0;">${when}: ${haul}${safeText(r.label, '現場未設定')}${time ? `　${time}` : ''}${meet ? `　${meet}` : ''}</span>
+          <span aria-hidden="true" style="color:var(--muted);font-size:18px;line-height:1;flex:none;">›</span>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:4px;">${confirmUi}</div>
       </div>`;
     };
     card.style.display = '';
@@ -963,6 +971,17 @@ async function renderHomeAssignmentCard(session) {
       const go = () => openAssignmentCalendarAt(rowEl.dataset.date);
       rowEl.addEventListener('click', go);
       rowEl.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); } });
+    });
+    // HOMEから1タップで正式な配置確認(member_id指定)。管理者カレンダーの確認数へ即時反映。
+    card.querySelectorAll('.home-assign-confirm-btn').forEach((btn) => {
+      btn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        btn.disabled = true; btn.textContent = '確認中...';
+        try {
+          await rpc('assignment_confirm_my_assignment', { p_employee_code: session.employeeCode, p_member_id: Number(btn.dataset.memberId) });
+          renderHomeAssignmentCard(session); // 再取得して「確認済み」表示へ
+        } catch (e2) { btn.disabled = false; btn.textContent = '配置を確認する'; alert(e2.message || '配置の確認に失敗しました。'); }
+      });
     });
   } catch (e) {
     // 配置テーブルがまだ無い環境(Production等)ではRPCが無くエラーになる。カードを隠すだけ。
@@ -3986,6 +4005,11 @@ async function renderAdminTodayTasks(session) {
     const TASK_TO_PEOPLE = { daily_report_missing: 'missing', assignment_unconfirmed: 'unconfirmed' };
     el.querySelectorAll('.admin-today-task').forEach((btn) => btn.addEventListener('click', () => {
       if (btn.dataset.taskKey === 'daily_report_anomaly') { showScreen('daily-report-needs-review-admin'); return; }
+      // 有給P0: 「有給申請の承認待ち」→ 申請管理を 種類=有給・状態=承認待ち で絞り込んで直接表示。
+      if (btn.dataset.taskKey === 'approval_leave') { openAdminRequestsFiltered('paid_leave', 'pending'); return; }
+      // 各専用承認は種類フィルタ付きで申請管理へ(その他に有給等が混ざらない導線)。
+      if (btn.dataset.taskKey === 'approval_expense') { openAdminRequestsFiltered('expense_reimbursement', 'pending'); return; }
+      if (btn.dataset.taskKey === 'approval_meeting') { openAdminRequestsFiltered('meeting', 'pending'); return; }
       const b = TASK_TO_PEOPLE[btn.dataset.taskKey];
       if (b) openDailyReportPeople(b); else showScreen(btn.dataset.nav);
     }));
@@ -4043,6 +4067,15 @@ function openAdminRequestList(filter) {
   const found = DASH_CARDS.find((c) => c.filter === filter);
   document.getElementById('admin-request-list-title').textContent = found ? found.label : '一覧';
   showScreen('admin-request-list');
+}
+
+// 有給P0: 申請管理を「種類×状態」で絞り込んで開く(HOME件数と一覧を同一データソース admin_search_requests で一致させる)。
+function openAdminRequestsFiltered(type, status) {
+  areqFilters = { type: type || '', status: status || '', name: '', dateFrom: '', dateTo: '', site: '', partner: '' };
+  showScreen('admin-all-requests');
+  document.querySelectorAll('#areq-type-filter .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.type === areqFilters.type));
+  document.querySelectorAll('#areq-status-filter .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.status === areqFilters.status));
+  if (typeof loadAdminAllRequests === 'function') loadAdminAllRequests();
 }
 
 async function loadAdminRequestList() {

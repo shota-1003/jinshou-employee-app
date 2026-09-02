@@ -259,7 +259,7 @@ const ADMIN_SCREENS = new Set([
   'daily-report-needs-review-admin', 'daily-report-edit-requests-admin',
   'subcontractor-company-admin', 'subcontractor-worker-admin', 'personnel-ledger-hub',
   'supply-holdings-admin', 'supply-request-admin', 'joyo-denpyo-summary', 'master-management-hub', 'employee-create',
-  'first-login-codes-admin',
+  'first-login-codes-admin', 'pin-reset-admin',
 ]);
 let inAdminMode = false;
 // 「戻る」ボタンの遷移元復帰(2026-08-28)で使う、アプリ内で実際に何回画面遷移したかのカウンタ。
@@ -3403,6 +3403,55 @@ async function doAdminResetPin() {
   }
 }
 
+// 暗証番号リセット専用画面(支給品と完全分離)。対象社員の 社員番号・氏名 を表示し、
+// 本人確認のうえリセット→初回登録コードを表示する。PIN通知のdeep-linkはこの画面へ来る。
+let pendingPinResetPreselectId = null;
+async function loadPinResetAdmin() {
+  const session = getSession();
+  const sel = document.getElementById('pra-employee-select');
+  document.getElementById('pra-reset-status').textContent = '';
+  document.getElementById('pra-employee-detail').innerHTML = '';
+  try {
+    const rows = await rpc('list_active_employees', { p_admin_employee_code: session.employeeCode });
+    sel.innerHTML = '<option value="">社員を選択してください</option>' + rows.map((e) => `<option value="${e.employee_code}" data-id="${e.id != null ? e.id : ''}">${e.employee_code} ${e.employee_name}</option>`).join('');
+    if (pendingPinResetPreselectId != null) {
+      const opt = Array.from(sel.options).find((o) => String(o.dataset.id) === String(pendingPinResetPreselectId));
+      if (opt) { sel.value = opt.value; }
+      pendingPinResetPreselectId = null;
+    }
+    renderPinResetAdminDetail();
+  } catch (e) {
+    document.getElementById('pra-employee-detail').innerHTML = '<div class="hint">社員一覧の読み込みに失敗しました。</div>';
+  }
+}
+function renderPinResetAdminDetail() {
+  const sel = document.getElementById('pra-employee-select');
+  const detailEl = document.getElementById('pra-employee-detail');
+  const opt = sel.selectedOptions[0];
+  if (!sel.value || !opt) { detailEl.innerHTML = '<div class="hint">対象の社員を選択してください。</div>'; return; }
+  const name = opt.textContent.replace(/^\S+\s/, '');
+  detailEl.innerHTML = `
+    <div class="field-row"><span class="field-label">社員番号</span><span class="field-value">${sel.value}</span></div>
+    <div class="field-row"><span class="field-label">氏名</span><span class="field-value">${name}</span></div>`;
+}
+async function doPinResetAdmin() {
+  const session = getSession();
+  const targetCode = document.getElementById('pra-employee-select').value;
+  const statusEl = document.getElementById('pra-reset-status');
+  if (!targetCode) { statusEl.style.color = 'var(--danger)'; statusEl.textContent = '対象の社員を選択してください。'; return; }
+  if (!confirm(`社員番号${targetCode}の暗証番号をリセットします。現在の暗証番号は使えなくなり、新しい初回登録コードを本人へ伝える必要があります。よろしいですか？`)) return;
+  statusEl.textContent = '';
+  try {
+    const r = await rpc('admin_reset_employee_pin', { p_admin_employee_code: session.employeeCode, p_target_employee_code: targetCode });
+    const info = r[0];
+    statusEl.style.color = 'var(--success)';
+    statusEl.innerHTML = `リセットしました。初回登録コード: <b style="font-size:16px; letter-spacing:1px;">${info.out_code}</b>(このコードはこの画面を離れると二度と表示できません。今すぐ本人へお伝えください。有効期限: ${new Date(info.out_expires_at).toLocaleDateString('ja-JP')})`;
+  } catch (e) {
+    statusEl.textContent = 'リセットに失敗しました: ' + e.message;
+    statusEl.style.color = 'var(--danger)';
+  }
+}
+
 async function doAdminRecordIssuance() {
   const session = getSession();
   const targetCode = document.getElementById('admin-issue-employee').value;
@@ -3819,11 +3868,11 @@ async function announceDeepLink(announcementId) {
     openMyRequestDetail(t.target_id, 'announcements');
     return;
   }
-  // item4: 暗証番号再設定依頼(related_type='employees')は、管理者の社員管理(PINリセット)画面へ直接遷移し、
-  // 対象社員を自動選択する。管理者は本人確認のうえ「この社員の暗証番号をリセットする」を実行できる。
+  // 暗証番号再設定依頼(related_type='employees')は、支給品と完全に分離した「暗証番号のリセット」専用画面へ
+  // 直接遷移し、対象社員を自動選択する。支給品のUI/route/componentは一切経由しない。
   if (t.related_type === 'employees' && t.target_id) {
-    pendingAdminPreselectEmployeeId = Number(t.target_id);
-    showScreen('admin');
+    pendingPinResetPreselectId = Number(t.target_id);
+    showScreen('pin-reset-admin');
     return;
   }
   showScreen('announcements');
@@ -3872,7 +3921,7 @@ async function loadAnnouncements(includeArchived) {
         <div class="body">${a.body}${a.attachment_url ? `<br><a href="${a.attachment_url}" target="_blank" rel="noopener">添付ファイルを開く</a>` : ''}</div>
         ${a.related_type === 'employee_requests' ? `<button type="button" class="secondary announce-detail-btn" data-request-id="${a.related_id}">この申請の詳細を見る</button>` : ''}
         ${a.related_type === 'assignment_member' ? `<button type="button" class="secondary announce-assign-btn">配置を確認する</button>` : ''}
-        ${a.related_type === 'employees' ? `<button type="button" class="secondary announce-admin-btn">社員管理で対応する</button>` : ''}
+        ${a.related_type === 'employees' ? `<button type="button" class="secondary announce-admin-btn">暗証番号のリセットへ</button>` : ''}
         ${a.importance !== 'normal' ? `
           <div class="announce-ack-row">
             ${a.acknowledged_at
@@ -11397,6 +11446,8 @@ function init() {
   document.getElementById('admin-issue-submit').addEventListener('click', doAdminRecordIssuance);
   document.getElementById('admin-search-btn').addEventListener('click', doAdminSearch);
   document.getElementById('admin-reset-pin-btn').addEventListener('click', doAdminResetPin);
+  document.getElementById('pra-employee-select').addEventListener('change', renderPinResetAdminDetail);
+  document.getElementById('pra-reset-btn').addEventListener('click', doPinResetAdmin);
 
   document.getElementById('anon-submit-btn').addEventListener('click', doSubmitAnonConsultation);
   document.getElementById('anon-thread-send').addEventListener('click', doSendAnonThreadMessage);
@@ -11868,6 +11919,10 @@ function init() {
     if (!isAdmin()) { enterMenu(); return; }
     loadAdminEmployeeSelects();
     document.getElementById('admin-search-results').innerHTML = '';
+  };
+  SCREEN_ENTER_HOOKS['pin-reset-admin'] = () => {
+    if (!isAdmin()) { enterMenu(); return; }
+    loadPinResetAdmin();
   };
   SCREEN_ENTER_HOOKS['anon-consult'] = loadMyAnonConsultations;
   SCREEN_ENTER_HOOKS['anon-submit'] = () => { hideError('anon-submit-error'); document.getElementById('anon-content').value = ''; };

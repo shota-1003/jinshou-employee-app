@@ -1687,6 +1687,20 @@
     <div id="admin-search-results"></div>
   </section>
 
+  <!-- 暗証番号リセット専用(支給品と完全分離) -->
+  <section id="screen-pin-reset-admin" class="screen">
+    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <div class="form-title">暗証番号のリセット</div>
+    <div class="hint" style="margin-bottom:12px;">社員本人からの暗証番号の再設定依頼に対応します。本人確認のうえリセットし、表示される初回登録コードを本人へお伝えください。本人が次回ログイン時に新しい暗証番号を設定します。</div>
+    <div class="card">
+      <label for="pra-employee-select">対象社員</label>
+      <select id="pra-employee-select"></select>
+      <div id="pra-employee-detail" class="field-group" style="margin:8px 0;"></div>
+      <button type="button" id="pra-reset-btn">この社員の暗証番号をリセットする</button>
+      <div class="hint-inline" id="pra-reset-status"></div>
+    </div>
+  </section>
+
   <!-- 管理者ダッシュボード -->
   <section id="screen-admin-dashboard" class="screen">
     <button type="button" class="back-link" data-nav="menu">ホームに戻る</button>

@@ -9286,6 +9286,57 @@ async function doRevokeAdminRole(employeeCode, roleType) {
 // ---------- 日報管理(管理者/日報担当) ----------
 
 let drmFilters = { name: '', workerType: '', status: '', dateFrom: '', dateTo: '', site: null, companyId: '' };
+let drmSelectedDate = null; // 日報管理で選択中の1日(YYYY-MM-DD)。日付ナビで前後移動する。
+
+// 日報管理の日付ナビ(＜ 2026年9月2日(水) ＞ 今日)。選択日を1日だけ表示する主軸。
+function renderDrmDateNav() {
+  const nav = document.getElementById('drm-date-nav');
+  if (!nav) return;
+  const today = todayJST();
+  const shift = (days) => { const d = new Date(drmSelectedDate + 'T00:00:00'); d.setDate(d.getDate() + days); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  nav.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <button type="button" class="secondary" id="drm-date-prev" style="flex:none;width:auto;padding:8px 14px;">‹</button>
+      <div style="flex:1;min-width:0;text-align:center;font-weight:700;font-size:16px;">${formatJpDateWithDow(drmSelectedDate)}</div>
+      <button type="button" class="secondary" id="drm-date-next" style="flex:none;width:auto;padding:8px 14px;">›</button>
+    </div>
+    <div style="display:flex;justify-content:center;margin-top:6px;">
+      <button type="button" class="link" id="drm-date-today" ${drmSelectedDate === today ? 'disabled' : ''}>今日</button>
+    </div>`;
+  const setDate = (d) => { drmSelectedDate = d; drmFilters.dateFrom = d; drmFilters.dateTo = d; document.getElementById('drm-date-from').value = d; document.getElementById('drm-date-to').value = d; renderDrmDateNav(); loadDailyReportManagementList(); };
+  document.getElementById('drm-date-prev').addEventListener('click', () => setDate(shift(-1)));
+  document.getElementById('drm-date-next').addEventListener('click', () => setDate(shift(1)));
+  const todayBtn = document.getElementById('drm-date-today');
+  if (todayBtn) todayBtn.addEventListener('click', () => setDate(today));
+}
+
+// 選択日「その1日だけ」の件数要約(合計・社員・外注・提出済み・差し戻し・下書き・取消)。
+// 過去/未来日が混ざって数字が変動する状態をなくす。カード(=会社×現場×勤務区分/社員×日)単位で数える。
+async function renderDrmDaySummary() {
+  const el = document.getElementById('drm-day-summary');
+  if (!el) return;
+  const session = getSession();
+  try {
+    const rows = await rpc('admin_search_daily_reports', {
+      p_admin_employee_code: session.employeeCode, p_date_from: drmSelectedDate, p_date_to: drmSelectedDate,
+      p_employee_code: null, p_site_id: null, p_validation_status: null,
+      p_worker_type: null, p_subcontractor_company_id: null, p_report_status: null,
+    });
+    const groups = new Map();
+    rows.forEach((r) => { const k = drmGroupKey(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
+    const cards = Array.from(groups.values()).map((g) => ({ worker: g[0].worker_type, status: (g.every((r) => r.report_status === 'cancelled') ? 'cancelled' : (g.find((r) => r.report_status !== 'cancelled') || g[0]).report_status) }));
+    const active = cards.filter((c) => c.status !== 'cancelled');
+    const cnt = (pred) => active.filter(pred).length;
+    el.innerHTML = `
+      <div style="font-weight:700;margin-bottom:6px;">合計 ${active.length}件</div>
+      <div class="drm-day-sum-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;font-size:14px;overflow-wrap:anywhere;">
+        <span>社員 ${cnt((c) => c.worker === 'employee')}件</span><span>外注 ${cnt((c) => c.worker === 'subcontractor')}件</span>
+        <span>提出済み ${cnt((c) => c.status === 'submitted')}件</span><span>確認済み ${cnt((c) => c.status === 'confirmed')}件</span>
+        <span>差し戻し ${cnt((c) => c.status === 'rejected')}件</span><span>下書き ${cnt((c) => c.status === 'draft')}件</span>
+        <span>取消 ${cards.length - active.length}件</span>
+      </div>`;
+  } catch (e) { el.innerHTML = ''; }
+}
 let drmRows = [];
 let drmSelected = new Set(); // 選択中のグループキー(report_date|personKey)
 let drmSort = { col: 'report_date', dir: 'desc' };
@@ -9294,14 +9345,18 @@ const DRM_STATUS_LABEL = { draft: '下書き', submitted: '提出済み', confir
 
 async function loadDailyReportManagement() {
   const session = getSession();
-  drmFilters = { name: '', workerType: '', status: '', dateFrom: '', dateTo: '', site: null, companyId: '' };
+  // 日報管理は「日付」を主軸に。既定は本日の1日だけを表示(過去・未来日は日付ナビで移動)。
+  const today = todayJST();
+  drmSelectedDate = drmSelectedDate || today;
+  drmFilters = { name: '', workerType: '', status: '', dateFrom: drmSelectedDate, dateTo: drmSelectedDate, site: null, companyId: '' };
   drmSelected.clear();
   document.getElementById('drm-search-name').value = '';
   document.getElementById('drm-search-site').value = '';
   document.getElementById('drm-selected-site-label').style.display = 'none';
   document.getElementById('drm-site-candidates').innerHTML = '';
-  document.getElementById('drm-date-from').value = '';
-  document.getElementById('drm-date-to').value = '';
+  document.getElementById('drm-date-from').value = drmSelectedDate;
+  document.getElementById('drm-date-to').value = drmSelectedDate;
+  renderDrmDateNav();
   document.getElementById('drm-advanced').style.display = 'none';
   document.getElementById('drm-missing-today-list').style.display = 'none';
   document.getElementById('drm-missing-toggle').textContent = '未提出者を表示する';
@@ -9480,7 +9535,10 @@ function applyDrmCardFilter(cardKey) {
 }
 
 function drmGroupKey(r) {
-  return `${r.report_date}|${r.worker_type}|${r.employee_code || r.subcontractor_worker_name}`;
+  // 外注(応援)は作業員名を持たないため、従来キー(worker_name)だと同日の別会社・別現場が
+  // 1カードに束ねられていた。外注は日報行(id)ごとに独立カードにし、会社×現場×勤務区分を分ける。
+  if (r.worker_type === 'subcontractor') return `${r.report_date}|sc|${r.id}`;
+  return `${r.report_date}|${r.worker_type}|${r.employee_code}`;
 }
 
 async function loadDailyReportManagementList() {
@@ -9505,6 +9563,7 @@ async function loadDailyReportManagementList() {
     }
     countEl.textContent = `${drmRows.length}件`;
     renderDrmAll();
+    renderDrmDaySummary();
   } catch (e) {
     listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
   }
@@ -9553,7 +9612,8 @@ function formatJpDateWithDow(dateStr) {
 
 function drmWorkerLabel(f) {
   if (f && f.worker_type === 'subcontractor') {
-    const co = f.subcontractor_company_name || '(会社未設定)';
+    // 会社未設定(subcontractor_company_id NULL)の既存データは「会社未設定・要修正」と明示(推測しない)。
+    const co = f.subcontractor_company_name || '会社未設定・要修正';
     if (f.subcontractor_worker_name) return `${f.subcontractor_worker_name}(外注:${co})`;
     const ppl = (f.subcontractor_headcount != null && f.subcontractor_headcount !== '') ? ` ${Number(f.subcontractor_headcount)}名` : '';
     return `外注（応援） ${co}${ppl}`;
@@ -9692,7 +9752,7 @@ async function openDailyReportDetail(groupKey) {
     const effNight = r.reflect_override_work_type ? r.reflect_override_is_night_shift : r.is_night_shift;
     return `
       <div class="card" data-slot-id="${r.id}">
-        <div class="form-title" style="font-size:15px;">現場${idx + 1}(スロット${r.entry_slot || idx + 1})</div>
+        <div class="form-title" style="font-size:15px;">現場${idx + 1}${rows.length > 1 ? `（${idx + 1}件目 / 全${rows.length}件）` : ''}</div>
         <div class="field-group">
           ${f.worker_type === 'subcontractor' ? `
           <div class="field-row"><span class="field-label">外注会社</span><span class="field-value">${f.subcontractor_company_name || '(会社未設定)'}</span></div>` : ''}

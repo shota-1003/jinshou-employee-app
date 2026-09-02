@@ -2804,6 +2804,24 @@ async function loadMyRequestDetailContent() {
       img.addEventListener('click', () => openImageZoom(img.dataset.zoom));
     });
 
+    // item16: 承認前の有給申請は本人が取り消せる(承認済み/支払済み/却下/取消済みは不可)。
+    const leaveCancelable = head.request_type === 'paid_leave'
+      && ['draft', 'waiting_employee_info', 'ready_for_review', 'needs_review', 'stopped', 'waiting_approval', 'on_hold'].includes(head.status);
+    if (leaveCancelable) {
+      document.getElementById('mrd-items').insertAdjacentHTML('beforeend',
+        '<button type="button" class="secondary" id="mrd-cancel-leave" style="margin-top:14px;color:var(--danger);border-color:var(--danger);">この有給申請を取り消す</button>');
+      document.getElementById('mrd-cancel-leave').addEventListener('click', async () => {
+        if (!window.confirm('この有給申請を取り消しますか？\n\n承認前のため取り消せます。取消後は承認待ちから外れます（有給残数には影響しません）。')) return;
+        const reason = window.prompt('取消理由（任意）') || null;
+        const session2 = getSession();
+        try {
+          await rpc('cancel_my_paid_leave_request', { p_employee_code: session2.employeeCode, p_employee_request_id: requestId, p_reason: reason });
+          alert('有給申請を取り消しました。');
+          showScreen(returnTo || 'history');
+        } catch (e2) { alert(e2.message || '取消に失敗しました。'); }
+      });
+    }
+
     // 経費立替のみ支払状況(未払い/受取確認待ち/支払済み)を表示する。承認額そのものが
     // 無い(=承認済み明細がまだ無い)申請は支払カードを出さない。
     if (head.request_type === 'expense_reimbursement' && head.approved_total != null) {
@@ -3277,10 +3295,17 @@ async function isNippoAdmin() {
 async function loadAdminEmployeeSelects() {
   const session = getSession();
   const rows = await rpc('list_active_employees', { p_admin_employee_code: session.employeeCode });
-  const options = rows.map((e) => `<option value="${e.employee_code}">${e.employee_code} ${e.employee_name}</option>`).join('');
+  const options = rows.map((e) => `<option value="${e.employee_code}" data-id="${e.id != null ? e.id : ''}">${e.employee_code} ${e.employee_name}</option>`).join('');
   document.getElementById('admin-employee-select').innerHTML = options;
   document.getElementById('admin-issue-employee').innerHTML = options;
   await loadAdminIssueMasterSelect();
+  // item4: PINリセット通知等から来た場合、対象社員を自動選択して詳細(PINリセット導線)を出す。
+  if (pendingAdminPreselectEmployeeId != null) {
+    const sel = document.getElementById('admin-employee-select');
+    const opt = Array.from(sel.options).find((o) => String(o.dataset.id) === String(pendingAdminPreselectEmployeeId));
+    if (opt) { sel.value = opt.value; loadAdminEmployeeDetail(); }
+    pendingAdminPreselectEmployeeId = null;
+  }
 }
 
 async function loadAdminIssueMasterSelect() {
@@ -3757,8 +3782,17 @@ async function announceDeepLink(announcementId) {
     openMyRequestDetail(t.target_id, 'announcements');
     return;
   }
+  // item4: 暗証番号再設定依頼(related_type='employees')は、管理者の社員管理(PINリセット)画面へ直接遷移し、
+  // 対象社員を自動選択する。管理者は本人確認のうえ「この社員の暗証番号をリセットする」を実行できる。
+  if (t.related_type === 'employees' && t.target_id) {
+    pendingAdminPreselectEmployeeId = Number(t.target_id);
+    showScreen('admin');
+    return;
+  }
   showScreen('announcements');
 }
+// item4: PINリセット通知等から管理者社員管理へ来たとき、対象社員を自動選択するための保留id。
+let pendingAdminPreselectEmployeeId = null;
 
 // お知らせがホーム画面に表示され続けてよいかどうかの判定(共通)。
 // ルール: 未読は常に表示する。既読の場合は、display_modeがpersist_after_readなら表示し続け、

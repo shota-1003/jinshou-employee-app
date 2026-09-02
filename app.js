@@ -3770,6 +3770,9 @@ function shouldShowOnHome(a) {
   // ホームに表示され続けてしまっていた)。
   if (a.display_mode === 'until_date' && a.display_until && new Date(a.display_until) < new Date()) return false;
   if (!a.is_read) return true;
+  // item6: 「既読」と「処理済み」を分ける。配置(assignment_member)等のアクション付き日常通知は、
+  // 本人が確認(acknowledged_at=操作完了)したらHOMEから消す。会社告知等はread後も残す(persist)。
+  if (a.related_type === 'assignment_member' && a.acknowledged_at) return false;
   if (a.display_mode === 'persist_after_read') return true;
   if (a.display_mode === 'until_date' && a.display_until) {
     return new Date(a.display_until) >= new Date();
@@ -3834,14 +3837,27 @@ async function loadAnnouncements(includeArchived) {
       });
     });
     listEl.querySelectorAll('.announce-assign-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
+      // item2: 「配置を確認する」で、対象の配置(assignment_member)を直接『確認済み』にする。
+      // notificationの既読だけで終わらせず、本人のassignment acknowledgement(confirmed_at)を保存し、
+      // 管理者の「本日の配置を社員がまだ確認していない」件数から除外され、通知カードも確認済みになる。
+      btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const item = btn.closest('.announce-item');
-        if (item && item.classList.contains('unread')) {
-          item.classList.remove('unread');
-          try { rpc('mark_announcement_read', { p_employee_code: session.employeeCode, p_announcement_id: Number(item.dataset.id) }); } catch (e2) { /* 無視 */ }
+        const annId = Number(item.dataset.id);
+        btn.disabled = true;
+        try {
+          const rows = await rpc('get_announcement_target', { p_employee_code: session.employeeCode, p_announcement_id: annId });
+          const t = rows && rows[0];
+          if (t && t.related_type === 'assignment_member' && t.target_id) {
+            await rpc('assignment_confirm_my_assignment', { p_employee_code: session.employeeCode, p_member_id: Number(t.target_id) });
+          }
+          await rpc('mark_announcement_read', { p_employee_code: session.employeeCode, p_announcement_id: annId });
+          await rpc('acknowledge_announcement', { p_employee_code: session.employeeCode, p_announcement_id: annId }).catch(() => {});
+          loadAnnouncements();
+        } catch (e2) {
+          btn.disabled = false;
+          alert(e2.message || '配置の確認に失敗しました。もう一度お試しください。');
         }
-        announceDeepLink(Number(item.dataset.id));
       });
     });
     listEl.querySelectorAll('.announce-ack-btn').forEach((btn) => {

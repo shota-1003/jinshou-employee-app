@@ -355,6 +355,7 @@
         <select id="daily-report-target-type">
           <option value="self">自分</option>
           <option value="employee">他の社員(代理入力)</option>
+          <option value="subcontractor">外注作業員(個人・代理入力)</option>
           <option value="subcontractor_support">外注（応援）</option>
         </select>
         <div class="hint-inline">「外注（応援）」を選ぶと、社員の日報フォームは表示されず、外注専用の入力に切り替わります。</div>
@@ -681,6 +682,7 @@
     <!-- 日付主軸: 選択した1日だけを表示。前後移動・今日・その日の件数要約。 -->
     <div class="card" id="drm-date-nav" style="margin-bottom:10px;"></div>
     <div class="card" id="drm-day-summary" style="margin-bottom:14px;"></div>
+    <div id="drm-sc-missing" style="margin-bottom:14px;"></div>
 
     <div id="drm-breakdown" style="margin-bottom:14px;"></div>
     <div class="dash-card-grid" id="drm-summary-grid" style="margin-bottom:14px;"></div>

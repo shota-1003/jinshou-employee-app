@@ -7971,10 +7971,18 @@ async function loadDailyReportAssignmentChips(dateStr) {
 async function loadDailyReportRecentSites() {
   const area = document.getElementById('daily-report-recent-sites');
   const row = document.getElementById('daily-report-recent-sites-row');
-  const params = dailyReportTarget.type === 'subcontractor'
-    ? { p_employee_code: null, p_worker_type: 'subcontractor', p_subcontractor_worker_id: dailyReportTarget.subcontractorWorkerId }
-    : { p_employee_code: dailyReportTarget.type === 'employee' ? dailyReportTarget.employeeCode : getSession().employeeCode, p_worker_type: 'employee', p_subcontractor_worker_id: null };
+  // get_recent_daily_report_sites はセッションを p_employee_code で検証する(その端末トークンが
+  // そのemployee_codeのものか)。代理入力で対象者コードを渡すと、呼び出している管理者本人の
+  // トークンと一致せず「セッションが確認できませんでした」→ログイン画面へ強制送還される不具合が
+  // あった。認証は必ず呼び出し元(管理者/本人)自身のコードで行い、対象の絞り込みは worker_type と
+  // p_subcontractor_worker_id で行う(既存の admin_search_daily_reports と同じ考え方)。社員の代理
+  // 入力では対象社員の履歴を出せないため、この便宜機能は出さない(配置チップが現場候補を補う)。
+  const session = getSession();
+  if (dailyReportTarget.type === 'employee') { area.style.display = 'none'; return; }
   if (dailyReportTarget.type === 'subcontractor' && !dailyReportTarget.subcontractorWorkerId) { area.style.display = 'none'; return; }
+  const params = dailyReportTarget.type === 'subcontractor'
+    ? { p_employee_code: session.employeeCode, p_worker_type: 'subcontractor', p_subcontractor_worker_id: dailyReportTarget.subcontractorWorkerId }
+    : { p_employee_code: session.employeeCode, p_worker_type: 'employee', p_subcontractor_worker_id: null };
   try {
     const rows = await rpc('get_recent_daily_report_sites', params);
     if (!rows || rows.length === 0) { area.style.display = 'none'; return; }
@@ -9478,7 +9486,60 @@ async function renderDrmDaySummary() {
         <span>取消 ${Number(s.cancelled_count || 0)}件</span><span></span>
       </div>`;
   } catch (e) { el.innerHTML = ''; }
+  renderDrmSubcontractorMissing();
 }
+
+// 外注「作業員単位」の未提出検知(配置カレンダーに個人で載っている外注作業員のうち、その日の
+// 本人日報が無い者)。会社単位の集計だけでは「誰が出していないか」が分からないため、
+// 「○○会社 ○○さん 日報未提出」を一覧化し、タップで管理者が代理入力(既存の日報入力画面の
+// 外注作業員モード)へ直行できるようにする。電話が無い/連絡がつかない/外国籍等で本人入力
+// できない作業員への導線。
+async function renderDrmSubcontractorMissing() {
+  const el = document.getElementById('drm-sc-missing');
+  if (!el) return;
+  const session = getSession();
+  try {
+    const rows = await rpc('admin_get_subcontractor_missing_workers', { p_admin_employee_code: session.employeeCode, p_report_date: drmSelectedDate });
+    const missing = (rows || []).filter((r) => r.submitted === false);
+    if (!missing.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `
+      <div class="card" style="border-left:3px solid var(--danger,#d9534f);">
+        <div style="font-weight:700;margin-bottom:8px;color:var(--danger,#d9534f);">外注 本人日報 未提出 ${missing.length}名</div>
+        <div class="hint" style="margin-bottom:8px;">配置あり・本人日報なしの外注作業員です。タップすると代理入力できます。</div>
+        <div id="drm-sc-missing-list"></div>
+      </div>`;
+    const list = document.getElementById('drm-sc-missing-list');
+    list.innerHTML = missing.map((m) => `
+      <button type="button" class="history-item" data-wid="${m.worker_id}" data-wname="${(m.worker_name || '').replace(/"/g, '&quot;')}" style="width:100%;text-align:left;">
+        <div style="font-weight:600;">${m.company_name || '(会社未設定)'}　${m.worker_name || ''} <span style="color:var(--danger,#d9534f);font-weight:700;">日報未提出</span></div>
+        <div class="hint">${m.site_names || ''}　▶ 代理入力</div>
+      </button>`).join('');
+    list.querySelectorAll('.history-item').forEach((btn) => {
+      btn.addEventListener('click', () => openSubcontractorProxyEntry(Number(btn.dataset.wid), btn.dataset.wname, drmSelectedDate));
+    });
+  } catch (e) { el.innerHTML = ''; }
+}
+
+// 未提出の外注作業員をタップ → 既存の日報入力画面を「外注作業員モード + その作業員 + その日付」で開く。
+async function openSubcontractorProxyEntry(workerId, workerName, dateStr) {
+  dailyReportPrefillDate = dateStr;
+  showScreen('daily-report');
+  await resetDailyReportForm();
+  // resetDailyReportForm内のloadDailyReportForDateはawaitされずに走るため、ここで直後に
+  // 別のloadを重ねるとentryが二重・三重に生成される。resetのloadが落ち着くまで一拍待ってから
+  // 対象作業員で1回だけ読み直す(空の入力行が複数出る不具合を防ぐ)。
+  await new Promise((r) => setTimeout(r, 200));
+  const typeSelect = document.getElementById('daily-report-target-type');
+  typeSelect.value = 'subcontractor';
+  typeSelect.dispatchEvent(new Event('change'));
+  dailyReportTarget = { type: 'subcontractor', employeeCode: null, employeeName: null, subcontractorWorkerId: workerId, workerName };
+  const lbl = document.getElementById('daily-report-target-worker-label');
+  if (lbl) { lbl.style.display = 'block'; lbl.textContent = `選択中: ${workerName}（代理入力）`; }
+  const dateInput = document.getElementById('daily-report-date');
+  if (dateInput) dateInput.value = dateStr;
+  await loadDailyReportForDate(dateStr);
+}
+
 let drmRows = [];
 let drmSelected = new Set(); // 選択中のグループキー(report_date|personKey)
 let drmSort = { col: 'report_date', dir: 'desc' };
@@ -12484,16 +12545,36 @@ function init() {
   // sw.js側でskipWaiting+clients.claim済みなので、制御が新しいSWへ切り替わった瞬間に
   // 自動で1回だけ再読み込みし、実機でも次に開いたときには必ず最新版になるようにする。
   if ('serviceWorker' in navigator) {
+    // 新バージョン公開後、通常アクセスだけで最新Productionへ収束させる。無限reloadは起こさない:
+    //  - 初回インストール(以前コントローラ無し)ではreloadしない(既に最新を取得済みのため)。
+    //  - 制御が新SWへ切り替わった時だけ1回reload(swRefreshingガード)。
+    //  - 長時間開いたままのPWAでも収束するよう、定期(15分)/可視化/フォーカス時に更新チェック。
     let swRefreshing = false;
+    const hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (swRefreshing) return;
+      if (!hadController) return; // 初回インストールの制御取得ではreloadしない(無駄reload/初回チラつき防止)
       swRefreshing = true;
       window.location.reload();
     });
     navigator.serviceWorker.register('sw.js').then((reg) => {
-      reg.update().catch(() => {});
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      const check = () => reg.update().catch(() => {});
+      check();
+      // 定期更新チェック(常駐PWA対策)。無限reloadにはならない(バージョンが同じならcontrollerchangeは発火しない)。
+      setInterval(check, 15 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+      window.addEventListener('focus', check);
+      // 既に新SWがwaiting(前回未収束)なら、skipWaitingを促して即収束させる。
+      if (reg.waiting && navigator.serviceWorker.controller) { try { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch (e) { /* noop */ } }
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', () => {
+          // 新SWがinstalled済み+既存コントローラありなら更新。sw.js側のskipWaitingで自動activate→controllerchange→reload。
+          if (nw.state === 'installed' && navigator.serviceWorker.controller && reg.waiting) {
+            try { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch (e) { /* noop */ }
+          }
+        });
       });
     }).catch(() => {});
   }

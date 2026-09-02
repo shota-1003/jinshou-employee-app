@@ -296,7 +296,7 @@ async function loadQualifications() {
     const list = $('pf-qual-list'); const empty = $('pf-qual-empty');
     if (!rows || !rows.length) { list.innerHTML = ''; empty.style.display = 'block'; return; }
     empty.style.display = 'none';
-    list.innerHTML = rows.map((q) => `<div class="recent-item">${escapeHtml(q.qualification_name)}${q.qualification_number ? '（' + escapeHtml(q.qualification_number) + '）' : ''}${q.expiry_date ? '<span class="chip">期限 ' + q.expiry_date + '</span>' : ''} <button type="button" class="qual-del" data-id="${q.id}" style="float:right;background:none;color:var(--danger);width:auto;margin:0;padding:0 6px;">削除</button></div>`).join('');
+    list.innerHTML = rows.map((q) => `<div class="recent-item" data-qname="${escapeHtml(q.qualification_name)}">${escapeHtml(q.qualification_name)}${q.qualification_number ? '（' + escapeHtml(q.qualification_number) + '）' : ''}${q.expiry_date ? '<span class="chip">期限 ' + q.expiry_date + '</span>' : ''} <button type="button" class="qual-del" data-id="${q.id}" style="float:right;background:none;color:var(--danger);width:auto;margin:0;padding:0 6px;">削除</button></div>`).join('');
     list.querySelectorAll('.qual-del').forEach((b) => b.addEventListener('click', async () => { await rpc('delete_my_subcontractor_qualification', { p_login_code: loginCode, p_id: Number(b.dataset.id) }).catch(() => {}); loadQualifications(); }));
   } catch (e) { $('pf-qual-list').innerHTML = ''; }
 }
@@ -309,18 +309,32 @@ async function loadQualMaster() {
     (rows || []).forEach((r) => { (cats[r.category] = cats[r.category] || []).push(r); });
     let html = '<option value="">選択してください</option>';
     Object.keys(cats).forEach((cat) => {
-      html += `<optgroup label="${escapeHtml(cat)}">` + cats[cat].map((r) => `<option value="${r.id}">${escapeHtml(r.qualification_name)}</option>`).join('') + '</optgroup>';
+      html += `<optgroup label="${escapeHtml(cat)}">` + cats[cat].map((r) => `<option value="${r.id}" data-name="${escapeHtml(r.qualification_name)}">${escapeHtml(r.qualification_name)}</option>`).join('') + '</optgroup>';
     });
+    // 最後に「その他（自由記入）」。選ぶと自由入力欄を出す。
+    html += '<option value="__other__">その他（自由記入）</option>';
     sel.innerHTML = html;
+    sel.onchange = () => { $('pf-qual-other-wrap').style.display = (sel.value === '__other__') ? 'block' : 'none'; };
   } catch (e) { $('pf-qual-select').innerHTML = '<option value="">(資格一覧を取得できませんでした)</option>'; }
 }
 async function addQualification() {
   setErr('qual-error', '');
-  const masterId = $('pf-qual-select').value;
-  if (!masterId) { setErr('qual-error', '持っている資格を一覧から選んでください。'); return; }
+  const sel = $('pf-qual-select');
+  const val = sel.value;
+  if (!val) { setErr('qual-error', '持っている資格を一覧から選んでください。'); return; }
+  // 既に登録済みの資格名は重複警告(その他/マスターとも)。
+  const existingNames = Array.from(document.querySelectorAll('#pf-qual-list .recent-item')).map((el) => (el.dataset.qname || '').trim());
+  const targetName = (val === '__other__') ? $('pf-qual-other').value.trim() : (sel.options[sel.selectedIndex].dataset.name || '').trim();
+  if (val === '__other__' && !targetName) { setErr('qual-error', '資格・免許名を入力してください。'); return; }
+  if (targetName && existingNames.includes(targetName)) { setErr('qual-error', `「${targetName}」は既に登録済みです（重複登録はできません）。`); return; }
   try {
-    await rpc('submit_my_subcontractor_qualification_selected', { p_login_code: loginCode, p_master_id: Number(masterId) });
-    $('pf-qual-select').value = '';
+    if (val === '__other__') {
+      await rpc('submit_my_subcontractor_qualification', { p_login_code: loginCode, p_qualification_name: targetName });
+      $('pf-qual-other').value = '';
+    } else {
+      await rpc('submit_my_subcontractor_qualification_selected', { p_login_code: loginCode, p_master_id: Number(val) });
+    }
+    sel.value = ''; $('pf-qual-other-wrap').style.display = 'none';
     await loadQualifications();
   } catch (e) { setErr('qual-error', e.message || '資格の追加に失敗しました。'); }
 }

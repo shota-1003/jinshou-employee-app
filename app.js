@@ -2857,6 +2857,22 @@ async function loadMyRequestDetailContent() {
         } catch (e2) { alert(e2.message || '取消に失敗しました。'); }
       });
     }
+    // 承認前の会議/経費/支給品申請も本人が取り消せる(共通ルール cancel_my_request)。承認済み等は不可。
+    const genericCancelable = ['meeting', 'expense_reimbursement', 'supply_item'].includes(head.request_type)
+      && ['waiting_approval', 'ready_for_review'].includes(head.status);
+    if (genericCancelable) {
+      document.getElementById('mrd-items').insertAdjacentHTML('beforeend',
+        '<button type="button" class="secondary" id="mrd-cancel-request" style="margin-top:14px;color:var(--danger);border-color:var(--danger);">この申請を取り消す</button>');
+      document.getElementById('mrd-cancel-request').addEventListener('click', async () => {
+        if (!window.confirm('この申請を取り消しますか？\n\n承認前のため取り消せます。取消後は承認待ちから外れます。')) return;
+        const session2 = getSession();
+        try {
+          await rpc('cancel_my_request', { p_employee_code: session2.employeeCode, p_source_type: head.request_type, p_source_id: requestId });
+          alert('申請を取り消しました。');
+          showScreen(returnTo || 'history');
+        } catch (e2) { alert(e2.message || '取消に失敗しました。'); }
+      });
+    }
 
     // 経費立替のみ支払状況(未払い/受取確認待ち/支払済み)を表示する。承認額そのものが
     // 無い(=承認済み明細がまだ無い)申請は支払カードを出さない。
@@ -7753,23 +7769,9 @@ function addDailyReportEntry(prefill) {
   if (prefill && prefill.early_commute_hours != null) clone.querySelector('.dr-early-commute-hours').value = prefill.early_commute_hours;
   if (prefill && prefill.commute_overtime_hours != null) clone.querySelector('.dr-commute-overtime-hours').value = prefill.commute_overtime_hours;
   if (prefill && prefill.is_over_100km) clone.querySelector('.dr-is-over-100km').checked = true;
+  // 出張は日次フラグ(あり/なし)のみ。宿泊日数は日報では扱わない。
   const isBusinessTripEl = clone.querySelector('.dr-is-business-trip');
-  const overnightWrap = clone.querySelector('.dr-overnight-wrap');
-  const isOvernightEl = clone.querySelector('.dr-is-overnight');
-  const overnightNightsWrap = clone.querySelector('.dr-overnight-nights-wrap');
-  const overnightNightsEl = clone.querySelector('.dr-overnight-nights');
   if (prefill && prefill.is_business_trip) isBusinessTripEl.checked = true;
-  if (prefill && prefill.is_overnight) isOvernightEl.checked = true;
-  if (prefill && prefill.overnight_nights != null) overnightNightsEl.value = prefill.overnight_nights;
-  overnightWrap.style.display = isBusinessTripEl.checked ? 'block' : 'none';
-  overnightNightsWrap.style.display = isOvernightEl.checked ? 'block' : 'none';
-  isBusinessTripEl.addEventListener('change', () => {
-    overnightWrap.style.display = isBusinessTripEl.checked ? 'block' : 'none';
-    if (!isBusinessTripEl.checked) { isOvernightEl.checked = false; overnightNightsWrap.style.display = 'none'; }
-  });
-  isOvernightEl.addEventListener('change', () => {
-    overnightNightsWrap.style.display = isOvernightEl.checked ? 'block' : 'none';
-  });
   if (prefill && prefill.is_transport) clone.querySelector('.dr-is-transport').checked = true;
   if (prefill && prefill.is_field_duty) clone.querySelector('.dr-is-field-duty').checked = true;
   if (prefill && prefill.is_sales) clone.querySelector('.dr-is-sales').checked = true;
@@ -8140,8 +8142,8 @@ async function doSubmitDailyReport(isDraft) {
       is_field_duty: el.querySelector('.dr-is-field-duty').checked,
       is_sales: el.querySelector('.dr-is-sales').checked,
       is_business_trip: el.querySelector('.dr-is-business-trip').checked,
-      is_overnight: el.querySelector('.dr-is-overnight').checked,
-      overnight_nights: el.querySelector('.dr-overnight-nights').value ? Number(el.querySelector('.dr-overnight-nights').value) : null,
+      is_overnight: false, // 出張は日次フラグのみ(宿泊日数は日報で扱わない)
+      overnight_nights: null,
     });
   }
 
@@ -8745,7 +8747,7 @@ async function renderMyDailyReportDetailBody(dateStr) {
         <div class="field-row"><span>通勤早出</span><span>${r.is_early_commute ? `あり(${r.early_commute_hours}h)` : 'なし'}</span></div>
         <div class="field-row"><span>通勤残業</span><span>${r.is_commute_overtime ? `あり(${r.commute_overtime_hours}h)` : 'なし'}</span></div>
         <div class="field-row"><span>通勤100km超</span><span>${r.is_over_100km ? 'あり' : 'なし'}</span></div>
-        <div class="field-row"><span>出張</span><span>${r.is_business_trip ? (r.is_overnight ? `あり(宿泊${r.overnight_nights || ''}日)` : 'あり(日帰り)') : 'なし'}</span></div>
+        <div class="field-row"><span>出張</span><span>${r.is_business_trip ? 'あり' : 'なし'}</span></div>
         <div class="field-row"><span>現場作業</span><span>${r.is_field_duty ? 'あり' : 'なし'}</span></div>
         <div class="field-row"><span>営業</span><span>${r.is_sales ? 'あり' : 'なし'}</span></div>
         <div class="field-row"><span>運搬</span><span>${r.is_transport ? 'あり' : 'なし'}</span></div>
@@ -9912,14 +9914,16 @@ function drdEmployeeOriginalHtml(r, effWorkType, effLeader, effNight) {
     drdFieldRow('人工', num(r.headcount) + '人工'),
     drdFieldRow('リーダー/職長', yn(r.is_leader)),
     drdFieldRow('夜勤', yn(r.is_night_shift)),
-    drdFieldRow('残業時間', num(r.overtime_hours) > 0 ? num(r.overtime_hours) + '時間' : 'なし'),
   ].join('');
-  // 【勤怠・手当】P0 + 副次(値ありのみ)
+  // 【勤怠・手当】給与計算に必要な時間は入力フォームと同じ正式フィールド名で個別表示(表示用の合算値を作らない)。
+  const hours = (v) => (num(v) > 0 ? num(v) + '時間' : 'なし');
   const attend = [];
-  attend.push(drdFieldRow('早出', num(r.early_commute_hours) > 0 ? num(r.early_commute_hours) + '時間' : 'なし'));
-  attend.push(drdFieldRow('通勤時間外', num(r.commute_overtime_hours) > 0 ? num(r.commute_overtime_hours) + '時間' : 'なし'));
+  attend.push(drdFieldRow('残業', hours(r.overtime_hours)));                    // overtime_hours
+  attend.push(drdFieldRow('通勤早出', hours(r.early_commute_hours)));           // early_commute_hours(運転手)
+  attend.push(drdFieldRow('通勤残業', hours(r.commute_overtime_hours)));        // commute_overtime_hours(運転手)
   attend.push(drdFieldRow('100km以上', yn(r.is_over_100km)));
-  attend.push(drdFieldRow('出張', r.is_business_trip ? ('あり' + (r.is_overnight ? `（${num(r.overnight_nights)}泊）` : '')) : 'なし'));
+  // 出張は日次フラグ(あり/なし)のみ。泊数は日報詳細に出さない(既存データは保持)。
+  attend.push(drdFieldRow('出張', yn(r.is_business_trip)));
   if (r.is_business_trip && (r.business_trip_allowance_eligible || num(r.business_trip_allowance_amount) > 0)) {
     attend.push(drdFieldRow('出張手当', (r.business_trip_allowance_eligible ? '対象' : '対象外') + (num(r.business_trip_allowance_amount) > 0 ? `（${num(r.business_trip_allowance_amount).toLocaleString()}円）` : '')));
   }

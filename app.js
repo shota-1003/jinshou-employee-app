@@ -9303,11 +9303,39 @@ function renderDrmDateNav() {
     <div style="display:flex;justify-content:center;margin-top:6px;">
       <button type="button" class="link" id="drm-date-today" ${drmSelectedDate === today ? 'disabled' : ''}>今日</button>
     </div>`;
-  const setDate = (d) => { drmSelectedDate = d; drmFilters.dateFrom = d; drmFilters.dateTo = d; document.getElementById('drm-date-from').value = d; document.getElementById('drm-date-to').value = d; renderDrmDateNav(); loadDailyReportManagementList(); };
+  // 日付切替時は、選択日のすべての集計(件数要約・内訳バケット・サマリーカード・未提出バナー・一覧)を
+  // 選択日で再取得する。renderだけ日付を変えて中身が本日固定のまま、という状態を作らない。
+  const setDate = (d) => { drmSelectedDate = d; drmFilters.dateFrom = d; drmFilters.dateTo = d; document.getElementById('drm-date-from').value = d; document.getElementById('drm-date-to').value = d; renderDrmDateNav(); loadDrmSummary(); loadDrmMissingBanner(); loadDailyReportManagementList(); };
   document.getElementById('drm-date-prev').addEventListener('click', () => setDate(shift(-1)));
   document.getElementById('drm-date-next').addEventListener('click', () => setDate(shift(1)));
   const todayBtn = document.getElementById('drm-date-today');
   if (todayBtn) todayBtn.addEventListener('click', () => setDate(today));
+}
+
+// 選択日が今日なら「本日」、過去/未来日なら「9月1日」のように表示する接頭辞。
+// 過去日を見ているのに「本日の社員/本日の未提出」と表示される矛盾をなくす。
+function drmDayPrefix() {
+  if (drmSelectedDate === todayJST()) return '本日';
+  const d = new Date(drmSelectedDate + 'T00:00:00');
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+// 未提出バナー(選択日)。日付切替でも選択日で再取得する。
+async function loadDrmMissingBanner() {
+  const session = getSession();
+  const missingEl = document.getElementById('drm-missing-today-list');
+  const bannerCount = document.getElementById('drm-missing-count');
+  const pfx = drmDayPrefix();
+  if (bannerCount) bannerCount.textContent = `${pfx}の未提出 -`;
+  try {
+    const missing = await rpc('admin_get_daily_report_missing', { p_admin_employee_code: session.employeeCode, p_date: drmSelectedDate });
+    if (bannerCount) bannerCount.textContent = `${pfx}の未提出 ${missing.length}名`;
+    if (missingEl) missingEl.innerHTML = missing.length === 0
+      ? `<div class="hint">${pfx}は全員提出済みです。</div>`
+      : missing.map((m) => `<span class="mini-tag danger" style="display:inline-block;margin:2px 4px 2px 0;">${m.employee_name}</span>`).join('');
+  } catch (e) {
+    if (missingEl) missingEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
+  }
 }
 
 // 選択日「その1日だけ」の件数要約(合計・社員・外注・提出済み・差し戻し・下書き・取消)。
@@ -9363,18 +9391,7 @@ async function loadDailyReportManagement() {
   document.querySelectorAll('#drm-worker-type-filter .filter-chip').forEach((c, i) => c.classList.toggle('active', i === 0));
   document.querySelectorAll('#drm-status-filter .filter-chip').forEach((c, i) => c.classList.toggle('active', i === 0));
 
-  const missingEl = document.getElementById('drm-missing-today-list');
-  const bannerCount = document.getElementById('drm-missing-count');
-  bannerCount.textContent = '本日の未提出 -';
-  try {
-    const missing = await rpc('admin_get_daily_report_missing', { p_admin_employee_code: session.employeeCode, p_date: todayJST() });
-    bannerCount.textContent = `本日の未提出 ${missing.length}名`;
-    missingEl.innerHTML = missing.length === 0
-      ? '<div class="hint">本日は全員提出済みです。</div>'
-      : missing.map((m) => `<span class="mini-tag danger" style="display:inline-block;margin:2px 4px 2px 0;">${m.employee_name}</span>`).join('');
-  } catch (e) {
-    missingEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>';
-  }
+  loadDrmMissingBanner();
 
   try {
     const companies = await rpc('admin_list_subcontractor_companies', { p_admin_employee_code: session.employeeCode, p_include_inactive: false });
@@ -9401,13 +9418,13 @@ async function loadDrmBreakdown() {
   const el = document.getElementById('drm-breakdown');
   if (!el) return;
   try {
-    const rows = await rpc('admin_daily_report_breakdown', { p_admin_employee_code: session.employeeCode, p_date: todayJST() });
+    const rows = await rpc('admin_daily_report_breakdown', { p_admin_employee_code: session.employeeCode, p_date: drmSelectedDate });
     const b = rows && rows[0];
     if (!b) { el.innerHTML = ''; return; }
     const num = (bucket, n, cls) => `<button type="button" class="drm-bd-num ${cls || ''}" data-bucket="${bucket}">${n}</button>`;
     el.innerHTML = `
       <div class="card drm-breakdown-card">
-        <div class="drm-bd-row drm-bd-total"><span>本日の社員</span><strong>${b.total_employees}名</strong></div>
+        <div class="drm-bd-row drm-bd-total"><span>${drmDayPrefix()}の社員</span><strong>${b.total_employees}名</strong></div>
         <div class="drm-bd-row"><span>├ 日報提出対象</span><strong>${b.target_total}名</strong></div>
         <div class="drm-bd-row drm-bd-sub"><span>│　├ 提出済み</span>${num('target_submitted', b.target_submitted + '名', 'good')}</div>
         <div class="drm-bd-row drm-bd-sub"><span>│　└ 未提出</span>${num('missing', b.target_missing + '名', b.target_missing > 0 ? 'alert' : '')}</div>
@@ -9436,17 +9453,19 @@ async function loadDrmSummary() {
   grid.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
     const [rows, bd] = await Promise.all([
-      rpc('admin_get_daily_report_summary', { p_admin_employee_code: session.employeeCode, p_date: todayJST() }),
+      rpc('admin_get_daily_report_summary', { p_admin_employee_code: session.employeeCode, p_date: drmSelectedDate }),
       loadDrmBreakdown(),
     ]);
     const d = Object.assign({}, rows && rows[0]);
     if (bd) d.exempt_count = bd.exempt_total; // 対象外は breakdown から
+    const pfx = drmDayPrefix();
     grid.innerHTML = DRM_SUMMARY_CARDS.map((c) => {
       const count = d ? (d[c.key] || 0) : 0;
+      const label = c.label.replace('本日', pfx); // 過去日を見ている時は「9月1日の提出」等
       return `
-        <button type="button" class="dash-card drm-summary-card" data-card="${c.key}" title="タップで${c.label}の対象者を表示">
+        <button type="button" class="dash-card drm-summary-card" data-card="${c.key}" title="タップで${label}の対象者を表示">
           <span class="dash-card-top"><span class="dash-card-count ${count === 0 ? 'zero' : 'alert'}">${count}</span></span>
-          <span class="dash-card-label">${c.label}</span>
+          <span class="dash-card-label">${label}</span>
         </button>
       `;
     }).join('');
@@ -9470,7 +9489,9 @@ const DRP_TITLES = {
 };
 let dailyReportPeopleState = null;
 function openDailyReportPeople(bucket, title) {
-  dailyReportPeopleState = { bucket, title: title || DRP_TITLES[bucket] || '対象者一覧', date: todayJST() };
+  // 対象者一覧も選択日で取得する(本日固定にしない)。過去日なら見出しも「9月1日の…」にする。
+  const t = (title || DRP_TITLES[bucket] || '対象者一覧').replace('本日', drmDayPrefix());
+  dailyReportPeopleState = { bucket, title: t, date: drmSelectedDate };
   showScreen('daily-report-people');
 }
 async function loadDailyReportPeople() {

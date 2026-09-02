@@ -7117,7 +7117,8 @@ async function loadSiteAdminList() {
       return `
       <div class="qual-item" data-id="${s.id}">
         <div class="row1"><input type="text" class="site-rename-input" value="${s.site_name}"></div>
-        <div class="row2">${new Date(s.created_at).toLocaleString('ja-JP')}</div>
+        <div class="row2">申請者: ${s.proposed_by_name ? `${s.proposed_by_name}(${s.proposed_by_code || '—'})` : '申請者不明'}</div>
+        <div class="row2">申請日時: ${new Date(s.created_at).toLocaleString('ja-JP')}</div>
         ${candidatesHtml}
         <div class="qual-verify-btns">
           <button type="button" class="approve-btn">新規現場として承認する</button>
@@ -9429,6 +9430,16 @@ function sortDrmGroups(groupList) {
 //  1) 応援(会社×現場×人数)モデル … 作業員名が無いので「外注（応援） 会社名」+ 人数/人工。
 //  2) 旧・作業員紐付けモデル … 作業員名(外注:会社名)。
 //  3) 社員 … 氏名。いずれの値も欠けたら (不明) を出し、null文字は絶対に出さない。
+// item12: 'YYYY-MM-DD' → '2026年9月2日(火)' (詳細の日付を明確化)。
+function formatJpDateWithDow(dateStr) {
+  if (!dateStr) return '';
+  const m = String(dateStr).match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return String(dateStr);
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const dow = ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
+  return `${Number(m[1])}年${Number(m[2])}月${Number(m[3])}日(${dow})`;
+}
+
 function drmWorkerLabel(f) {
   if (f && f.worker_type === 'subcontractor') {
     const co = f.subcontractor_company_name || '(会社未設定)';
@@ -9452,6 +9463,11 @@ function renderDrmAll() {
     rows.sort((a, b) => (a.entry_slot || 0) - (b.entry_slot || 0));
     return { key, rows, first: rows[0] };
   });
+  // item13: 通常一覧では「全スロットが取消済み」の日報グループを除外する(集計・人工・シート反映の
+  // 対象外なので一覧にも残さない)。「取消」タブを選んだ時だけ取消済みを表示する。監査履歴はDBに残る。
+  if (drmFilters.status !== 'cancelled') {
+    groupList = groupList.filter((g) => g.rows.some((r) => r.report_status !== 'cancelled'));
+  }
   groupList = sortDrmGroups(groupList);
 
   document.querySelectorAll('#screen-daily-report-management .areq-table th[data-sort]').forEach((th) => {
@@ -9546,10 +9562,12 @@ async function openDailyReportDetail(groupKey) {
   }
   const f = rows[0];
   const personName = drmWorkerLabel(f);
-  document.getElementById('drd-title').textContent = `${personName}・${f.report_date}`;
+  // item12: 詳細上部に必ず「年月日(曜日)」を大きく表示。氏名・社員番号/外注・状態も併記。
+  const idLabel = f.worker_type === 'subcontractor' ? '外注' : (f.employee_code ? `社員番号 ${f.employee_code}` : '');
+  document.getElementById('drd-title').textContent = formatJpDateWithDow(f.report_date);
   // 外注(応援)は 合計人数・合計人工 を要約表示(§9)。取消済み行は合計から除外。
   const activeRows = rows.filter((r) => r.report_status !== 'cancelled');
-  let metaText = `提出状況: ${DRM_STATUS_LABEL[f.report_status] || f.report_status}`;
+  let metaText = `${personName}${idLabel ? '（' + idLabel + '）' : ''} ・ 提出状況: ${DRM_STATUS_LABEL[f.report_status] || f.report_status}`;
   if (f.worker_type === 'subcontractor') {
     const totalPeople = activeRows.reduce((a, r) => a + (r.subcontractor_headcount != null ? Number(r.subcontractor_headcount) : 0), 0);
     const totalManDays = activeRows.reduce((a, r) => a + Number(r.headcount || 0), 0);

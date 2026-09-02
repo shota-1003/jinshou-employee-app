@@ -7944,9 +7944,20 @@ async function loadDailyReportAssignmentChips(dateStr) {
   if (!area || !row) return;
   // 本人・社員の日報のみ対象(外注作業員の代理入力は配置カレンダーの社員配置とは別)。
   if (dailyReportTarget.type === 'subcontractor') { area.style.display = 'none'; return; }
-  const code = dailyReportTarget.type === 'employee' ? dailyReportTarget.employeeCode : getSession().employeeCode;
   try {
-    const rows = normalizeSchedule(await rpc('assignment_get_my_schedule', { p_employee_code: code, p_date_from: dateStr, p_date_to: dateStr }));
+    // 代理入力(他の社員)では、対象社員本人の端末トークンが無いため assignment_get_my_schedule
+    // (対象社員コードでセッション検証)は使えない(呼ぶと管理者セッションが破棄されログイン画面へ
+    // 飛ばされる)。管理者本人を認証して対象社員の配置を返す admin 版RPCを使う。
+    let rows;
+    if (dailyReportTarget.type === 'employee') {
+      rows = (await rpc('admin_get_employee_report_site_candidates', {
+        p_admin_employee_code: getSession().employeeCode,
+        p_target_employee_code: dailyReportTarget.employeeCode,
+        p_date: dateStr,
+      })) || [];
+    } else {
+      rows = normalizeSchedule(await rpc('assignment_get_my_schedule', { p_employee_code: getSession().employeeCode, p_date_from: dateStr, p_date_to: dateStr }));
+    }
     // site_idがある配置だけをチップにする(現場未設定・休み等は日報の現場入力には使えない)。
     const withSite = rows.filter((r) => r && r.site_id && r.assignment_kind !== 'off');
     if (withSite.length === 0) { area.style.display = 'none'; row.innerHTML = ''; return; }
@@ -9523,12 +9534,12 @@ async function renderDrmSubcontractorMissing() {
 // 未提出の外注作業員をタップ → 既存の日報入力画面を「外注作業員モード + その作業員 + その日付」で開く。
 async function openSubcontractorProxyEntry(workerId, workerName, dateStr) {
   dailyReportPrefillDate = dateStr;
+  // showScreen('daily-report') は SCREEN_ENTER_HOOKS 経由で resetDailyReportForm を1回呼ぶ。
+  // ここで resetDailyReportForm を明示的にもう一度呼ぶと、両者のloadDailyReportForDate(非await)が
+  // 競合して空の入力行が2〜3行できる。フックのreset+loadが落ち着くまで待ってから、対象作業員で
+  // 入力行を1行に正規化して1回だけ読み直す(二重生成を確実に防ぐ)。
   showScreen('daily-report');
-  await resetDailyReportForm();
-  // resetDailyReportForm内のloadDailyReportForDateはawaitされずに走るため、ここで直後に
-  // 別のloadを重ねるとentryが二重・三重に生成される。resetのloadが落ち着くまで一拍待ってから
-  // 対象作業員で1回だけ読み直す(空の入力行が複数出る不具合を防ぐ)。
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 450));
   const typeSelect = document.getElementById('daily-report-target-type');
   typeSelect.value = 'subcontractor';
   typeSelect.dispatchEvent(new Event('change'));
@@ -9537,6 +9548,8 @@ async function openSubcontractorProxyEntry(workerId, workerName, dateStr) {
   if (lbl) { lbl.style.display = 'block'; lbl.textContent = `選択中: ${workerName}（代理入力）`; }
   const dateInput = document.getElementById('daily-report-date');
   if (dateInput) dateInput.value = dateStr;
+  const list = document.getElementById('daily-report-entry-list');
+  if (list) list.innerHTML = '';
   await loadDailyReportForDate(dateStr);
 }
 

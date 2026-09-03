@@ -313,7 +313,7 @@
       <button type="button" class="home-card" data-nav="loan-request">
         <span class="icon-slot" data-icon="banknote"></span>
         <span class="home-card-label">借入申請</span>
-        <span class="home-card-desc">会社への一時借入を申請</span>
+        <span class="home-card-desc">会社への一時借入を申請<br><span style="font-size:.85em;color:var(--text-faint,#8a8a8a);">※必要日の3日前までに申請してください</span></span>
       </button>
       <button type="button" class="home-card" data-nav="qual-submit">
         <span class="icon-slot" data-icon="graduation-cap"></span>
@@ -338,16 +338,18 @@
     <button type="button" class="back-link back-to-origin" data-nav="menu-apply">申請一覧に戻る</button>
     <div class="form-title">借入申請</div>
     <button type="button" class="link" data-nav="loan-history" style="margin-bottom:8px;">借入申請履歴を見る ›</button>
-    <div class="hint" style="margin-bottom:10px;">会社への一時的な借入の申請です。金銭に関わる申請のため、内容は正確にご記入ください。</div>
+    <div class="hint" style="margin-bottom:6px;">会社への一時的な借入の申請です。金銭に関わる申請のため、内容は正確にご記入ください。</div>
+    <div class="hint" style="margin-bottom:10px;font-weight:700;color:var(--warning,#b26a00);">※必要日の3日前までに申請してください</div>
 
     <label>申請日</label>
-    <input type="text" id="loan-request-date" readonly style="background:var(--surface-2,#f5f5f5);">
+    <div id="loan-request-date" style="padding:8px 0;font-weight:700;">-</div>
 
     <label>借入希望金額<span class="required-mark">(必須)</span></label>
     <input type="number" id="loan-amount" inputmode="numeric" min="0" step="1000" placeholder="例: 50000">
 
-    <label>先月の給料（手取り額）<span class="required-mark">(必須)</span></label>
-    <input type="number" id="loan-salary" inputmode="numeric" min="0" step="1000" placeholder="例: 280000">
+    <label>先月の給与（総支給額）<span class="required-mark">(必須)</span></label>
+    <div class="hint-inline">控除前の総支給額を入力してください。</div>
+    <input type="number" id="loan-salary" inputmode="numeric" min="0" step="1000" placeholder="例: 320000">
 
     <label>借入が必要になった理由<span class="required-mark">(必須)</span></label>
     <div class="hint-inline">「金欠」「生活費」だけは不可。具体的に(例: 家賃と携帯料金の支払いが重なり生活費が不足したため)。</div>

@@ -7437,6 +7437,7 @@ function resetProposeSiteForm() {
 const LOAN_STATUS_LABEL = { applied: '申請中', approved: '承認', rejected: '却下', returned: '差し戻し', cancelled: '取消' };
 const LOAN_RECEIPT_LABEL = { cash: '現金', bank_transfer: '銀行振込' };
 const yen = (n) => (Number(n) || 0).toLocaleString('ja-JP') + '円';
+function formatJpDate(dateStr) { const m = String(dateStr).match(/(\d{4})-(\d{2})-(\d{2})/); return m ? `${Number(m[1])}年${Number(m[2])}月${Number(m[3])}日` : String(dateStr); }
 let loanEditingId = null; // 編集中の申請id(nullは新規)
 function addLoanItem(prefill) {
   const tpl = document.getElementById('loan-item-template');
@@ -7464,7 +7465,7 @@ function updateLoanTotal() {
 }
 function initLoanRequestForm() {
   const today = todayJST();
-  document.getElementById('loan-request-date').value = today;
+  document.getElementById('loan-request-date').textContent = formatJpDate(today);
   if (!loanEditingId) {
     document.getElementById('loan-amount').value = '';
     document.getElementById('loan-salary').value = '';
@@ -7501,7 +7502,7 @@ function loanFormValues() {
 }
 function validateLoanClient(v) {
   if (!(v.amount > 0)) return '借入希望金額を入力してください。';
-  if (!(v.salary >= 0) || document.getElementById('loan-salary').value === '') return '先月の給料(手取り額)を入力してください。';
+  if (!(v.salary >= 0) || document.getElementById('loan-salary').value === '') return '先月の給与(総支給額)を入力してください。';
   if (v.reason.length < 10) return '借入が必要な理由を具体的に入力してください(10文字以上)。';
   if (!v.breakdown.length) return '使用目的の内訳を1件以上入力してください。';
   if (v.breakdown.some((x) => !x.purpose || !(x.amount > 0))) return '使用目的と金額を正しく入力してください。';
@@ -7520,7 +7521,7 @@ function loanToConfirm() {
   const body = document.getElementById('loan-confirm-body');
   body.innerHTML = `
     <div class="field-row"><span>希望金額</span><span style="font-weight:700;">${yen(v.amount)}</span></div>
-    <div class="field-row"><span>先月給与(手取り)</span><span>${yen(v.salary)}</span></div>
+    <div class="field-row"><span>先月給与(総支給額)</span><span>${yen(v.salary)}</span></div>
     <div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>必要な理由</span><span style="margin-top:4px;">${v.reason.replace(/</g, '&lt;')}</span></div>
     <div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>使用目的</span><div style="width:100%;margin-top:4px;">${v.breakdown.map((x) => `<div style="display:flex;justify-content:space-between;"><span>${(x.purpose || '').replace(/</g, '&lt;')}</span><span>${yen(x.amount)}</span></div>`).join('')}</div></div>
     <div class="field-row"><span>内訳合計</span><span style="font-weight:700;">${yen(v.breakdown.reduce((s, x) => s + x.amount, 0))}</span></div>
@@ -7550,7 +7551,7 @@ async function doSubmitLoan() {
 function startLoanEdit(d) {
   loanEditingId = d.id;
   document.getElementById('loan-amount').value = d.amount;
-  document.getElementById('loan-salary').value = d.last_month_net_salary;
+  document.getElementById('loan-salary').value = d.last_month_gross_salary;
   document.getElementById('loan-reason').value = d.reason || '';
   document.getElementById('loan-needed-by').value = d.needed_by_date;
   document.querySelectorAll('input[name="loan-receipt"]').forEach((r) => { r.checked = (r.value === d.receipt_method); });
@@ -7591,7 +7592,7 @@ async function openLoanDetail(id) {
       <div class="field-row"><span>状態</span><span class="status-badge ${d.status === 'approved' ? 'done' : (d.status === 'rejected' ? 'rejected' : '')}">${LOAN_STATUS_LABEL[d.status] || d.status}</span></div>
       <div class="field-row"><span>申請日</span><span>${d.request_date}</span></div>
       <div class="field-row"><span>希望金額</span><span style="font-weight:700;">${yen(d.amount)}</span></div>
-      <div class="field-row"><span>先月給与(手取り)</span><span>${yen(d.last_month_net_salary)}</span></div>
+      <div class="field-row"><span>先月給与(総支給額)</span><span>${yen(d.last_month_gross_salary)}</span></div>
       <div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>必要な理由</span><span style="margin-top:4px;">${(d.reason || '').replace(/</g, '&lt;')}</span></div>
       <div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>使用目的</span><div style="width:100%;margin-top:4px;">${(d.breakdown || []).map((x) => `<div style="display:flex;justify-content:space-between;"><span>${(x.purpose || '').replace(/</g, '&lt;')}</span><span>${yen(x.amount)}</span></div>`).join('')}</div></div>
       <div class="field-row"><span>必要日</span><span>${d.needed_by_date}</span></div>
@@ -7611,7 +7612,7 @@ async function loadLoanAdminList() {
     listEl.innerHTML = rows.map((r) => `
       <div class="supply-item" data-id="${r.id}">
         <div class="row1"><span style="font-weight:700;">${r.employee_name}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${LOAN_STATUS_LABEL[r.status] || r.status}</span></div>
-        <div class="row2">申請日 ${r.request_date}　希望 ${yen(r.amount)}　先月給与 ${yen(r.last_month_net_salary)}</div>
+        <div class="row2">申請日 ${r.request_date}　希望 ${yen(r.amount)}　先月給与(総支給額) ${yen(r.last_month_gross_salary)}</div>
         <div class="row2">必要日 ${r.needed_by_date}　${LOAN_RECEIPT_LABEL[r.receipt_method] || ''}</div>
         <div class="row2">理由: ${(r.reason || '').replace(/</g, '&lt;')}</div>
         <div class="row2">内訳: ${(r.breakdown || []).map((x) => `${(x.purpose || '')} ${yen(x.amount)}`).join(' / ')}</div>

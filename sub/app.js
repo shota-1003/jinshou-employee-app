@@ -309,7 +309,12 @@ async function loadQualMaster() {
     (rows || []).forEach((r) => { (cats[r.category] = cats[r.category] || []).push(r); });
     let html = '<option value="">選択してください</option>';
     Object.keys(cats).forEach((cat) => {
-      html += `<optgroup label="${escapeHtml(cat)}">` + cats[cat].map((r) => `<option value="${r.id}" data-name="${escapeHtml(r.qualification_name)}">${escapeHtml(r.qualification_name)}</option>`).join('') + '</optgroup>';
+      // 免許は license_types_master 由来(license_type_id、idはnull)。資格は qualification_master 由来(id)。
+      // 二重管理しないため、免許は共通の免許マスターから来る。値は免許なら "lic:<id>"、資格なら master id。
+      html += `<optgroup label="${escapeHtml(cat)}">` + cats[cat].map((r) => {
+        const v = (r.license_type_id != null) ? ('lic:' + r.license_type_id) : String(r.id);
+        return `<option value="${v}" data-name="${escapeHtml(r.qualification_name)}">${escapeHtml(r.qualification_name)}</option>`;
+      }).join('') + '</optgroup>';
     });
     // 最後に「その他（自由記入）」。選ぶと自由入力欄を出す。
     html += '<option value="__other__">その他（自由記入）</option>';
@@ -331,6 +336,9 @@ async function addQualification() {
     if (val === '__other__') {
       await rpc('submit_my_subcontractor_qualification', { p_login_code: loginCode, p_qualification_name: targetName });
       $('pf-qual-other').value = '';
+    } else if (val.startsWith('lic:')) {
+      // 免許(共通の免許マスター license_types_master 由来)
+      await rpc('submit_my_subcontractor_qualification_selected', { p_login_code: loginCode, p_license_type_id: Number(val.slice(4)) });
     } else {
       await rpc('submit_my_subcontractor_qualification_selected', { p_login_code: loginCode, p_master_id: Number(val) });
     }

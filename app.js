@@ -4988,8 +4988,9 @@ async function loadEmployeeDirectory() {
         <div class="employee-avatar">${(e.employee_name || '?').charAt(0)}</div>
         <div class="employee-row-body">
           <div class="employee-row-name">${e.employee_name}<span style="color:var(--text-faint); font-weight:500; font-size:11.5px;">${e.employee_code}</span></div>
-          <div class="employee-row-meta">${e.department || ''}${e.status !== 'active' ? '・在籍外' : ''}</div>
+          <div class="employee-row-meta">${e.department || ''}${e.status === 'retired' ? `・退職(退職日: ${e.retirement_date || '—'})` : (e.status !== 'active' ? '・在籍外' : '')}</div>
           <div class="employee-row-flags">
+            ${e.status === 'retired' ? '<span class="mini-tag danger">退職</span>' : ''}
             ${e.qualification_warning_count > 0 ? `<span class="mini-tag warn">資格期限 ${e.qualification_warning_count}件</span>` : ''}
             ${e.pending_request_count > 0 ? `<span class="mini-tag info">未処理申請 ${e.pending_request_count}件</span>` : ''}
           </div>
@@ -5139,7 +5140,129 @@ async function loadEmployeeDetailPortalAccess() {
       } catch (e2) { alert(e2.message); }
       issueBtn.disabled = false;
     };
+
+    renderEmploymentSection(e, code, session);
   } catch (e) { /* 読み込み失敗時は静かに諦める(端末一覧は別途表示されるため) */ }
+}
+
+// 雇用状態(退職処理)。アカウント停止(portal_access)とは別概念として明確に分けて扱う。
+function renderEmploymentSection(e, code, session) {
+  const statusEl = document.getElementById('employee-detail-employment-status');
+  const retireBlock = document.getElementById('ed-retire-block');
+  const retiredBlock = document.getElementById('ed-retired-block');
+  if (!statusEl || !retireBlock || !retiredBlock) return;
+
+  const isRetired = e.status === 'retired';
+  statusEl.textContent = isRetired ? '退職' : (e.status === 'active' ? '在職中' : '非在職');
+  statusEl.className = 'mini-tag ' + (isRetired ? 'danger' : (e.status === 'active' ? 'info' : ''));
+  retireBlock.style.display = e.status === 'active' ? '' : 'none';
+  retiredBlock.style.display = isRetired ? '' : 'none';
+
+  // すべての差し込みフォームを初期状態(閉じる)へ戻す。
+  ['ed-retire-form', 'ed-rehire-form', 'ed-to-sub-form'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+
+  if (e.status === 'active') {
+    const openBtn = document.getElementById('ed-retire-open-btn');
+    const form = document.getElementById('ed-retire-form');
+    const dateEl = document.getElementById('ed-retire-date');
+    const reasonEl = document.getElementById('ed-retire-reason');
+    const noteEl = document.getElementById('ed-retire-note');
+    const warnEl = document.getElementById('ed-retire-warning');
+    const confirmBtn = document.getElementById('ed-retire-confirm-btn');
+    const today = new Date(); const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    async function refreshWarning() {
+      warnEl.style.display = 'none'; warnEl.textContent = '';
+      const d = dateEl.value; if (!d) return;
+      try {
+        const rows = await rpc('admin_get_employee_future_assignments', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code, p_from_date: d });
+        if (rows && rows.length) {
+          const list = rows.slice(0, 8).map((r) => `${r.schedule_date}(${r.site_name})`).join('、');
+          warnEl.innerHTML = `⚠️ 退職日より後に、この社員の配置が${rows.length}件あります。退職処理では自動削除しません。必要に応じて配置カレンダーで見直してください。<br>${list}${rows.length > 8 ? ' ほか' : ''}`;
+          warnEl.style.display = 'block';
+        }
+      } catch (err) { /* 警告取得失敗は致命的でない */ }
+    }
+    openBtn.onclick = () => { form.style.display = 'block'; if (!dateEl.value) dateEl.value = iso; reasonEl.value = ''; noteEl.value = ''; refreshWarning(); form.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+    document.getElementById('ed-retire-cancel-btn').onclick = () => { form.style.display = 'none'; };
+    dateEl.onchange = refreshWarning;
+    confirmBtn.onclick = async () => {
+      if (!dateEl.value) { alert('退職日を入力してください。'); return; }
+      if (!confirm(`この社員を退職扱いにします。\n退職日: ${dateEl.value}\n過去の勤務・日報・給与・申請履歴は削除されません。\nよろしいですか？`)) return;
+      confirmBtn.disabled = true;
+      try {
+        await rpc('admin_retire_employee', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code, p_retirement_date: dateEl.value, p_reason: reasonEl.value.trim() || null, p_note: noteEl.value.trim() || null });
+        await openEmployeeDetail(code, currentEmployeeDetailTab);
+      } catch (err) { alert(err.message); }
+      confirmBtn.disabled = false;
+    };
+  } else if (isRetired) {
+    const info = document.getElementById('ed-retired-info');
+    const parts = [`退職日: ${e.retirement_date || '(未記録)'}`];
+    info.textContent = parts.join(' / ');
+
+    document.getElementById('ed-cancel-retire-btn').onclick = async () => {
+      if (!confirm('この社員の退職を取り消し、在職中に戻します。よろしいですか？')) return;
+      try { await rpc('admin_cancel_retirement', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code }); await openEmployeeDetail(code, currentEmployeeDetailTab); } catch (err) { alert(err.message); }
+    };
+
+    const rehireForm = document.getElementById('ed-rehire-form');
+    document.getElementById('ed-rehire-open-btn').onclick = () => { rehireForm.style.display = 'block'; rehireForm.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+    document.getElementById('ed-rehire-cancel-btn').onclick = () => { rehireForm.style.display = 'none'; };
+    document.getElementById('ed-rehire-confirm-btn').onclick = async () => {
+      const d = document.getElementById('ed-rehire-date').value;
+      if (!d) { alert('再入社日を入力してください。'); return; }
+      if (!confirm(`この社員を再入社(在職中)として登録します。\n再入社日: ${d}\n過去の雇用期間は履歴として保持されます。よろしいですか？`)) return;
+      try { await rpc('admin_rehire_employee', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code, p_hire_date: d }); await openEmployeeDetail(code, currentEmployeeDetailTab); } catch (err) { alert(err.message); }
+    };
+
+    const subForm = document.getElementById('ed-to-sub-form');
+    document.getElementById('ed-to-sub-open-btn').onclick = async () => {
+      subForm.style.display = 'block';
+      document.getElementById('ed-to-sub-result').style.display = 'none';
+      try {
+        const companies = await rpc('admin_list_subcontractor_companies', { p_admin_employee_code: session.employeeCode, p_include_inactive: false });
+        document.getElementById('ed-sub-company').innerHTML = '<option value="">選択してください</option>' + (companies || []).map((c) => `<option value="${c.id}">${c.company_name}</option>`).join('');
+        const cRow = await rpc('admin_get_employee_carryover_for_subcontractor', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
+        const c = cRow || {};
+        document.getElementById('ed-sub-name').value = c.worker_name || '';
+        document.getElementById('ed-sub-furigana').value = c.furigana || '';
+        document.getElementById('ed-sub-phone').value = c.phone || '';
+        document.getElementById('ed-sub-birth').value = c.birth_date ? String(c.birth_date).slice(0, 10) : '';
+        document.getElementById('ed-sub-emg-name').value = c.emergency_contact_name || '';
+        document.getElementById('ed-sub-emg-rel').value = c.emergency_contact_relation || '';
+        document.getElementById('ed-sub-emg-phone').value = c.emergency_contact_phone || '';
+        document.getElementById('ed-sub-qual').value = c.qualifications || '';
+      } catch (err) { alert(err.message); }
+      subForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    document.getElementById('ed-to-sub-cancel-btn').onclick = () => { subForm.style.display = 'none'; };
+    document.getElementById('ed-to-sub-submit-btn').onclick = async () => {
+      const companyId = document.getElementById('ed-sub-company').value;
+      const name = document.getElementById('ed-sub-name').value.trim();
+      if (!companyId) { alert('所属外注会社を選択してください。'); return; }
+      if (!name) { alert('氏名を入力してください。'); return; }
+      const btn = document.getElementById('ed-to-sub-submit-btn'); btn.disabled = true;
+      try {
+        await rpc('admin_register_subcontractor_from_employee', {
+          p_admin_employee_code: session.employeeCode, p_target_employee_code: code,
+          p_subcontractor_company_id: Number(companyId), p_worker_name: name,
+          p_furigana: document.getElementById('ed-sub-furigana').value.trim() || null,
+          p_phone: document.getElementById('ed-sub-phone').value.trim() || null,
+          p_birth_date: document.getElementById('ed-sub-birth').value || null,
+          p_blood_type: null,
+          p_emergency_contact_name: document.getElementById('ed-sub-emg-name').value.trim() || null,
+          p_emergency_contact_relation: document.getElementById('ed-sub-emg-rel').value.trim() || null,
+          p_emergency_contact_phone: document.getElementById('ed-sub-emg-phone').value.trim() || null,
+          p_qualifications: document.getElementById('ed-sub-qual').value.trim() || null,
+          p_health_checkup_date: null, p_next_health_checkup_date: null, p_notes: '元社員(社員番号 ' + code + ')から移行',
+        });
+        const resEl = document.getElementById('ed-to-sub-result');
+        resEl.style.display = 'block';
+        resEl.textContent = '✅ 外注作業員として登録しました。外注作業員管理の一覧で確認できます(社員としての履歴はそのまま残ります)。';
+      } catch (err) { alert(err.message); }
+      btn.disabled = false;
+    };
+  }
 }
 
 // ================= 初回登録コード管理(管理者) =================
@@ -5358,7 +5481,7 @@ async function loadEmployeeDetailBasic() {
     if (!p) return;
     renderAvatar('employee-detail-avatar', p.employee_name, p.profile_photo_url);
     document.getElementById('employee-detail-name').textContent = p.employee_name;
-    document.getElementById('employee-detail-code').textContent = `社員番号: ${p.employee_code}・${p.status === 'active' ? '在籍中' : '在籍外'}`;
+    document.getElementById('employee-detail-code').textContent = `社員番号: ${p.employee_code}・${p.status === 'active' ? '在籍中' : (p.status === 'retired' ? '退職' : '在籍外')}`;
     document.getElementById('employee-detail-basic-fields').innerHTML =
       fieldRow('フリガナ', p.furigana) + fieldRow('生年月日', p.birth_date ? new Date(p.birth_date).toLocaleDateString('ja-JP') : null) +
       fieldRow('入社日', p.hire_date ? new Date(p.hire_date).toLocaleDateString('ja-JP') : null) + fieldRow('所属/役割', p.department) +

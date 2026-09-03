@@ -475,7 +475,18 @@ async function submitAttendance() {
     $('done-title').textContent = '日報を登録しました';
     $('done-sub').textContent = `${entries.length}現場｜合計${String(totalHc).replace(/\.?0+$/, '') || totalHc}人工`;
     showScreen('done');
-  } catch (e) { setErr('att-error', e.message || '登録に失敗しました。'); }
+  } catch (e) { setErr('att-error', friendlyError(e, '登録に失敗しました。もう一度お試しください。')); }
+}
+
+// DBの内部エラー文(例: column reference ... is ambiguous / relation ... / syntax error)を
+// そのまま利用者へ見せない。意図的な日本語メッセージ(現場を選択してください 等)はそのまま表示。
+// 技術的なエラーは汎用文言にし、詳細はconsole経由でerror log(client-error-reporter)へ残す。
+function friendlyError(e, fallback) {
+  const msg = (e && e.message) ? String(e.message) : '';
+  try { console.error('[submit error]', msg); } catch (_) {}
+  const technical = /ambiguous|column|relation|function|syntax|SQLSTATE|null value|constraint|permission denied|duplicate key|does not exist|PGRST|42\d\d\d|22\d\d\d|23\d\d\d/i.test(msg);
+  const hasJa = /[぀-ヿ぀-ゟ゠-ヿ一-鿿]/.test(msg);
+  return (msg && hasJa && !technical) ? msg : (fallback || '処理に失敗しました。もう一度お試しください。');
 }
 
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }

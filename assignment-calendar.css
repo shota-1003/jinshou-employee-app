@@ -125,10 +125,25 @@
    セル(現場名・色・+N)を1週間ぶんだけ縮めて上部へ残す。
    高さはJS側が実測して決める(固定領域が画面の30%を超えないように)。 */
 .ac-weeknav {
-  display: flex; align-items: stretch; z-index: 25;
+  display: flex; flex-direction: column; z-index: 25;
   background: #fff; border-bottom: 1px solid var(--ac-line-strong);
   padding-left: var(--ac-safe-left); padding-right: var(--ac-safe-right);
 }
+.ac-weekrow { display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; }
+
+/* 月全体へ戻るための行(2026-09-05)。週間表示に入ったまま戻れない状態を作らない。 */
+.ac-weekbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  height: 30px; padding: 0 8px; background: #f4f7fb;
+  border-bottom: 1px solid var(--ac-line);
+}
+.ac-weekback {
+  border: 1px solid var(--ac-line-strong); background: #fff; cursor: pointer;
+  color: var(--ac-accent); font-size: 12px; font-weight: 800; line-height: 1;
+  padding: 5px 10px; border-radius: 999px; white-space: nowrap;
+}
+.ac-weekback:active { background: #e7ecf3; }
+.ac-weeklabel { font-size: 12px; font-weight: 700; color: var(--ac-muted); }
 .ac-datearrow {
   flex: 0 0 auto; width: 26px; border: none; background: #fff; cursor: pointer;
   color: var(--ac-accent); font-size: 17px; font-weight: 700; line-height: 1;
@@ -158,23 +173,30 @@
 .ac-wcell:last-child { border-right: none; }
 .ac-wcell.ac-today { background: var(--ac-today); }
 .ac-wcell.ac-holiday { background: #fdf0f0; }
+/* 選択日は色だけに頼らず、日付を濃い座布団に白抜きで置いて形でも分かるようにする。 */
 .ac-wcell.ac-on { box-shadow: inset 0 0 0 2px var(--ac-selected); }
-.ac-wnum {
-  display: flex; align-items: baseline; gap: 2px; font-size: 12px; font-weight: 800;
-  line-height: 1.05; height: 13px;
+.ac-wcell.ac-on .ac-wnum {
+  background: var(--ac-selected); color: #fff; border-radius: 3px;
+  padding: 0 3px; margin: 0 -1px; font-weight: 900;
 }
-.ac-wdow { font-size: 9px; font-weight: 700; color: var(--ac-muted); }
+.ac-wcell.ac-on .ac-wdow, .ac-wcell.ac-on .ac-wcount { color: #fff; }
+.ac-wnum {
+  display: flex; align-items: baseline; gap: 2px; font-size: 13px; font-weight: 800;
+  line-height: 1.15; height: 16px;
+}
+.ac-wdow { font-size: 10px; font-weight: 700; color: var(--ac-muted); }
 .ac-wcell.ac-sat .ac-wdow, .ac-wcell.ac-sat .ac-wnum { color: var(--ac-sat); }
 .ac-wcell.ac-sun .ac-wdow, .ac-wcell.ac-sun .ac-wnum,
 .ac-wcell.ac-holiday .ac-wdow, .ac-wcell.ac-holiday .ac-wnum { color: var(--ac-sun); }
-.ac-wcount { margin-left: auto; font-size: 9px; font-weight: 700; color: var(--ac-muted); }
+.ac-wcount { margin-left: auto; font-size: 10px; font-weight: 700; color: var(--ac-muted); }
 /* 月表示と同じ色のチップ。現場名が読めることを優先し、余白は最小にする。 */
+/* 予定チップ。1行=13px+上マージン2px=15px(JS側の WEEK_CHIP_ROW と対) */
 .ac-wchip {
-  height: 11px; line-height: 11px; margin-top: 1px; border-radius: 2px;
-  font-size: 9px; font-weight: 700; color: #fff; padding: 0 2px;
+  height: 13px; line-height: 13px; margin-top: 2px; border-radius: 2px;
+  font-size: 10px; font-weight: 700; color: #fff; padding: 0 3px;
   white-space: nowrap; overflow: hidden; text-overflow: clip;
 }
-.ac-wmore { font-size: 9px; font-weight: 800; color: var(--ac-muted); line-height: 11px; margin-top: 1px; }
+.ac-wmore { font-size: 10px; font-weight: 800; color: var(--ac-muted); line-height: 12px; margin-top: 1px; }
 
 /* ---------------- 月グリッド ---------------- */
 /* 曜日行のstickyを月グリッドの範囲に閉じ込めるための入れ物 */
@@ -871,6 +893,15 @@
    埋め込んでも単体URLでも同じ判定になり、将来サイドバーが付いても崩れない。
    ============================================================ */
 
+/* スマホ/タブレットでは、配置が少ない日でも月グリッドを画面外へ送りきれるだけの
+   高さを日別パネルに持たせる。これが無いと「週表示から日付を選んだのに月が
+   画面へ戻ってくる」状態になる(2026-09-04 実機指摘)。余白は最終行の下に出るだけ。 */
+.ac-root[data-layout="phone"] .ac-day,
+.ac-root[data-layout="tab"] .ac-day {
+  min-height: calc(100vh - var(--ac-stick-h, 88px));
+  min-height: calc(100dvh - var(--ac-stick-h, 88px));
+}
+
 /* ---------------- タブレット(768〜1199px) ---------------- */
 /* 1カラムのまま、文字と余白だけ少しゆるめる。 */
 .ac-root[data-layout="tab"] .ac-chip { height: 15px; line-height: 15px; font-size: 11px; }
@@ -1058,3 +1089,29 @@
 .ac-root[data-layout="wide"] .ac-mxtable th.ac-mx-name { min-width: 210px; width: 210px; }
 .ac-root[data-layout="wide"] .ac-mx-rowname { font-size: 14px; }
 .ac-root[data-layout="wide"] .ac-mxtable .ac-mx-total { min-width: 124px; width: 124px; }
+
+
+/* ============================================================
+   日別配置の連続タイムライン(スマホ/タブレット、2026-09-05)
+
+   日ごとの区画を縦に並べ、普通に下へスクロールすれば翌日、上へ戻れば前日。
+   「最下部で翌日へ切り替える」方式をやめたので、画面が作り直されない。
+   日付が分からなくならないよう、各区画の日付ヘッダーは区画の中で吸着させ、
+   区画どうしの境目もはっきり出す。
+   ============================================================ */
+/* 月全体 ⇄ 週間+日別 の切り替え。位置が動く演出は入れない(カクつきの元になる)。 */
+@keyframes ac-modefade { from { opacity: .35; } to { opacity: 1; } }
+.ac-root.ac-modeswitch .ac-bodywrap { animation: ac-modefade .16s ease-out; }
+.ac-root.ac-modeswitch .ac-weeknav { animation: ac-modefade .16s ease-out; }
+
+.ac-timeline { display: block; }
+.ac-daysec { border-top: 8px solid #e7ecf3; }
+.ac-daysec:first-child { border-top: 0; }
+/* 日付ヘッダーはその区画を見ている間だけ上に残る(どの日を見ているかを見失わない) */
+.ac-daysec .ac-dayhead {
+  position: sticky; top: 0; z-index: 6;
+  background: #fff; box-shadow: 0 1px 0 var(--ac-line);
+}
+/* PCは左右2カラムのままなのでタイムラインは使わない */
+.ac-root[data-layout="wide"] .ac-daysec { border-top: 0; }
+.ac-root[data-layout="wide"] .ac-daysec .ac-dayhead { position: static; box-shadow: none; }

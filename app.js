@@ -7790,8 +7790,23 @@ function addDailyReportEntry(prefill) {
   });
 
   const workTypeSelect = clone.querySelector('.dr-work-type');
+  const headcountSelect = clone.querySelector('.dr-headcount');
   if (prefill && prefill.work_type) workTypeSelect.value = prefill.work_type;
-  workTypeSelect.addEventListener('change', updateDailyReportTotal);
+  // 人工: 勤務区分から既定値を入れる。既存日報の再表示時は保存済みの人工を優先。手動で0.25単位に調整可能。
+  const defaultHc = DR_HEADCOUNT_BY_WORK_TYPE[workTypeSelect.value] || 1.0;
+  if (headcountSelect) {
+    if (prefill && prefill.headcount != null && prefill.headcount !== '') headcountSelect.value = String(Number(prefill.headcount));
+    else headcountSelect.value = String(defaultHc);
+    headcountSelect.dataset.userSet = (prefill && prefill.headcount != null) ? '1' : '';
+    headcountSelect.addEventListener('change', () => { headcountSelect.dataset.userSet = '1'; updateDailyReportTotal(); });
+  }
+  workTypeSelect.addEventListener('change', () => {
+    // 勤務区分を変えたら、まだ手動調整していない人工は既定値へ追従させる(手動調整済みなら尊重)。
+    if (headcountSelect && headcountSelect.dataset.userSet !== '1') {
+      headcountSelect.value = String(DR_HEADCOUNT_BY_WORK_TYPE[workTypeSelect.value] || 1.0);
+    }
+    updateDailyReportTotal();
+  });
   if (prefill && prefill.is_leader) clone.querySelector('.dr-is-leader').checked = true;
   if (prefill && prefill.is_night_shift) clone.querySelector('.dr-is-night-shift').checked = true;
   if (prefill && prefill.notes) clone.querySelector('.dr-notes').value = prefill.notes;
@@ -8050,9 +8065,32 @@ async function loadDailyReportRecentSites() {
 function updateDailyReportTotal() {
   const entries = document.querySelectorAll('.daily-report-entry');
   let total = 0;
-  entries.forEach((el) => { total += DR_HEADCOUNT_BY_WORK_TYPE[el.querySelector('.dr-work-type').value] || 0; });
-  document.getElementById('daily-report-total-headcount').textContent = total.toFixed(1);
-  document.getElementById('daily-report-special-warning').style.display = entries.length >= 3 ? 'block' : 'none';
+  entries.forEach((el) => {
+    const hcEl = el.querySelector('.dr-headcount');
+    const hc = hcEl ? Number(hcEl.value) : (DR_HEADCOUNT_BY_WORK_TYPE[el.querySelector('.dr-work-type').value] || 0);
+    total += hc || 0;
+  });
+  document.getElementById('daily-report-total-headcount').textContent = total.toFixed(2).replace(/\.?0+$/, '') || '0';
+  // 1日最大2現場。3現場目は追加させない(スプレッドシートが2現場構造のため)。
+  const addBtn = document.getElementById('daily-report-add-entry');
+  if (addBtn) {
+    addBtn.disabled = entries.length >= 2;
+    addBtn.style.display = entries.length >= 2 ? 'none' : '';
+  }
+  // 合計人工が不自然(0.25の倍数でない/1.0超)なら警告。1日の合計は通常1.0以内。
+  const warnEl = document.getElementById('daily-report-special-warning');
+  if (warnEl) {
+    const isQuarter = Math.abs(total / 0.25 - Math.round(total / 0.25)) < 1e-9;
+    const unnatural = total > 1.0 + 1e-9 || !isQuarter;
+    if (entries.length > 0 && unnatural) {
+      warnEl.textContent = total > 1.0 + 1e-9
+        ? `合計人工が ${total} です。1日の合計人工が1.0を超えています。内容をご確認ください。`
+        : `合計人工が ${total} です。人工は0.25単位で入力してください。`;
+      warnEl.style.display = 'block';
+    } else {
+      warnEl.style.display = 'none';
+    }
+  }
 }
 
 // 代理入力の対象に応じてget_my_daily_report_for_date相当のデータを取る。
@@ -8073,7 +8111,7 @@ async function fetchDailyReportForTarget(dateStr) {
     ? rows.filter((r) => r.subcontractor_worker_name === dailyReportTarget.workerName)
     : rows;
   return filtered.map((r) => ({
-    site_id: r.site_id, work_type: r.work_type, reflected: !!r.reflected_to_sheet_at,
+    site_id: r.site_id, work_type: r.work_type, headcount: r.headcount, reflected: !!r.reflected_to_sheet_at,
     report_status: r.report_status, is_leader: r.is_leader, is_night_shift: r.is_night_shift, notes: r.notes,
     overtime_hours: r.overtime_hours, is_early_commute: r.is_early_commute, is_commute_overtime: r.is_commute_overtime,
     is_over_100km: r.is_over_100km, is_transport: r.is_transport,
@@ -8121,7 +8159,7 @@ async function loadDailyReportForDate(dateStr) {
     // DBには正しく保存されているのに再読み込みすると入力欄が空に見える不具合があった
     // (保存自体は既存のまま無事故だった)。existingの全項目をそのままprefillへ渡す。
     existing.forEach((e) => addDailyReportEntry({
-      site_id: e.site_id, work_type: e.work_type, is_leader: e.is_leader, is_night_shift: e.is_night_shift, notes: e.notes,
+      site_id: e.site_id, work_type: e.work_type, headcount: e.headcount, is_leader: e.is_leader, is_night_shift: e.is_night_shift, notes: e.notes,
       overtime_hours: e.overtime_hours, is_early_commute: e.is_early_commute, is_commute_overtime: e.is_commute_overtime,
       early_commute_hours: e.early_commute_hours, commute_overtime_hours: e.commute_overtime_hours,
       is_over_100km: e.is_over_100km, is_transport: e.is_transport, is_field_duty: e.is_field_duty, is_sales: e.is_sales,
@@ -8186,8 +8224,10 @@ async function doSubmitDailyReport(isDraft) {
     const commuteOvertimeHoursVal = el.querySelector('.dr-commute-overtime-hours').value;
     if (earlyCommuteChecked && !earlyCommuteHoursVal) { showError('daily-report-error', '通勤早出の時間を入力してください。'); return; }
     if (commuteOvertimeChecked && !commuteOvertimeHoursVal) { showError('daily-report-error', '通勤残業の時間を入力してください。'); return; }
+    const hcEl = el.querySelector('.dr-headcount');
     entries.push({
       site_id: siteId, new_site_name: newSiteName, work_type: el.querySelector('.dr-work-type').value,
+      headcount: hcEl ? hcEl.value : null,
       is_leader: el.querySelector('.dr-is-leader').checked, is_night_shift: el.querySelector('.dr-is-night-shift').checked,
       notes: el.querySelector('.dr-notes').value.trim() || null,
       overtime_hours: overtimeVal ? Number(overtimeVal) : null,
@@ -8230,7 +8270,7 @@ async function doSubmitDailyReport(isDraft) {
           });
           const er = editResult && editResult[0];
           editRequiresApproval = !!(er && er.requires_approval);
-          r = { is_special: false, total_headcount: entries.reduce((s, e) => s + (e.work_type === '終日' ? 1 : 0.5), 0), entry_count: entries.length };
+          r = { is_special: false, total_headcount: entries.reduce((s, e) => s + (e.headcount != null ? Number(e.headcount) : (e.work_type === '終日' ? 1 : 0.5)), 0), entry_count: entries.length };
           break;
         } catch (editErr) {
           if (!reason && /修正理由を入力してください/.test(editErr.message || '')) {
@@ -10439,10 +10479,11 @@ async function loadSubcontractorWorkerAdmin() {
         ${healthDate || healthNext ? `<div class="row2">健康診断: ${healthDate ? `受診日${healthDate}` : ''}${healthNext ? `・次回目安${healthNext}` : ''}</div>` : ''}
         ${w.blood_type ? `<div class="row2">血液型: ${w.blood_type}${w.blood_type === '不明' ? '' : '型'}</div>` : ''}
         ${w.notes ? `<div class="row2">${w.notes}</div>` : ''}
+        <div class="row2">状態: ${w.status === 'active' ? '<span style="color:#2e7d32;font-weight:700;">在籍</span>' : '<span style="color:#b26a00;font-weight:700;">退職・停止</span>'}</div>
         <div class="qual-verify-btns">
           <button type="button" class="edit-sc-worker-btn" data-id="${w.id}">編集</button>
-          <button type="button" class="reject-btn toggle-sc-worker-btn" data-active="${w.status === 'active'}">${w.status === 'active' ? '停止する' : '再開する'}</button>
-          <button type="button" class="reject-btn delete-sc-worker-btn" data-id="${w.id}" data-name="${w.worker_name}" data-code="${w.login_code || ''}">削除</button>
+          <button type="button" class="reject-btn toggle-sc-worker-btn" data-active="${w.status === 'active'}">${w.status === 'active' ? '退職・停止にする' : '再有効化する'}</button>
+          <button type="button" class="reject-btn delete-sc-worker-btn" data-id="${w.id}" data-name="${w.worker_name}" data-code="${w.login_code || ''}" data-company="${(w.company_name || '').replace(/"/g, '&quot;')}">完全削除</button>
         </div>
       </div>
     `;
@@ -10482,8 +10523,11 @@ async function loadSubcontractorWorkerAdmin() {
         const id = Number(btn.dataset.id);
         const name = btn.dataset.name || '';
         const code = btn.dataset.code || '';
-        // 明示したこの1件のみを削除する(テスト登録の整理用)。関連する資格・健診・日報・端末も同時に削除され、削除前の内容は監査ログへ保存される。
-        if (!confirm(`外注作業員「${name}」${code ? `(本人ID: ${code})` : ''} を削除します。\nこの作業員の資格・健康診断・端末・本人日報も併せて削除されます(削除前の内容は監査ログに保存されます)。\n\n本当に削除しますか?`)) return;
+        const company = btn.dataset.company || '';
+        // 完全削除は明示したこの1件のみ(テスト・誤登録・重複の整理用)。通常の退職は「退職・停止」を使う。
+        // 別人の誤削除を防ぐため、氏名・会社名・本人IDを確認画面に表示する。関連する資格・健診・日報・端末も
+        // 同時に削除され、削除前の内容は監査ログへ保存される(復元可能)。
+        if (!confirm(`【完全削除の確認】\n\n氏名: ${name}\n会社: ${company || '(未設定)'}\n本人ID: ${code || '(未発行)'}\n\nこの外注作業員を完全に削除します。資格・健康診断・端末・本人日報も併せて削除されます(削除前の内容は監査ログに保存されます)。\n\n※通常の退職・契約終了は「退職・停止にする」を使ってください。\n\n本当にこの1名を完全削除しますか?`)) return;
         btn.disabled = true;
         try {
           const res = await rpc('admin_delete_subcontractor_worker', { p_admin_employee_code: session.employeeCode, p_worker_id: id });

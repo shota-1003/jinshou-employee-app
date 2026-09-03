@@ -493,9 +493,17 @@
       </div>
       <label>勤務区分<span class="required-mark">(必須)</span></label>
       <select class="dr-work-type">
-        <option value="終日">終日(1.0人工)</option>
-        <option value="午前">午前(0.5人工)</option>
-        <option value="午後">午後(0.5人工)</option>
+        <option value="終日">終日</option>
+        <option value="午前">午前</option>
+        <option value="午後">午後</option>
+      </select>
+      <label>人工<span class="required-mark">(必須)</span></label>
+      <div class="hint-inline">勤務区分から自動で入りますが、現場ごとに0.25単位で調整できます(例: 現場A 0.75 + 現場B 0.25 = 1.0)。</div>
+      <select class="dr-headcount">
+        <option value="1.0">1.0</option>
+        <option value="0.75">0.75</option>
+        <option value="0.5">0.5</option>
+        <option value="0.25">0.25</option>
       </select>
       <div class="checkbox-row">
         <input type="checkbox" class="dr-is-leader">

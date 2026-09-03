@@ -78,17 +78,9 @@ async function rpc(name, params) {
         showScreen('login');
         showError('login-error', message === 'このアカウントは現在ご利用いただけません' ? message : 'ログイン状態が無効になりました。もう一度ログインしてください。');
       }
-    } else if (name === 'resume_employee_session' && message === 'この端末はまだ管理者の承認待ちです。承認され次第ご利用いただけます') {
-      // 2026-09-03: resume_employee_session()がこのメッセージ(database/supabase/
-      // 202608281240_portal-security.sqlのrequire_employee_session、ERRCODE=28000)を返すのは、
-      // 新規端末が管理者の承認待ちであるという想定内の通常フロー(呼び出し元のtryResumeDeviceSession()が
-      // 専用のpending画面へ導く)であり、実際のProduction障害ではないため報告しない。ここで報告し
-      // 続けると、承認待ちの間アプリを開くたびに誤報が飛び続けてしまう。
-      // 2026-09-03修正: 以前はmessage.includes('承認待ち')という広い一致条件だったため、
-      // admin_decide_device_approval()が返す別種のエラー「承認待ちの端末が見つかりませんでした」
-      // (管理者が既に処理済みの端末を再度承認/却下しようとした場合の不整合)まで巻き込んで
-      // 一律に報告対象から除外してしまっていた。呼び出し元RPC名とメッセージ全文を厳密一致させ、
-      // resume_employee_sessionの想定内フローだけを対象にする。
+    } else if (window.isExpectedPendingApprovalError(name, message)) {
+      // 想定内の承認待ちフロー(詳細はpending-approval-classifier.jsのコメント参照)。
+      // ここで報告し続けると、承認待ちの間アプリを開くたびに誤報が飛び続けてしまう。
     } else {
       // 2026-09-02: セッション失効(想定内の通常フロー)以外は、可視化マップが検知できるよう
       // 実際のProductionエラーとして報告する。

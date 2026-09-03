@@ -78,6 +78,11 @@ async function rpc(name, params) {
         showScreen('login');
         showError('login-error', message === 'このアカウントは現在ご利用いただけません' ? message : 'ログイン状態が無効になりました。もう一度ログインしてください。');
       }
+    } else if (message.includes('承認待ち')) {
+      // 2026-09-03: 新規端末が管理者の承認待ちであることは、退職者による端末登録などを防ぐための
+      // 想定内の通常フロー(呼び出し元がtryResumeDeviceSession()等で専用のpending画面へ導く)であり、
+      // 実際のProduction障害ではないため報告しない。ここで報告し続けると、承認待ちの間アプリを
+      // 開くたびに誤報が飛び続けてしまう。
     } else {
       // 2026-09-02: セッション失効(想定内の通常フロー)以外は、可視化マップが検知できるよう
       // 実際のProductionエラーとして報告する。

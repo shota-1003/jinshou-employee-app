@@ -310,6 +310,11 @@
         <span class="home-card-label">接待・会食</span>
         <span class="home-card-desc">事前申請(接待前に)</span>
       </button>
+      <button type="button" class="home-card" data-nav="loan-request">
+        <span class="icon-slot" data-icon="banknote"></span>
+        <span class="home-card-label">借入申請</span>
+        <span class="home-card-desc">会社への一時借入を申請</span>
+      </button>
       <button type="button" class="home-card" data-nav="qual-submit">
         <span class="icon-slot" data-icon="graduation-cap"></span>
         <span class="home-card-label">資格・免許</span>
@@ -327,6 +332,85 @@
       </button>
     </div>
   </section>
+
+  <!-- 借入申請(社員) -->
+  <section id="screen-loan-request" class="screen">
+    <button type="button" class="back-link back-to-origin" data-nav="menu-apply">申請一覧に戻る</button>
+    <div class="form-title">借入申請</div>
+    <button type="button" class="link" data-nav="loan-history" style="margin-bottom:8px;">借入申請履歴を見る ›</button>
+    <div class="hint" style="margin-bottom:10px;">会社への一時的な借入の申請です。金銭に関わる申請のため、内容は正確にご記入ください。</div>
+
+    <label>申請日</label>
+    <input type="text" id="loan-request-date" readonly style="background:var(--surface-2,#f5f5f5);">
+
+    <label>借入希望金額<span class="required-mark">(必須)</span></label>
+    <input type="number" id="loan-amount" inputmode="numeric" min="0" step="1000" placeholder="例: 50000">
+
+    <label>先月の給料（手取り額）<span class="required-mark">(必須)</span></label>
+    <input type="number" id="loan-salary" inputmode="numeric" min="0" step="1000" placeholder="例: 280000">
+
+    <label>借入が必要になった理由<span class="required-mark">(必須)</span></label>
+    <div class="hint-inline">「金欠」「生活費」だけは不可。具体的に(例: 家賃と携帯料金の支払いが重なり生活費が不足したため)。</div>
+    <textarea id="loan-reason" rows="3" placeholder="具体的な理由を入力してください"></textarea>
+
+    <label>借入金の使用目的・内訳<span class="required-mark">(必須)</span></label>
+    <div id="loan-items"></div>
+    <button type="button" class="secondary" id="loan-add-item" style="margin-top:6px;">＋ 使用目的を追加</button>
+    <div style="display:flex;justify-content:space-between;font-weight:700;margin-top:10px;padding:8px;background:var(--surface-2,#f5f5f5);border-radius:8px;">
+      <span>内訳合計</span><span id="loan-items-total">0円</span>
+    </div>
+    <div class="hint-inline" id="loan-total-hint"></div>
+
+    <label>いつまでに必要か<span class="required-mark">(必須)</span></label>
+    <div class="hint-inline">借入申請は「必要日の3日前まで」に申請してください。</div>
+    <input type="date" id="loan-needed-by">
+
+    <label>受取方法<span class="required-mark">(必須)</span></label>
+    <div class="checkbox-row"><input type="radio" name="loan-receipt" value="cash" id="loan-receipt-cash"><label for="loan-receipt-cash">現金</label></div>
+    <div class="checkbox-row"><input type="radio" name="loan-receipt" value="bank_transfer" id="loan-receipt-bank"><label for="loan-receipt-bank">銀行振込(登録済みの給与振込口座へ)</label></div>
+
+    <div class="error" id="loan-error"></div>
+    <button type="button" id="loan-to-confirm">確認画面へ</button>
+  </section>
+
+  <!-- 借入申請 確認 -->
+  <section id="screen-loan-confirm" class="screen">
+    <button type="button" class="back-link" data-nav="loan-request">入力に戻る</button>
+    <div class="form-title">借入申請の確認</div>
+    <div class="card" id="loan-confirm-body"></div>
+    <div class="error" id="loan-confirm-error"></div>
+    <button type="button" id="loan-submit">この内容で申請する</button>
+  </section>
+
+  <!-- 借入申請 履歴(本人) -->
+  <section id="screen-loan-history" class="screen">
+    <button type="button" class="back-link back-to-origin" data-nav="menu-apply">申請一覧に戻る</button>
+    <div class="form-title">借入申請履歴</div>
+    <div id="loan-history-list"><div class="hint">読み込み中...</div></div>
+  </section>
+
+  <!-- 借入申請 詳細(本人) -->
+  <section id="screen-loan-detail" class="screen">
+    <button type="button" class="back-link" data-nav="loan-history">履歴に戻る</button>
+    <div class="form-title">借入申請の詳細</div>
+    <div class="card" id="loan-detail-body"></div>
+    <button type="button" id="loan-detail-edit" style="display:none;">この申請を修正する</button>
+  </section>
+
+  <!-- 借入申請 管理(管理者) -->
+  <section id="screen-loan-admin" class="screen">
+    <button type="button" class="back-link back-to-origin" data-nav="menu">ホームに戻る</button>
+    <div class="form-title">借入申請の管理</div>
+    <div id="loan-admin-list"><div class="hint">読み込み中...</div></div>
+  </section>
+
+  <template id="loan-item-template">
+    <div class="loan-item" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+      <input type="text" class="loan-item-purpose" placeholder="使用目的(例: 家賃)" style="flex:2;">
+      <input type="number" class="loan-item-amount" inputmode="numeric" min="0" step="1000" placeholder="金額" style="flex:1;">
+      <button type="button" class="loan-item-del secondary" style="width:auto;padding:6px 10px;margin:0;">×</button>
+    </div>
+  </template>
 
   <!-- 2026-08-28(第4弾): 一般社員が新しい現場を登録申請できる画面。日報を経由しなくても、
        事前に現場だけ登録申請できる(ユーザー指示)。既存のadmin_register_siteと同じ重複検出
@@ -1866,6 +1950,11 @@
       <button type="button" class="menu-item" data-nav="entertainment-admin">
         <span class="icon-slot" data-icon="users-round"></span>
         <div class="menu-item-body">接待交際費 事前申請<span class="desc">承認待ちの接待予定を確認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item" data-nav="loan-admin">
+        <span class="icon-slot" data-icon="banknote"></span>
+        <div class="menu-item-body">借入申請の管理<span class="desc">社員からの借入申請を承認/却下/差し戻し</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
       <button type="button" class="menu-item" data-nav="daily-report-management">

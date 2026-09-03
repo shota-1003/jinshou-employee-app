@@ -259,7 +259,7 @@ const ADMIN_SCREENS = new Set([
   'daily-report-needs-review-admin', 'daily-report-edit-requests-admin',
   'subcontractor-company-admin', 'subcontractor-worker-admin', 'personnel-ledger-hub',
   'supply-holdings-admin', 'supply-request-admin', 'joyo-denpyo-summary', 'master-management-hub', 'employee-create',
-  'first-login-codes-admin', 'pin-reset-admin',
+  'first-login-codes-admin', 'pin-reset-admin', 'loan-admin',
 ]);
 let inAdminMode = false;
 // 「戻る」ボタンの遷移元復帰(2026-08-28)で使う、アプリ内で実際に何回画面遷移したかのカウンタ。
@@ -7433,6 +7433,214 @@ function resetProposeSiteForm() {
   populateSitePrefectureSelect('propose-site-prefecture');
 }
 
+// ==================== 借入申請 ====================
+const LOAN_STATUS_LABEL = { applied: '申請中', approved: '承認', rejected: '却下', returned: '差し戻し', cancelled: '取消' };
+const LOAN_RECEIPT_LABEL = { cash: '現金', bank_transfer: '銀行振込' };
+const yen = (n) => (Number(n) || 0).toLocaleString('ja-JP') + '円';
+let loanEditingId = null; // 編集中の申請id(nullは新規)
+function addLoanItem(prefill) {
+  const tpl = document.getElementById('loan-item-template');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  if (prefill) { node.querySelector('.loan-item-purpose').value = prefill.purpose || ''; node.querySelector('.loan-item-amount').value = prefill.amount != null ? prefill.amount : ''; }
+  node.querySelector('.loan-item-amount').addEventListener('input', updateLoanTotal);
+  node.querySelector('.loan-item-purpose').addEventListener('input', updateLoanTotal);
+  node.querySelector('.loan-item-del').addEventListener('click', () => { node.remove(); updateLoanTotal(); });
+  document.getElementById('loan-items').appendChild(node);
+  updateLoanTotal();
+}
+function loanBreakdown() {
+  return Array.from(document.querySelectorAll('#loan-items .loan-item'))
+    .map((el) => ({ purpose: el.querySelector('.loan-item-purpose').value.trim(), amount: Number(el.querySelector('.loan-item-amount').value) || 0 }))
+    .filter((x) => x.purpose || x.amount);
+}
+function updateLoanTotal() {
+  const sum = loanBreakdown().reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  document.getElementById('loan-items-total').textContent = yen(sum);
+  const amount = Number(document.getElementById('loan-amount').value) || 0;
+  const hint = document.getElementById('loan-total-hint');
+  if (amount > 0 && sum !== amount) { hint.textContent = `借入希望額(${yen(amount)})と内訳合計(${yen(sum)})が一致していません。`; hint.style.color = 'var(--danger,#d9534f)'; }
+  else if (amount > 0) { hint.textContent = '借入希望額と内訳合計が一致しています。'; hint.style.color = 'var(--success,#2e7d32)'; }
+  else { hint.textContent = ''; }
+}
+function initLoanRequestForm() {
+  const today = todayJST();
+  document.getElementById('loan-request-date').value = today;
+  if (!loanEditingId) {
+    document.getElementById('loan-amount').value = '';
+    document.getElementById('loan-salary').value = '';
+    document.getElementById('loan-reason').value = '';
+    document.getElementById('loan-needed-by').value = '';
+    document.querySelectorAll('input[name="loan-receipt"]').forEach((r) => { r.checked = false; });
+    document.getElementById('loan-items').innerHTML = '';
+    addLoanItem(); addLoanItem();
+  }
+  // 必要日は3日後以降のみ選べるようにmin設定(暦日差3日以上)。
+  const min = new Date(today + 'T00:00:00'); min.setDate(min.getDate() + 3);
+  document.getElementById('loan-needed-by').min = `${min.getFullYear()}-${String(min.getMonth() + 1).padStart(2, '0')}-${String(min.getDate()).padStart(2, '0')}`;
+  hideError('loan-error');
+  document.getElementById('loan-amount').oninput = updateLoanTotal;
+  updateLoanTotal();
+  if (!document.getElementById('loan-add-item').dataset.wired) {
+    document.getElementById('loan-add-item').dataset.wired = '1';
+    document.getElementById('loan-add-item').addEventListener('click', () => addLoanItem());
+    document.getElementById('loan-to-confirm').addEventListener('click', loanToConfirm);
+    document.getElementById('loan-submit').addEventListener('click', doSubmitLoan);
+    document.getElementById('loan-detail-edit').addEventListener('click', () => { if (loanDetailData) startLoanEdit(loanDetailData); });
+  }
+}
+function daysBetween(a, b) { return Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000); }
+function loanFormValues() {
+  return {
+    amount: Number(document.getElementById('loan-amount').value) || 0,
+    salary: Number(document.getElementById('loan-salary').value) || 0,
+    reason: document.getElementById('loan-reason').value.trim(),
+    breakdown: loanBreakdown(),
+    neededBy: document.getElementById('loan-needed-by').value,
+    receipt: (document.querySelector('input[name="loan-receipt"]:checked') || {}).value || '',
+  };
+}
+function validateLoanClient(v) {
+  if (!(v.amount > 0)) return '借入希望金額を入力してください。';
+  if (!(v.salary >= 0) || document.getElementById('loan-salary').value === '') return '先月の給料(手取り額)を入力してください。';
+  if (v.reason.length < 10) return '借入が必要な理由を具体的に入力してください(10文字以上)。';
+  if (!v.breakdown.length) return '使用目的の内訳を1件以上入力してください。';
+  if (v.breakdown.some((x) => !x.purpose || !(x.amount > 0))) return '使用目的と金額を正しく入力してください。';
+  const sum = v.breakdown.reduce((s, x) => s + x.amount, 0);
+  if (sum !== v.amount) return `借入希望金額(${yen(v.amount)})と内訳合計(${yen(sum)})が一致していません。`;
+  if (!v.neededBy) return '必要日を選択してください。';
+  if (daysBetween(todayJST(), v.neededBy) < 3) return '借入申請は必要日の3日前までに申請してください。';
+  if (!v.receipt) return '受取方法を選択してください。';
+  return null;
+}
+function loanToConfirm() {
+  hideError('loan-error');
+  const v = loanFormValues();
+  const err = validateLoanClient(v);
+  if (err) { showError('loan-error', err); return; }
+  const body = document.getElementById('loan-confirm-body');
+  body.innerHTML = `
+    <div class="field-row"><span>希望金額</span><span style="font-weight:700;">${yen(v.amount)}</span></div>
+    <div class="field-row"><span>先月給与(手取り)</span><span>${yen(v.salary)}</span></div>
+    <div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>必要な理由</span><span style="margin-top:4px;">${v.reason.replace(/</g, '&lt;')}</span></div>
+    <div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>使用目的</span><div style="width:100%;margin-top:4px;">${v.breakdown.map((x) => `<div style="display:flex;justify-content:space-between;"><span>${(x.purpose || '').replace(/</g, '&lt;')}</span><span>${yen(x.amount)}</span></div>`).join('')}</div></div>
+    <div class="field-row"><span>内訳合計</span><span style="font-weight:700;">${yen(v.breakdown.reduce((s, x) => s + x.amount, 0))}</span></div>
+    <div class="field-row"><span>必要日</span><span>${v.neededBy}</span></div>
+    <div class="field-row"><span>受取方法</span><span>${LOAN_RECEIPT_LABEL[v.receipt]}</span></div>`;
+  hideError('loan-confirm-error');
+  showScreen('loan-confirm');
+}
+async function doSubmitLoan() {
+  const session = getSession();
+  const v = loanFormValues();
+  const err = validateLoanClient(v);
+  if (err) { showError('loan-confirm-error', err); return; }
+  const btn = document.getElementById('loan-submit'); btn.disabled = true;
+  try {
+    if (loanEditingId) {
+      await rpc('update_my_loan_request', { p_employee_code: session.employeeCode, p_id: loanEditingId, p_amount: v.amount, p_last_month_salary: v.salary, p_reason: v.reason, p_breakdown: v.breakdown, p_needed_by_date: v.neededBy, p_receipt_method: v.receipt });
+    } else {
+      await rpc('submit_loan_request', { p_employee_code: session.employeeCode, p_amount: v.amount, p_last_month_salary: v.salary, p_reason: v.reason, p_breakdown: v.breakdown, p_needed_by_date: v.neededBy, p_receipt_method: v.receipt });
+    }
+    loanEditingId = null;
+    showDone('借入申請を送信しました。管理者の確認をお待ちください。', 'loan-history');
+  } catch (e) {
+    showError('loan-confirm-error', e.message || '申請に失敗しました。');
+  } finally { btn.disabled = false; }
+}
+function startLoanEdit(d) {
+  loanEditingId = d.id;
+  document.getElementById('loan-amount').value = d.amount;
+  document.getElementById('loan-salary').value = d.last_month_net_salary;
+  document.getElementById('loan-reason').value = d.reason || '';
+  document.getElementById('loan-needed-by').value = d.needed_by_date;
+  document.querySelectorAll('input[name="loan-receipt"]').forEach((r) => { r.checked = (r.value === d.receipt_method); });
+  document.getElementById('loan-items').innerHTML = '';
+  (d.breakdown || []).forEach((x) => addLoanItem(x));
+  if (!(d.breakdown || []).length) { addLoanItem(); }
+  showScreen('loan-request');
+}
+async function loadLoanHistory() {
+  loanEditingId = null;
+  const session = getSession();
+  const listEl = document.getElementById('loan-history-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_loan_requests', { p_employee_code: session.employeeCode });
+    if (!rows || !rows.length) { listEl.innerHTML = '<div class="hint">借入申請の履歴はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <button type="button" class="history-item loan-hist" data-id="${r.id}" style="width:100%;text-align:left;">
+        <div class="row1"><span style="font-weight:700;">${yen(r.amount)}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${LOAN_STATUS_LABEL[r.status] || r.status}</span></div>
+        <div class="row2">申請日 ${r.request_date}　必要日 ${r.needed_by_date}　${LOAN_RECEIPT_LABEL[r.receipt_method] || ''}</div>
+      </button>`).join('');
+    listEl.querySelectorAll('.loan-hist').forEach((b) => b.addEventListener('click', () => openLoanDetail(Number(b.dataset.id))));
+  } catch (e) { listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>'; }
+}
+let loanDetailData = null;
+async function openLoanDetail(id) {
+  const session = getSession();
+  showScreen('loan-detail');
+  const body = document.getElementById('loan-detail-body');
+  body.innerHTML = '<div class="hint">読み込み中...</div>';
+  document.getElementById('loan-detail-edit').style.display = 'none';
+  try {
+    const rows = await rpc('get_my_loan_request_detail', { p_employee_code: session.employeeCode, p_id: id });
+    const d = rows && rows[0];
+    if (!d) { body.innerHTML = '<div class="hint">申請が見つかりません。</div>'; return; }
+    loanDetailData = d;
+    body.innerHTML = `
+      <div class="field-row"><span>状態</span><span class="status-badge ${d.status === 'approved' ? 'done' : (d.status === 'rejected' ? 'rejected' : '')}">${LOAN_STATUS_LABEL[d.status] || d.status}</span></div>
+      <div class="field-row"><span>申請日</span><span>${d.request_date}</span></div>
+      <div class="field-row"><span>希望金額</span><span style="font-weight:700;">${yen(d.amount)}</span></div>
+      <div class="field-row"><span>先月給与(手取り)</span><span>${yen(d.last_month_net_salary)}</span></div>
+      <div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>必要な理由</span><span style="margin-top:4px;">${(d.reason || '').replace(/</g, '&lt;')}</span></div>
+      <div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>使用目的</span><div style="width:100%;margin-top:4px;">${(d.breakdown || []).map((x) => `<div style="display:flex;justify-content:space-between;"><span>${(x.purpose || '').replace(/</g, '&lt;')}</span><span>${yen(x.amount)}</span></div>`).join('')}</div></div>
+      <div class="field-row"><span>必要日</span><span>${d.needed_by_date}</span></div>
+      <div class="field-row"><span>受取方法</span><span>${LOAN_RECEIPT_LABEL[d.receipt_method] || ''}</span></div>
+      ${d.admin_comment ? `<div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>管理者コメント</span><span style="margin-top:4px;">${d.admin_comment.replace(/</g, '&lt;')}</span></div>` : ''}`;
+    // 未承認(申請中)のみ本人が修正できる。
+    document.getElementById('loan-detail-edit').style.display = (d.status === 'applied') ? 'block' : 'none';
+  } catch (e) { body.innerHTML = '<div class="hint">読み込みに失敗しました。</div>'; }
+}
+async function loadLoanAdminList() {
+  const session = getSession();
+  const listEl = document.getElementById('loan-admin-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_loan_requests', { p_admin_employee_code: session.employeeCode, p_status: null });
+    if (!rows || !rows.length) { listEl.innerHTML = '<div class="hint">借入申請はありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => `
+      <div class="supply-item" data-id="${r.id}">
+        <div class="row1"><span style="font-weight:700;">${r.employee_name}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${LOAN_STATUS_LABEL[r.status] || r.status}</span></div>
+        <div class="row2">申請日 ${r.request_date}　希望 ${yen(r.amount)}　先月給与 ${yen(r.last_month_net_salary)}</div>
+        <div class="row2">必要日 ${r.needed_by_date}　${LOAN_RECEIPT_LABEL[r.receipt_method] || ''}</div>
+        <div class="row2">理由: ${(r.reason || '').replace(/</g, '&lt;')}</div>
+        <div class="row2">内訳: ${(r.breakdown || []).map((x) => `${(x.purpose || '')} ${yen(x.amount)}`).join(' / ')}</div>
+        ${r.admin_comment ? `<div class="row2">コメント: ${r.admin_comment.replace(/</g, '&lt;')}</div>` : ''}
+        ${r.status === 'applied' ? `
+        <input type="text" class="loan-admin-comment" placeholder="管理者コメント(任意)" style="margin-top:6px;">
+        <div class="qual-verify-btns">
+          <button type="button" class="approve-btn loan-decide" data-act="approve">承認</button>
+          <button type="button" class="reject-btn loan-decide" data-act="return">差し戻し</button>
+          <button type="button" class="reject-btn loan-decide" data-act="reject">却下</button>
+        </div>` : ''}
+      </div>`).join('');
+    listEl.querySelectorAll('.loan-decide').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const item = btn.closest('.supply-item');
+        const id = Number(item.dataset.id);
+        const comment = (item.querySelector('.loan-admin-comment') || {}).value || '';
+        const act = btn.dataset.act;
+        if (act === 'reject' && !confirm('この借入申請を却下しますか?')) return;
+        btn.disabled = true;
+        try {
+          await rpc('admin_decide_loan_request', { p_admin_employee_code: session.employeeCode, p_id: id, p_action: act, p_comment: comment || null });
+          loadLoanAdminList();
+        } catch (e) { btn.disabled = false; alert(e.message || '処理に失敗しました。'); }
+      });
+    });
+  } catch (e) { listEl.innerHTML = '<div class="hint">この画面には経理承認権限が必要です。</div>'; }
+}
+
 async function doProposeSite(forceCreate) {
   const session = getSession();
   const name = document.getElementById('propose-site-name').value.trim();
@@ -12290,6 +12498,9 @@ function init() {
   SCREEN_ENTER_HOOKS['my-action-items'] = loadMyActionItems;
   SCREEN_ENTER_HOOKS['admin-action-item-create'] = resetActionItemCreateForm;
   SCREEN_ENTER_HOOKS['propose-site'] = resetProposeSiteForm;
+  SCREEN_ENTER_HOOKS['loan-request'] = initLoanRequestForm;
+  SCREEN_ENTER_HOOKS['loan-history'] = loadLoanHistory;
+  SCREEN_ENTER_HOOKS['loan-admin'] = loadLoanAdminList;
   SCREEN_ENTER_HOOKS['status-board-general'] = loadStatusBoardGeneral;
   SCREEN_ENTER_HOOKS['entertainment-late-submit'] = resetEntertainmentLateForm;
   SCREEN_ENTER_HOOKS['my-entertainment'] = loadMyEntertainmentList;

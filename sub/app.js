@@ -96,6 +96,11 @@ function bindEvents() {
   $('att-add-site-btn').addEventListener('click', () => { addAttBlock(); });
 
   $('att-submit-btn').addEventListener('click', submitAttendance);
+
+  // 出勤履歴(月単位)
+  $('home-history-btn').addEventListener('click', () => openHistory());
+  $('hist-prev').addEventListener('click', () => { histYM = shiftYM(histYM, -1); loadHistory(); });
+  $('hist-next').addEventListener('click', () => { histYM = shiftYM(histYM, 1); loadHistory(); });
   $('done-home-btn').addEventListener('click', enterHome);
 }
 
@@ -195,16 +200,105 @@ function enterHome() {
   loadRecent();
 }
 
+const WT_JP = { '終日': '終日', '午前': '午前', '午後': '午後' };
+function mdLabel(dateStr) { const m = String(dateStr).match(/(\d{4})-(\d{2})-(\d{2})/); return m ? `${Number(m[2])}/${Number(m[3])}` : String(dateStr); }
 async function loadRecent() {
+  // ホームの「最近の提出」: 直近の提出を数件プレビュー + 「出勤履歴をすべて見る」。
   try {
-    const r = await rpc('get_my_subcontractor_attendance', { p_login_code: loginCode, p_report_date: todayJST() });
-    const rows = r || [];
+    const now = todayJST();
+    const y = Number(now.slice(0, 4)), mo = Number(now.slice(5, 7));
+    let rows = [];
+    try { rows = (await rpc('get_my_subcontractor_attendance_month', { p_login_code: loginCode, p_year: y, p_month: mo })) || []; } catch (e) { rows = []; }
+    // 先月分も少し補完(月初など今月が少ない場合)
+    if (rows.length < 3) {
+      const pm = mo === 1 ? 12 : mo - 1, py = mo === 1 ? y - 1 : y;
+      try { const prev = (await rpc('get_my_subcontractor_attendance_month', { p_login_code: loginCode, p_year: py, p_month: pm })) || []; rows = rows.concat(prev); } catch (e) {}
+    }
+    $('home-recent-wrap').style.display = 'block';
     if (rows.length) {
-      $('home-recent-wrap').style.display = 'block';
-      $('home-recent-list').innerHTML = rows.map((x) => `<div class="recent-item">${escapeHtml(x.site_name || '(現場未設定)')}｜${escapeHtml(x.work_type || '')}${x.reflected ? '<span class="chip">反映済</span>' : ''}</div>`).join('');
-    } else { $('home-recent-wrap').style.display = 'none'; }
+      const top = rows.slice(0, 4);
+      $('home-recent-list').innerHTML = top.map((x) => `<div class="recent-item">${mdLabel(x.report_date)}　${escapeHtml(x.site_name || '(現場未設定)')}　${escapeHtml(WT_JP[x.work_type] || x.work_type || '')}${x.reflected ? '<span class="chip">反映済</span>' : ''}</div>`).join('');
+    } else {
+      $('home-recent-list').innerHTML = '<div class="hint">まだ提出がありません。</div>';
+    }
   } catch (e) { $('home-recent-wrap').style.display = 'none'; }
 }
+
+// ===== 出勤履歴(月単位・本人のみ) =====
+let histYM = null; // {y, m}
+function shiftYM(ym, delta) { let y = ym.y, m = ym.m + delta; while (m < 1) { m += 12; y -= 1; } while (m > 12) { m -= 12; y += 1; } return { y, m }; }
+function openHistory() {
+  const now = todayJST();
+  histYM = { y: Number(now.slice(0, 4)), m: Number(now.slice(5, 7)) };
+  showScreen('history');
+  loadHistory();
+}
+async function loadHistory() {
+  $('hist-month').textContent = `${histYM.y}年${histYM.m}月`;
+  $('hist-list').innerHTML = '<div class="hint">読み込み中...</div>';
+  let rows = [];
+  try { rows = (await rpc('get_my_subcontractor_attendance_month', { p_login_code: loginCode, p_year: histYM.y, p_month: histYM.m })) || []; } catch (e) { $('hist-list').innerHTML = '<div class="hint">読み込みに失敗しました。</div>'; return; }
+  // 統計: 出勤日数(distinct date) / 合計人工(sum headcount) / 残業合計(sum overtime)
+  const days = new Set(rows.map((r) => r.report_date)).size;
+  const manDays = rows.reduce((s, r) => s + (Number(r.headcount) || 0), 0);
+  const ot = rows.reduce((s, r) => s + (Number(r.overtime_hours) || 0), 0);
+  $('hist-days').textContent = days + '日';
+  $('hist-mandays').textContent = (String(manDays).replace(/\.?0+$/, '') || '0') + '人工';
+  $('hist-overtime').textContent = (String(ot).replace(/\.?0+$/, '') || '0') + 'h';
+  // 日単位にまとめる(2現場は1日にまとめて表示)
+  const byDate = {};
+  rows.forEach((r) => { (byDate[r.report_date] = byDate[r.report_date] || []).push(r); });
+  const dates = Object.keys(byDate).sort().reverse();
+  if (!dates.length) { $('hist-list').innerHTML = '<div class="hint">この月の提出はありません。</div>'; return; }
+  $('hist-list').innerHTML = dates.map((d) => {
+    const es = byDate[d];
+    const sites = es.map((e) => `${escapeHtml(e.site_name || '(現場)')} ${escapeHtml(WT_JP[e.work_type] || '')} ${String(Number(e.headcount)).replace(/\.?0+$/, '') || e.headcount}人工`).join(' / ');
+    const needsRev = es.some((e) => e.needs_review);
+    return `<button type="button" class="recent-item hist-day" data-date="${d}" style="width:100%;text-align:left;display:block;">
+      <div style="font-weight:700;">${mdLabel(d)}${needsRev ? ' <span class="chip" style="background:#e0a021;color:#fff;">要確認</span>' : ''}</div>
+      <div style="font-size:.9rem;color:#5b6b8a;">${sites}</div>
+    </button>`;
+  }).join('');
+  $('hist-list').querySelectorAll('.hist-day').forEach((b) => b.addEventListener('click', () => openAttDetail(b.dataset.date)));
+}
+
+// ===== 出勤報告 詳細(訂正/取消) =====
+let detailDate = null;
+async function openAttDetail(dateStr) {
+  detailDate = dateStr;
+  showScreen('att-detail');
+  $('detail-date').textContent = formatJpDate(dateStr) + ' の出勤報告';
+  $('detail-status').textContent = '';
+  $('detail-entries').innerHTML = '<div class="hint">読み込み中...</div>';
+  let rows = [];
+  try { rows = (await rpc('get_my_subcontractor_attendance', { p_login_code: loginCode, p_report_date: dateStr })) || []; } catch (e) {}
+  if (!rows.length) { $('detail-entries').innerHTML = '<div class="hint">この日の有効な提出はありません。</div>'; $('detail-edit-btn').style.display = 'none'; $('detail-cancel-btn').style.display = 'none'; return; }
+  $('detail-edit-btn').style.display = ''; $('detail-cancel-btn').style.display = '';
+  const anyReview = rows.some((r) => r.needs_review);
+  const anyConfirmed = rows.every((r) => r.report_status === 'confirmed');
+  $('detail-status').innerHTML = anyConfirmed ? '<span class="chip" style="background:#dcfce7;color:#166534;">確認済み</span>' : anyReview ? '<span class="chip" style="background:#e0a021;color:#fff;">要確認</span>' : '<span class="chip" style="background:#dbeafe;color:#1d4ed8;">提出済み</span>';
+  $('detail-entries').innerHTML = rows.map((r, i) => `
+    <div class="card" style="margin:8px 0;padding:12px;">
+      <div style="font-weight:700;margin-bottom:6px;">現場${(r.entry_slot || i + 1)}</div>
+      <div class="recent-item">現場：${escapeHtml(r.site_name || '(未設定)')}</div>
+      <div class="recent-item">勤務区分：${escapeHtml(WT_JP[r.work_type] || r.work_type || '')}</div>
+      <div class="recent-item">人工：${String(Number(r.headcount)).replace(/\.?0+$/, '') || r.headcount}</div>
+      <div class="recent-item">残業：${Number(r.overtime_hours || 0)}h</div>
+      <div class="recent-item">夜勤：${r.is_night_shift ? 'あり' : 'なし'}</div>
+      <div class="recent-item">出張：${r.is_business_trip ? 'あり' : 'なし'}</div>
+      ${r.notes ? `<div class="recent-item">備考：${escapeHtml(r.notes)}</div>` : ''}
+    </div>`).join('');
+  $('detail-edit-btn').onclick = () => openAttendance(dateStr, 'history');
+  $('detail-cancel-btn').onclick = async () => {
+    if (!confirm('この日の出勤報告を取り消します。よろしいですか?\n(取消後、同じ日をもう一度登録できます)')) return;
+    try {
+      await rpc('cancel_my_subcontractor_attendance', { p_login_code: loginCode, p_report_date: dateStr });
+      await loadHistory();
+      showScreen('history');
+    } catch (e) { alert(friendlyError(e, '取消に失敗しました。もう一度お試しください。')); }
+  };
+}
+function formatJpDate(dateStr) { const m = String(dateStr).match(/(\d{4})-(\d{2})-(\d{2})/); if (!m) return String(dateStr); return `${Number(m[1])}年${Number(m[2])}月${Number(m[3])}日`; }
 
 // ②③④ プロフィール
 async function openProfile() {
@@ -408,11 +502,16 @@ function renumberAttBlocks() {
     b.querySelector('.ab-remove-btn').style.display = (i === 0) ? 'none' : '';
   });
 }
-async function openAttendance() {
+let attTargetDate = null; // 訂正時は対象日を指定(nullなら当日)
+let attOrigin = 'home';   // 提出完了後の戻り先(home / history)
+async function openAttendance(targetDate, origin) {
+  attTargetDate = targetDate || todayJST();
+  attOrigin = origin || 'home';
   showScreen('attendance');
   setErr('att-error', '');
-  const d = todayJST();
-  $('att-date').textContent = d + ' の日報';
+  const d = attTargetDate;
+  const isToday = (d === todayJST());
+  $('att-date').textContent = d + (isToday ? ' の日報' : ' の日報（訂正）');
   // ⑤ 現場候補: 正式な現場マスター(配置カレンダー→最近→有効現場マスターの優先順)。カテゴリタグは出さない。
   let sites = [];
   try {
@@ -470,8 +569,16 @@ async function submitAttendance() {
     totalHc += hc;
     entries.push(entry);
   }
+  const target = attTargetDate || todayJST();
+  const isCorrection = (attOrigin === 'history') || (target !== todayJST());
   try {
-    const r = await rpc('submit_my_subcontractor_attendance', { p_login_code: loginCode, p_report_date: todayJST(), p_entries: entries });
+    await rpc('submit_my_subcontractor_attendance', { p_login_code: loginCode, p_report_date: target, p_entries: entries });
+    if (isCorrection) {
+      // 訂正時は履歴へ戻して最新を表示(管理側・照合にも即時反映される)。
+      await loadHistory();
+      showScreen('history');
+      return;
+    }
     $('done-title').textContent = '日報を登録しました';
     $('done-sub').textContent = `${entries.length}現場｜合計${String(totalHc).replace(/\.?0+$/, '') || totalHc}人工`;
     showScreen('done');

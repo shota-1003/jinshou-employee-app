@@ -105,6 +105,38 @@
     <div class="card" id="home-recent-wrap" style="display:none">
       <div class="section-title">最近の提出</div>
       <div id="home-recent-list"></div>
+      <button class="menu-btn secondary" id="home-history-btn" style="margin-top:12px;">🗓 出勤履歴をすべて見る</button>
+    </div>
+  </section>
+
+  <!-- 出勤履歴(月単位・本人のみ) -->
+  <section id="screen-history" class="screen">
+    <button class="back-btn" data-back="home">← もどる</button>
+    <div class="card">
+      <div class="section-title">出勤履歴</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:6px 0 12px;">
+        <button type="button" id="hist-prev" class="seg" style="width:auto;padding:6px 16px;">＜</button>
+        <div id="hist-month" style="font-weight:700;font-size:1.05rem;">-</div>
+        <button type="button" id="hist-next" class="seg" style="width:auto;padding:6px 16px;">＞</button>
+      </div>
+      <div id="hist-stats" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center;margin-bottom:12px;">
+        <div><div style="font-size:.8rem;color:#5b6b8a;">出勤日数</div><div id="hist-days" style="font-weight:700;">-</div></div>
+        <div><div style="font-size:.8rem;color:#5b6b8a;">合計人工</div><div id="hist-mandays" style="font-weight:700;">-</div></div>
+        <div><div style="font-size:.8rem;color:#5b6b8a;">残業合計</div><div id="hist-overtime" style="font-weight:700;">-</div></div>
+      </div>
+      <div id="hist-list"></div>
+    </div>
+  </section>
+
+  <!-- 出勤報告 詳細(本人のみ・訂正/取消) -->
+  <section id="screen-att-detail" class="screen">
+    <button class="back-btn" data-back="history">← 履歴にもどる</button>
+    <div class="card">
+      <div class="section-title" id="detail-date">-</div>
+      <div id="detail-status" style="margin-bottom:10px;"></div>
+      <div id="detail-entries"></div>
+      <button class="menu-btn" id="detail-edit-btn" style="margin-top:14px;background:var(--primary);color:#fff;border-color:var(--primary);">✏️ この出勤報告を訂正する</button>
+      <button class="menu-btn secondary" id="detail-cancel-btn" style="margin-top:10px;color:var(--danger);border-color:var(--danger);">🗑 この出勤報告を取り消す</button>
     </div>
   </section>
 

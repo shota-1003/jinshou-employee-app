@@ -688,8 +688,16 @@
   <!-- 日報管理(管理者/日報担当): 日付・社員・外注・現場・状態で検索、本日の未提出を確認、
        複数件まとめて確認、外注マスターへの導線。サクミルの日報機能を置き換える中核画面。 -->
   <section id="screen-daily-report-management" class="screen">
-    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
+    <button type="button" class="back-link back-to-origin" data-nav="menu">ホームに戻る</button>
     <div class="form-title">日報管理</div>
+
+    <!-- 日報管理権限(nippo_admin/executive)で、日報・経費申請から入力された承認待ちの新規現場を確認・承認/却下する入口。
+         現場承認は現場管理画面(site-admin)で行う。executiveは管理者ダッシュボードからも到達できる。 -->
+    <button type="button" class="menu-item" data-nav="site-admin" style="margin-bottom:12px;">
+      <span class="icon-slot" data-icon="map-pin"></span>
+      <div class="menu-item-body">新規現場の確認<span class="desc">日報・経費申請から入力された承認待ちの新規現場を承認/却下</span></div>
+      <span class="icon-slot arrow" data-icon="chevron-right"></span>
+    </button>
 
     <!-- 日付主軸: 選択した1日だけを表示。前後移動・今日・その日の件数要約。 -->
     <div class="card" id="drm-date-nav" style="margin-bottom:10px;"></div>
@@ -854,14 +862,30 @@
       <select id="sc-worker-company-select"></select>
       <label for="sc-worker-name">作業員名</label>
       <input type="text" id="sc-worker-name" placeholder="例: 山田 太郎">
+      <label for="sc-worker-furigana">フリガナ</label>
+      <input type="text" id="sc-worker-furigana" placeholder="例: ヤマダ タロウ">
       <label for="sc-worker-birth-date">生年月日</label>
       <input type="date" id="sc-worker-birth-date">
+      <label for="sc-worker-blood-type">血液型</label>
+      <input type="text" id="sc-worker-blood-type" placeholder="例: A">
       <label for="sc-worker-phone">連絡先電話番号</label>
       <input type="tel" id="sc-worker-phone">
       <label for="sc-worker-address">住所</label>
       <input type="text" id="sc-worker-address">
-      <label for="sc-worker-qualifications">保有資格</label>
+      <label for="sc-worker-emergency-name">緊急連絡先 氏名</label>
+      <input type="text" id="sc-worker-emergency-name">
+      <label for="sc-worker-emergency-relation">緊急連絡先 続柄</label>
+      <input type="text" id="sc-worker-emergency-relation" placeholder="例: 妻・父 など">
+      <label for="sc-worker-emergency-phone">緊急連絡先 電話</label>
+      <input type="tel" id="sc-worker-emergency-phone">
+      <label for="sc-worker-qualifications">保有資格(自由記入・一覧は本人ポータルの資格選択と共通)</label>
       <input type="text" id="sc-worker-qualifications" placeholder="例: 玉掛け技能講習、フルハーネス特別教育">
+      <label for="sc-worker-qualification-expiry">資格の有効期限(代表的なもの・任意)</label>
+      <input type="date" id="sc-worker-qualification-expiry">
+      <label for="sc-worker-health-checkup-date">健康診断 実施日(任意)</label>
+      <input type="date" id="sc-worker-health-checkup-date">
+      <label for="sc-worker-next-health-checkup">次回健診の目安(任意)</label>
+      <input type="date" id="sc-worker-next-health-checkup">
       <label for="sc-worker-safety-doc">安全書類の提出状況</label>
       <input type="text" id="sc-worker-safety-doc" placeholder="例: 作業員名簿・施工体制台帳提出済み">
       <label for="sc-worker-notes">備考</label>
@@ -888,8 +912,13 @@
       <input type="hidden" id="qual-category" value="qualification">
 
       <div id="qual-name-wrap">
-        <label for="qual-name">資格名<span class="required-mark">(必須)</span></label>
-        <input type="text" id="qual-name" placeholder="例: フォークリフト運転技能講習">
+        <label for="qual-master-select">資格<span class="required-mark">(必須)</span></label>
+        <div class="hint-inline">共通の資格マスターから選べます。一覧にない場合は「その他(自由記入)」を選んでください。</div>
+        <select id="qual-master-select"><option value="">選択してください</option></select>
+        <div id="qual-name-other-wrap" style="display:none; margin-top:6px;">
+          <label for="qual-name">資格名<span class="required-mark">(必須)</span></label>
+          <input type="text" id="qual-name" placeholder="例: フォークリフト運転技能講習">
+        </div>
       </div>
       <div id="qual-license-type-wrap" style="display:none;">
         <label for="qual-license-type">免許種別<span class="required-mark">(必須)</span></label>

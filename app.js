@@ -3758,17 +3758,12 @@ async function doAdminChangeAnonStatus() {
 
 // ---------- 今日やること・お知らせ(社員側) ----------
 
-// 外注日報タスクをタップしたときは、日報入力画面を開いてから「誰の日報を入力しますか」を
-// 外注作業員モードへ自動で切り替える(担当者が毎回手動でプルダウンを操作しなくて済むように)。
+// 外注 出勤報告 未提出タスクをタップすると、日報管理画面(会社別 予定/報告/未報告 + 本人別の内訳)を開く。
+// 旧実装は日報入力画面を外注モードで開いていたが、まず「誰が未報告か」を会社別・本人別に確認できる方が
+// 実態に合うため、内訳のある日報管理画面へ遷移する(そこから会社単位の代理入力へ直行できる)。
 async function navigateToTodayTask(nav, taskKey) {
   if (!nav) return; // お休み・有給などの通知行はタップ先なし
   showScreen(nav);
-  if (taskKey === 'subcontractor_daily_report' && nav === 'daily-report') {
-    await resetDailyReportForm();
-    const typeSelect = document.getElementById('daily-report-target-type');
-    typeSelect.value = 'subcontractor';
-    typeSelect.dispatchEvent(new Event('change'));
-  }
 }
 
 // 「今日やること」はDBの実状態(未提出の日報・担当している外注日報・差戻し・承認待ち・
@@ -4417,6 +4412,7 @@ function setQualCategory(category) {
   document.getElementById('qual-name-wrap').style.display = isLicense ? 'none' : 'block';
   document.getElementById('qual-license-type-wrap').style.display = isLicense ? 'block' : 'none';
   if (isLicense) loadLicenseTypeSelect();
+  else loadQualMasterSelect();
 }
 
 async function loadLicenseTypeSelect() {
@@ -4426,8 +4422,34 @@ async function loadLicenseTypeSelect() {
   } catch (e) { /* 無視 */ }
 }
 
+// 資格は外注ポータルと共通の資格マスター(qualification_master)から選ぶ。二重管理しないため社員側も同じマスターを使う。
+let _qualMasterLoaded = false;
+async function loadQualMasterSelect() {
+  const sel = document.getElementById('qual-master-select');
+  if (!sel || _qualMasterLoaded) return;
+  try {
+    const session = getSession();
+    const rows = await rpc('list_qualification_master_for_employee', { p_employee_code: session.employeeCode });
+    const byCat = {};
+    (rows || []).forEach((r) => { (byCat[r.category] = byCat[r.category] || []).push(r); });
+    let html = '<option value="">選択してください</option>';
+    Object.keys(byCat).forEach((cat) => {
+      html += `<optgroup label="${cat}">` + byCat[cat].map((r) => `<option value="${r.id}" data-name="${r.qualification_name}">${r.qualification_name}</option>`).join('') + '</optgroup>';
+    });
+    html += '<option value="__other__">その他(自由記入)</option>';
+    sel.innerHTML = html;
+    _qualMasterLoaded = true;
+    sel.onchange = () => {
+      const other = sel.value === '__other__';
+      document.getElementById('qual-name-other-wrap').style.display = other ? 'block' : 'none';
+    };
+  } catch (e) { /* 無視 */ }
+}
+
 function resetQualForm() {
   ['qual-name', 'qual-number', 'qual-obtained', 'qual-expiry', 'qual-renewal', 'qual-note'].forEach((id) => { document.getElementById(id).value = ''; });
+  const ms = document.getElementById('qual-master-select'); if (ms) ms.value = '';
+  const ow = document.getElementById('qual-name-other-wrap'); if (ow) ow.style.display = 'none';
   document.getElementById('qual-photo-input').value = '';
   document.getElementById('qual-pdf-input').value = '';
   document.getElementById('qual-photo-label').textContent = '写真を選ぶ';
@@ -4443,10 +4465,19 @@ function resetQualForm() {
 async function doSubmitQualification() {
   const session = getSession();
   const category = document.getElementById('qual-category').value;
-  const name = document.getElementById('qual-name').value.trim();
   const licenseTypeId = document.getElementById('qual-license-type').value || null;
   hideError('qual-error');
-  if (category === 'qualification' && !name) { showError('qual-error', '資格名を入力してください。'); return; }
+  // 資格: 共通マスターから選択(master_id) or その他(自由記入の名前)。免許: license_type_id。
+  const masterSel = document.getElementById('qual-master-select');
+  const masterVal = masterSel ? masterSel.value : '';
+  const isOther = masterVal === '__other__';
+  const masterId = (category === 'qualification' && masterVal && !isOther) ? Number(masterVal) : null;
+  const otherName = document.getElementById('qual-name').value.trim();
+  // 名前: マスター選択時はマスター名、その他は自由入力名。
+  const masterName = masterId ? (masterSel.options[masterSel.selectedIndex].getAttribute('data-name') || '') : '';
+  const name = masterId ? masterName : otherName;
+  if (category === 'qualification' && !masterVal) { showError('qual-error', '資格を選択してください。'); return; }
+  if (category === 'qualification' && isOther && !otherName) { showError('qual-error', '資格名を入力してください。'); return; }
   if (category === 'license' && !licenseTypeId) { showError('qual-error', '免許種別を選択してください。'); return; }
   const btn = document.getElementById('qual-submit');
   btn.disabled = true;
@@ -4465,6 +4496,7 @@ async function doSubmitQualification() {
       p_pdf_drive_file_url: qualPdfUpload ? qualPdfUpload.driveFileUrl : null,
       p_category: category,
       p_license_type_id: category === 'license' ? Number(licenseTypeId) : null,
+      p_qualification_master_id: masterId,
     });
     resetQualForm();
     showDone(`${category === 'license' ? '免許' : '資格'}を登録しました。管理者の確認をお待ちください。`, 'menu-apply');
@@ -9490,17 +9522,28 @@ async function renderDrmDaySummary() {
     // 社員(人数)と外注(会社/人数/人工)を混ぜない。通常提出は即・正式提出済み(確認済み概念なし)。
     const rows = await rpc('admin_daily_report_day_summary', { p_admin_employee_code: session.employeeCode, p_date: drmSelectedDate });
     const s = (rows && rows[0]) || {};
+    const empReq = Number(s.employee_required || 0);
     const empSub = Number(s.employee_submitted || 0);
+    const empMiss = Number(s.employee_missing || 0);
+    const empExc = Number(s.employee_excluded || 0);
     const scReports = Number(s.subcontractor_report_count || 0);
-    const scCompanies = Number(s.subcontractor_company_count || 0);
+    // 外注は「件数」ではなく配置予定に対する人数で分解(社員と同じ見せ方・下部の未提出人数と一致)。
+    const scTarget = Number(s.subcontractor_target || 0);
+    const scSubmitted = Number(s.subcontractor_submitted || 0);
+    const scMissing = Number(s.subcontractor_missing || 0);
+    const scUnexpected = Number(s.subcontractor_unexpected || 0);
+    const scShortCos = Number(s.subcontractor_shortfall_company_count || 0);
     const reportTotal = empSub + scReports; // 提出日報件数 = 社員(1報/名) + 外注(会社×現場)
-    const scLine = scReports > 0 ? `${scCompanies}社（${Number(s.subcontractor_headcount || 0)}名・${Number(s.subcontractor_man_days || 0)}人工）` : 'なし';
     el.innerHTML = `
       <div style="font-weight:700;margin-bottom:6px;">提出日報 ${reportTotal}件（社員 ${empSub}名 / 外注 ${scReports}件）</div>
-      <div class="drm-day-sum-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;font-size:14px;overflow-wrap:anywhere;">
-        <span>社員 対象 ${Number(s.employee_required || 0)}名</span><span>提出済み ${empSub}名</span>
-        <span>未提出 ${Number(s.employee_missing || 0)}名</span><span>対象外 ${Number(s.employee_excluded || 0)}名</span>
-        <span style="grid-column:1 / -1;">外注 ${scLine}</span>
+      <div class="drm-day-sum-grid" style="display:grid;grid-template-columns:auto auto;gap:2px 18px;font-size:14px;overflow-wrap:anywhere;align-items:baseline;">
+        <span style="grid-column:1 / -1;font-weight:700;">社員 対象 ${empReq}名</span>
+        <span>├ 提出済み ${empSub}名</span><span>├ 未提出 <b${empMiss > 0 ? ' style="color:var(--danger,#d9534f);"' : ''}>${empMiss}名</b></span>
+        <span>└ 対象外 ${empExc}名</span><span></span>
+        <span style="grid-column:1 / -1;font-weight:700;margin-top:6px;">外注 対象 ${scTarget}名<span class="hint" style="font-weight:400;">（配置カレンダーの会社別予定人数）</span></span>
+        <span>├ 提出済み ${scSubmitted}名</span><span>├ 未提出 <b${scMissing > 0 ? ' style="color:var(--danger,#d9534f);"' : ''}>${scMissing}名</b>${scShortCos > 0 ? ` <span class="hint" style="font-weight:400;">(${scShortCos}社)</span>` : ''}</span>
+        <span>└ 対象外 ${scUnexpected}名<span class="hint" style="font-weight:400;">（予定外の報告）</span></span><span></span>
+        <span style="grid-column:1 / -1;margin-top:6px;"></span>
         <span${Number(s.needs_review_count || 0) > 0 ? ' style="color:var(--warning,#e0a021);font-weight:700;"' : ''}>要確認 ${Number(s.needs_review_count || 0)}件</span><span>差し戻し ${Number(s.rejected_count || 0)}件</span>
         <span>取消 ${Number(s.cancelled_count || 0)}件</span><span></span>
       </div>`;
@@ -9539,6 +9582,24 @@ async function renderDrmSubcontractorMissing() {
     list.querySelectorAll('.history-item').forEach((btn) => {
       btn.addEventListener('click', () => openSubcontractorSupportForCompany(Number(btn.dataset.cid), btn.dataset.cname, drmSelectedDate));
     });
+    // 本人単位の未提出内訳(#2「本人単位も」): 個人配置された外注作業員のうち本人日報が無い人を明示する。
+    // まとめ(会社)代理入力しか無い分は本人特定できないため、ここは「個人配置×本人未提出」だけを対象とする
+    // (会社単位の不足は上の会社別ビューが担当。二重計上しない)。
+    try {
+      const mw = await rpc('admin_get_subcontractor_missing_workers', { p_admin_employee_code: session.employeeCode, p_report_date: drmSelectedDate });
+      const missingPeople = (mw || []).filter((w) => !w.submitted);
+      if (missingPeople.length) {
+        const perWrap = document.createElement('div');
+        perWrap.style.marginTop = '10px';
+        perWrap.innerHTML = `<div class="hint" style="font-weight:600;margin-bottom:4px;">本人未提出の作業員(個人配置)</div>` +
+          missingPeople.map((w) => `
+            <div class="history-item" style="width:100%;text-align:left;opacity:1;">
+              <div style="font-weight:600;">${w.worker_name}<span class="hint" style="font-weight:400;">・${w.company_name || ''}</span> <span style="color:var(--danger,#d9534f);font-weight:700;">未提出</span></div>
+              <div class="hint">現場: ${w.site_names || '(未設定)'}${w.portal_enabled ? '' : '・本人ログイン無効(代理入力が必要)'}</div>
+            </div>`).join('');
+        document.getElementById('drm-sc-missing-list').appendChild(perWrap);
+      }
+    } catch (e) { /* 本人別内訳は補助情報。取得失敗しても会社別ビューは維持する */ }
   } catch (e) { el.innerHTML = ''; }
 }
 
@@ -10329,22 +10390,12 @@ async function doSaveSubcontractorCompany() {
 let subcontractorWorkerCompanyFilter = null; // {id, name} | null。外注会社一覧の「所属作業員を見る」から絞り込む。
 let subcontractorWorkerFilterJustSet = false; // 直前にドリルダウンから来た場合だけtrue(メニューから直接来た場合はフィルタを解除する)。
 function resetSubcontractorWorkerForm() {
-  document.getElementById('sc-worker-edit-id').value = '';
-  document.getElementById('sc-worker-name').value = '';
-  document.getElementById('sc-worker-furigana').value = '';
-  document.getElementById('sc-worker-birth-date').value = '';
-  document.getElementById('sc-worker-blood-type').value = '';
-  document.getElementById('sc-worker-phone').value = '';
-  document.getElementById('sc-worker-address').value = '';
-  document.getElementById('sc-worker-emergency-name').value = '';
-  document.getElementById('sc-worker-emergency-relation').value = '';
-  document.getElementById('sc-worker-emergency-phone').value = '';
-  document.getElementById('sc-worker-qualifications').value = '';
-  document.getElementById('sc-worker-qualification-expiry').value = '';
-  document.getElementById('sc-worker-safety-doc').value = '';
-  document.getElementById('sc-worker-health-checkup-date').value = '';
-  document.getElementById('sc-worker-next-health-checkup').value = '';
-  document.getElementById('sc-worker-notes').value = '';
+  // null-safe: フォーム項目が1つ欠けても例外で一覧の「読み込み中」が固まらないようにする(全パターンで進む)。
+  const sv = (id) => { const el = document.getElementById(id); if (el) el.value = ''; };
+  ['sc-worker-edit-id', 'sc-worker-name', 'sc-worker-furigana', 'sc-worker-birth-date', 'sc-worker-blood-type',
+    'sc-worker-phone', 'sc-worker-address', 'sc-worker-emergency-name', 'sc-worker-emergency-relation',
+    'sc-worker-emergency-phone', 'sc-worker-qualifications', 'sc-worker-qualification-expiry', 'sc-worker-safety-doc',
+    'sc-worker-health-checkup-date', 'sc-worker-next-health-checkup', 'sc-worker-notes'].forEach(sv);
   hideError('sc-worker-error');
 }
 
@@ -10372,22 +10423,30 @@ async function loadSubcontractorWorkerAdmin() {
       p_include_inactive: true,
     });
     if (rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する作業員はいません。</div>'; return; }
-    listEl.innerHTML = rows.map((w) => `
+    listEl.innerHTML = rows.map((w) => {
+      // 資格・健診は共通マスター(employee_qualifications/employee_health_checkups)由来を優先し、無ければ旧・自由入力列にフォールバック。
+      const qualText = w.master_qualification_names || w.qualifications || '';
+      const healthDate = w.master_health_checkup_date || w.health_checkup_date || '';
+      const healthNext = w.master_health_next_due_date || w.next_health_checkup_date || '';
+      return `
       <div class="supply-item" data-id="${w.id}" style="${w.status === 'active' ? '' : 'opacity:.5;'}">
         <div class="row1"><span>${w.worker_name}${w.furigana ? `(${w.furigana})` : ''}</span><span>${w.company_name}</span></div>
+        ${w.login_code ? `<div class="row2">本人ID: ${w.login_code}${w.portal_enabled ? ' <span style="color:#2e7d32;">・本人ログイン有効</span>' : ' <span style="color:#999;">・本人ログイン無効</span>'}</div>` : '<div class="row2" style="color:#999;">本人ID: 未発行(代理管理のみ)</div>'}
         <div class="row2">${[w.phone, w.address].filter(Boolean).join('・')}</div>
         ${w.emergency_contact_name ? `<div class="row2">緊急連絡先: ${w.emergency_contact_name}${w.emergency_contact_relation ? `(${w.emergency_contact_relation})` : ''}${w.emergency_contact_phone ? `・${w.emergency_contact_phone}` : ''}</div>` : ''}
-        ${w.qualifications ? `<div class="row2">資格: ${w.qualifications}${w.qualification_expiry_date ? `(期限: ${w.qualification_expiry_date})` : ''}</div>` : ''}
+        ${qualText ? `<div class="row2">資格: ${qualText}${w.qualification_expiry_date ? `(期限: ${w.qualification_expiry_date})` : ''}</div>` : ''}
         ${w.safety_document_status ? `<div class="row2">安全書類: ${w.safety_document_status}</div>` : ''}
-        ${w.health_checkup_date || w.next_health_checkup_date ? `<div class="row2">健康診断: ${w.health_checkup_date ? `受診日${w.health_checkup_date}` : ''}${w.next_health_checkup_date ? `・次回目安${w.next_health_checkup_date}` : ''}</div>` : ''}
+        ${healthDate || healthNext ? `<div class="row2">健康診断: ${healthDate ? `受診日${healthDate}` : ''}${healthNext ? `・次回目安${healthNext}` : ''}</div>` : ''}
         ${w.blood_type ? `<div class="row2">血液型: ${w.blood_type}${w.blood_type === '不明' ? '' : '型'}</div>` : ''}
         ${w.notes ? `<div class="row2">${w.notes}</div>` : ''}
         <div class="qual-verify-btns">
           <button type="button" class="edit-sc-worker-btn" data-id="${w.id}">編集</button>
           <button type="button" class="reject-btn toggle-sc-worker-btn" data-active="${w.status === 'active'}">${w.status === 'active' ? '停止する' : '再開する'}</button>
+          <button type="button" class="reject-btn delete-sc-worker-btn" data-id="${w.id}" data-name="${w.worker_name}" data-code="${w.login_code || ''}">削除</button>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
     listEl.querySelectorAll('.edit-sc-worker-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         const w = rows.find((r) => String(r.id) === btn.dataset.id);
@@ -10416,6 +10475,24 @@ async function loadSubcontractorWorkerAdmin() {
         const item = btn.closest('.supply-item');
         await rpc('admin_set_subcontractor_worker_active', { p_admin_employee_code: session.employeeCode, p_id: Number(item.dataset.id), p_active: btn.dataset.active !== 'true' });
         loadSubcontractorWorkerAdmin();
+      });
+    });
+    listEl.querySelectorAll('.delete-sc-worker-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = Number(btn.dataset.id);
+        const name = btn.dataset.name || '';
+        const code = btn.dataset.code || '';
+        // 明示したこの1件のみを削除する(テスト登録の整理用)。関連する資格・健診・日報・端末も同時に削除され、削除前の内容は監査ログへ保存される。
+        if (!confirm(`外注作業員「${name}」${code ? `(本人ID: ${code})` : ''} を削除します。\nこの作業員の資格・健康診断・端末・本人日報も併せて削除されます(削除前の内容は監査ログに保存されます)。\n\n本当に削除しますか?`)) return;
+        btn.disabled = true;
+        try {
+          const res = await rpc('admin_delete_subcontractor_worker', { p_admin_employee_code: session.employeeCode, p_worker_id: id });
+          alert(`削除しました: ${res.worker_name || name}`);
+          loadSubcontractorWorkerAdmin();
+        } catch (e) {
+          btn.disabled = false;
+          alert(`削除に失敗しました: ${e.message || ''}`);
+        }
       });
     });
   } catch (e) {

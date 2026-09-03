@@ -92,18 +92,8 @@ function bindEvents() {
   $('qual-add-btn').addEventListener('click', addQualification);
   $('health-add-btn').addEventListener('click', addHealthCheckup);
 
-  // 勤務区分セグメント → 人工の自動セット
-  document.querySelectorAll('#att-worktype .seg').forEach((seg) => seg.addEventListener('click', () => {
-    document.querySelectorAll('#att-worktype .seg').forEach((s) => s.classList.remove('active'));
-    seg.classList.add('active');
-    const wt = seg.getAttribute('data-wt');
-    $('att-headcount').value = (wt === '終日') ? '1' : '0.5';
-  }));
-
-  // 現場セレクトで「その他(手入力)」
-  $('att-site').addEventListener('change', () => {
-    $('att-newsite-wrap').style.display = ($('att-site').value === '__new__') ? 'block' : 'none';
-  });
+  // 1日最大2現場: 「＋もう1現場を追加」で2つ目の現場ブロックを出す。
+  $('att-add-site-btn').addEventListener('click', () => { addAttBlock(); });
 
   $('att-submit-btn').addEventListener('click', submitAttendance);
   $('done-home-btn').addEventListener('click', enterHome);
@@ -367,17 +357,62 @@ async function addHealthCheckup() {
   } catch (e) { setErr('health-error', e.message || '健康診断の追加に失敗しました。'); }
 }
 
-// ⑤〜⑨ 出面
+// ⑤〜⑨ 出面(1日最大2現場)
+let attSiteOptionsHtml = '';
+function updateAttTotal() {
+  let total = 0;
+  document.querySelectorAll('#att-blocks .att-site-block').forEach((b) => { total += Number(b.querySelector('.ab-headcount').value) || 0; });
+  const el = $('att-total');
+  if (el) {
+    const t = total.toFixed(2).replace(/\.?0+$/, '') || '0';
+    const isQuarter = Math.abs(total / 0.25 - Math.round(total / 0.25)) < 1e-9;
+    el.textContent = '合計人工 ' + t + (total > 1 + 1e-9 || !isQuarter ? '（ご確認ください: 通常は合計1.0以内・0.25単位です）' : '');
+    el.style.color = (total > 1 + 1e-9 || !isQuarter) ? 'var(--danger,#d9534f)' : '';
+  }
+  const addBtn = $('att-add-site-btn');
+  const n = document.querySelectorAll('#att-blocks .att-site-block').length;
+  if (addBtn) addBtn.style.display = n >= 2 ? 'none' : '';
+}
+function addAttBlock(prefill) {
+  const list = $('att-blocks');
+  if (list.querySelectorAll('.att-site-block').length >= 2) return null;
+  const tpl = $('att-block-template');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  const siteSel = node.querySelector('.ab-site');
+  siteSel.innerHTML = attSiteOptionsHtml;
+  const newWrap = node.querySelector('.ab-newsite-wrap');
+  siteSel.addEventListener('change', () => { newWrap.style.display = (siteSel.value === '__new__') ? 'block' : 'none'; });
+  const wt = node.querySelector('.ab-worktype');
+  const hc = node.querySelector('.ab-headcount');
+  wt.addEventListener('change', () => { hc.value = (wt.value === '終日') ? '1.0' : '0.5'; updateAttTotal(); });
+  hc.addEventListener('change', updateAttTotal);
+  node.querySelector('.ab-remove-btn').addEventListener('click', () => { node.remove(); renumberAttBlocks(); updateAttTotal(); });
+  if (prefill) {
+    if (prefill.site_id) siteSel.value = String(prefill.site_id);
+    if (prefill.work_type) wt.value = prefill.work_type;
+    if (prefill.headcount != null) hc.value = String(Number(prefill.headcount));
+    if (prefill.overtime_hours != null) node.querySelector('.ab-overtime').value = prefill.overtime_hours;
+    if (prefill.is_night_shift) node.querySelector('.ab-night').checked = true;
+    if (prefill.is_business_trip) node.querySelector('.ab-trip').checked = true;
+    if (prefill.notes) node.querySelector('.ab-notes').value = prefill.notes;
+  }
+  list.appendChild(node);
+  renumberAttBlocks();
+  updateAttTotal();
+  return node;
+}
+function renumberAttBlocks() {
+  const blocks = document.querySelectorAll('#att-blocks .att-site-block');
+  blocks.forEach((b, i) => {
+    b.querySelector('.att-block-title').textContent = '現場' + (i + 1);
+    b.querySelector('.ab-remove-btn').style.display = (i === 0) ? 'none' : '';
+  });
+}
 async function openAttendance() {
   showScreen('attendance');
   setErr('att-error', '');
   const d = todayJST();
   $('att-date').textContent = d + ' の日報';
-  // 区分・人工リセット
-  document.querySelectorAll('#att-worktype .seg').forEach((s, i) => s.classList.toggle('active', i === 0));
-  $('att-headcount').value = '1'; $('att-overtime').value = '0'; $('att-night').checked = false; $('att-notes').value = '';
-  if ($('att-trip')) $('att-trip').checked = false;
-  $('att-newsite-wrap').style.display = 'none'; $('att-newsite').value = '';
   // ⑤ 現場候補: 正式な現場マスター(配置カレンダー→最近→有効現場マスターの優先順)。カテゴリタグは出さない。
   let sites = [];
   try {
@@ -386,9 +421,17 @@ async function openAttendance() {
   } catch (e) {}
   const seen = {}; sites = sites.filter((s) => (seen[s.id] ? false : (seen[s.id] = true)));
   const opts = sites.map((s) => `<option value="${s.id}">${escapeHtml(s.label)}</option>`).join('');
-  $('att-site').innerHTML = (opts || '') + '<option value="__new__">その他(一覧にない現場を入力)</option>';
-  if (!sites.length) { $('att-site').value = '__new__'; $('att-newsite-wrap').style.display = 'block'; }
-  // 既存の登録
+  attSiteOptionsHtml = (opts || '') + '<option value="__new__">その他(一覧にない現場を入力)</option>';
+  // ブロックを初期化(1現場)。既存登録があればそれで復元。
+  $('att-blocks').innerHTML = '';
+  let existing = [];
+  try { existing = (await rpc('get_my_subcontractor_attendance', { p_login_code: loginCode, p_report_date: d })) || []; } catch (e) {}
+  if (existing.length) {
+    existing.slice(0, 2).forEach((x) => addAttBlock({ site_id: x.site_id, work_type: x.work_type, headcount: x.headcount, overtime_hours: x.overtime_hours, is_night_shift: x.is_night_shift, is_business_trip: x.is_business_trip, notes: x.notes }));
+  } else {
+    addAttBlock();
+  }
+  if (!sites.length) { const b0 = document.querySelector('#att-blocks .att-site-block'); if (b0) { b0.querySelector('.ab-site').value = '__new__'; b0.querySelector('.ab-newsite-wrap').style.display = 'block'; } }
   loadTodayAttendance(d);
 }
 
@@ -405,25 +448,32 @@ async function loadTodayAttendance(d) {
 
 async function submitAttendance() {
   setErr('att-error', '');
-  const wtEl = document.querySelector('#att-worktype .seg.active');
-  const workType = wtEl ? wtEl.getAttribute('data-wt') : '終日';
-  const siteVal = $('att-site').value;
-  const entry = { work_type: workType, overtime_hours: Number($('att-overtime').value || 0), is_night_shift: $('att-night').checked, is_business_trip: $('att-trip') ? $('att-trip').checked : false, notes: $('att-notes').value.trim() || null };
-  if (siteVal === '__new__') {
-    const nm = $('att-newsite').value.trim();
-    if (!nm) { setErr('att-error', '現場名を入力してください。'); return; }
-    entry.new_site_name = nm;
-  } else if (siteVal) {
-    entry.site_id = Number(siteVal);
-  } else { setErr('att-error', '現場を選択してください。'); return; }
-  const hc = Number($('att-headcount').value);
-  if (!(hc > 0)) { setErr('att-error', '人工を入力してください。'); return; }
-  entry.headcount = hc;
+  const blocks = Array.from(document.querySelectorAll('#att-blocks .att-site-block'));
+  if (!blocks.length) { setErr('att-error', '現場を入力してください。'); return; }
+  const entries = [];
+  let totalHc = 0;
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    const workType = b.querySelector('.ab-worktype').value;
+    const siteVal = b.querySelector('.ab-site').value;
+    const entry = { work_type: workType, overtime_hours: Number(b.querySelector('.ab-overtime').value || 0), is_night_shift: b.querySelector('.ab-night').checked, is_business_trip: b.querySelector('.ab-trip').checked, notes: b.querySelector('.ab-notes').value.trim() || null };
+    if (siteVal === '__new__') {
+      const nm = b.querySelector('.ab-newsite').value.trim();
+      if (!nm) { setErr('att-error', `現場${i + 1}の現場名を入力してください。`); return; }
+      entry.new_site_name = nm;
+    } else if (siteVal) {
+      entry.site_id = Number(siteVal);
+    } else { setErr('att-error', `現場${i + 1}を選択してください。`); return; }
+    const hc = Number(b.querySelector('.ab-headcount').value);
+    if (!(hc > 0)) { setErr('att-error', `現場${i + 1}の人工を入力してください。`); return; }
+    entry.headcount = hc;
+    totalHc += hc;
+    entries.push(entry);
+  }
   try {
-    const r = await rpc('submit_my_subcontractor_attendance', { p_login_code: loginCode, p_report_date: todayJST(), p_entries: [entry] });
-    const row = Array.isArray(r) ? r[0] : r;
+    const r = await rpc('submit_my_subcontractor_attendance', { p_login_code: loginCode, p_report_date: todayJST(), p_entries: entries });
     $('done-title').textContent = '日報を登録しました';
-    $('done-sub').textContent = `${workType}｜${hc}人工${entry.overtime_hours ? '｜残業' + entry.overtime_hours + 'h' : ''}`;
+    $('done-sub').textContent = `${entries.length}現場｜合計${String(totalHc).replace(/\.?0+$/, '') || totalHc}人工`;
     showScreen('done');
   } catch (e) { setErr('att-error', e.message || '登録に失敗しました。'); }
 }

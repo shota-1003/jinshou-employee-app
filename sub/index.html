@@ -181,36 +181,50 @@
     <div class="card">
       <div class="section-title">本日の日報</div>
       <div class="attendance-date" id="att-date">-</div>
+      <div class="hint" style="margin-bottom:6px;">1日に最大2現場まで登録できます。合計人工は自動で計算されます。</div>
 
-      <label for="att-site">⑤ 現場</label>
-      <select id="att-site"></select>
-      <div id="att-newsite-wrap" style="display:none;margin-top:8px">
-        <input type="text" id="att-newsite" placeholder="現場名を入力(一覧に無い場合)" autocomplete="off">
-      </div>
+      <div id="att-blocks"></div>
 
-      <label style="margin-top:14px">⑥ 勤務区分</label>
-      <div class="segmented" id="att-worktype">
-        <button type="button" data-wt="終日" class="seg active">終日</button>
-        <button type="button" data-wt="午前" class="seg">午前</button>
-        <button type="button" data-wt="午後" class="seg">午後</button>
-      </div>
-
-      <label for="att-headcount" style="margin-top:14px">⑦ 人工</label>
-      <input type="number" id="att-headcount" inputmode="decimal" step="0.5" min="0" value="1">
-      <div class="hint">通常は 終日=1.0 / 午前・午後=0.5 です。区分を選ぶと自動でセットされます。必要に応じて修正できます。</div>
-
-      <label for="att-overtime" style="margin-top:14px">⑧ 残業時間</label>
-      <input type="number" id="att-overtime" inputmode="decimal" step="0.5" min="0" value="0">
-
-      <label style="margin-top:14px" class="checkbox-row"><input type="checkbox" id="att-night"> 夜勤</label>
-      <label style="margin-top:10px" class="checkbox-row"><input type="checkbox" id="att-trip"> 出張（今日は出張扱い）</label>
-
-      <label for="att-notes" style="margin-top:10px">備考(任意)</label>
-      <input type="text" id="att-notes" autocomplete="off">
+      <button type="button" id="att-add-site-btn" class="secondary" style="margin-top:8px;">＋ もう1現場を追加</button>
+      <div class="hint" id="att-total" style="margin-top:8px;font-weight:700;">合計人工 1.0</div>
 
       <div class="error" id="att-error"></div>
       <button id="att-submit-btn">⑨ 登録する</button>
     </div>
+
+    <template id="att-block-template">
+      <div class="att-site-block" style="border-top:1px solid var(--line,#eee);padding-top:10px;margin-top:10px;">
+        <div class="att-block-head" style="display:flex;justify-content:space-between;align-items:center;">
+          <label class="att-block-title" style="font-weight:700;">現場1</label>
+          <button type="button" class="ab-remove-btn secondary" style="display:none;padding:2px 10px;">削除</button>
+        </div>
+        <label>⑤ 現場</label>
+        <select class="ab-site"></select>
+        <div class="ab-newsite-wrap" style="display:none;margin-top:8px">
+          <input type="text" class="ab-newsite" placeholder="現場名を入力(一覧に無い場合)" autocomplete="off">
+        </div>
+        <label style="margin-top:14px">⑥ 勤務区分</label>
+        <select class="ab-worktype">
+          <option value="終日">終日</option>
+          <option value="午前">午前</option>
+          <option value="午後">午後</option>
+        </select>
+        <label style="margin-top:14px">⑦ 人工</label>
+        <select class="ab-headcount">
+          <option value="1.0">1.0</option>
+          <option value="0.75">0.75</option>
+          <option value="0.5">0.5</option>
+          <option value="0.25">0.25</option>
+        </select>
+        <div class="hint">区分を選ぶと自動でセットされます。0.25単位で調整できます(例: 現場A 0.75 + 現場B 0.25)。</div>
+        <label style="margin-top:14px">⑧ 残業時間</label>
+        <input type="number" class="ab-overtime" inputmode="decimal" step="0.5" min="0" value="0">
+        <label style="margin-top:14px" class="checkbox-row"><input type="checkbox" class="ab-night"> 夜勤</label>
+        <label style="margin-top:10px" class="checkbox-row"><input type="checkbox" class="ab-trip"> 出張（この現場は出張扱い）</label>
+        <label style="margin-top:10px">備考(任意)</label>
+        <input type="text" class="ab-notes" autocomplete="off">
+      </div>
+    </template>
     <div class="card" id="att-existing-wrap" style="display:none">
       <div class="section-title">本日 登録済みの内容</div>
       <div id="att-existing-list"></div>

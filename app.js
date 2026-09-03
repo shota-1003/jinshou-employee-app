@@ -9665,7 +9665,23 @@ let drmSelected = new Set(); // 選択中のグループキー(report_date|perso
 let drmSort = { col: 'report_date', dir: 'desc' };
 
 // 通常日報は提出=正式確定。confirmed(自動確定)も「提出済み」と表示する(確認済み概念は廃止)。
-const DRM_STATUS_LABEL = { draft: '下書き', submitted: '提出済み', confirmed: '提出済み', rejected: '差し戻し' };
+const DRM_STATUS_LABEL = { draft: '下書き', submitted: '提出済み', confirmed: '確認済み', rejected: '差し戻し' };
+
+// 日報管理の4状態バッジ(照合結果で色を決める。提出元の種類では決めない):
+//  🟢 確認済み = 配置カレンダーと完全一致で自動確認済み(report_status='confirmed')
+//  🟠 要確認   = 配置と日報の双方があるが不一致(needs_review / validation anomaly)
+//  🔵 提出済み = 提出済みだが照合の比較対象がない等、一致とは判定できないもの
+//  🔴 差し戻し = 修正依頼(rejected)
+// 未提出(🔴)は日報行ではなく配置に対する不足なので、別途「未提出」照合セクションが担当する。
+function drmStatusBadge(f) {
+  if (f.report_status === 'cancelled') return { style: 'background:var(--surface-2,#eee);color:var(--text-faint,#888);', label: '取消済み' };
+  if (f.report_status === 'rejected') return { cls: 'rejected', label: '差し戻し' };
+  if (f.report_status === 'draft') return { style: 'background:var(--surface-2,#eee);color:var(--text-faint,#888);', label: '下書き' };
+  if (f.report_status === 'confirmed') return { cls: 'done', label: '確認済み' };
+  // submitted: 照合の要確認(不一致)か、比較対象なしの提出済みかを分ける。
+  if (f.needs_review || f.validation_status === 'anomaly') return { style: 'background:#e0a021;color:#fff;', label: '要確認' };
+  return { style: 'background:#dbeafe;color:#1d4ed8;', label: '提出済み' };
+}
 
 async function loadDailyReportManagement() {
   const session = getSession();
@@ -10011,13 +10027,12 @@ function renderDrmAll() {
       personName = drmWorkerLabel(f);
       sites = g.rows.map((r) => `${r.site_name || r.site_raw_name || '(現場不明)'}・${r.work_type || ''}`).join(' / ');
     }
-    const statusBadgeClass = f.report_status === 'confirmed' ? 'done' : (f.report_status === 'rejected' ? 'rejected' : '');
+    const b = drmStatusBadge(f);
     return `
       <div class="history-item" data-key="${g.key}">
         <div class="row1"><span>${personName}</span><span>${f.report_date}</span></div>
         <div class="row2">${sites}</div>
-        <span class="status-badge ${statusBadgeClass}">${DRM_STATUS_LABEL[f.report_status] || f.report_status}</span>
-        ${f.validation_status === 'anomaly' ? '<span class="mini-tag danger">要確認</span>' : ''}
+        <span class="status-badge ${b.cls || ''}" style="${b.style || ''}">${b.label}</span>
         ${g.rows.some((r) => r.reflect_override_work_type) ? '<span class="mini-tag info">反映値を調整済み</span>' : ''}
         ${g.rows.every((r) => r.reflected_to_sheet_at) ? '<span class="mini-tag info">シート反映済み</span>' : ''}
         <div class="checkbox-row"><input type="checkbox" class="drm-row-check" data-key="${g.key}" ${drmSelected.has(g.key) ? 'checked' : ''}><label>選択</label></div>
@@ -10040,7 +10055,7 @@ function renderDrmAll() {
     const site1 = g.rows[0] || {};
     const site2 = g.rows[1] || {};
     const personName = f.worker_type === 'subcontractor' ? f.subcontractor_worker_name : f.employee_name;
-    const statusBadgeClass = f.report_status === 'confirmed' ? 'done' : (f.report_status === 'rejected' ? 'rejected' : '');
+    const b = drmStatusBadge(f);
     const reflected = g.rows.every((r) => r.reflected_to_sheet_at);
     return `
       <tr data-key="${g.key}">
@@ -10053,8 +10068,8 @@ function renderDrmAll() {
         <td>${site1.work_type || '-'}</td>
         <td>${site2.site_name ? `${site2.site_name}(${site2.work_type || ''})` : '-'}</td>
         <td>${f.submitted_at ? new Date(f.submitted_at).toLocaleString('ja-JP') : '-'}</td>
-        <td>${DRM_STATUS_LABEL[f.report_status] || f.report_status}${g.rows.some((r) => r.reflect_override_work_type) ? ' <span class="mini-tag info">調整済み</span>' : ''}</td>
-        <td><span class="status-badge ${statusBadgeClass}">${f.confirmed_by ? f.confirmed_by : (f.report_status === 'confirmed' || f.report_status === 'rejected' ? '-' : '未確認')}</span></td>
+        <td><span class="status-badge ${b.cls || ''}" style="${b.style || ''}">${b.label}</span>${g.rows.some((r) => r.reflect_override_work_type) ? ' <span class="mini-tag info">調整済み</span>' : ''}</td>
+        <td>${f.confirmed_by ? f.confirmed_by : (f.report_status === 'confirmed' || f.report_status === 'rejected' ? '-' : '未確認')}</td>
         <td>${reflected ? '反映済み' : '未反映'}</td>
       </tr>
     `;

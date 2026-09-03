@@ -5243,7 +5243,7 @@ function renderEmploymentSection(e, code, session) {
       if (!name) { alert('氏名を入力してください。'); return; }
       const btn = document.getElementById('ed-to-sub-submit-btn'); btn.disabled = true;
       try {
-        await rpc('admin_register_subcontractor_from_employee', {
+        const reg = await rpc('admin_register_subcontractor_from_employee', {
           p_admin_employee_code: session.employeeCode, p_target_employee_code: code,
           p_subcontractor_company_id: Number(companyId), p_worker_name: name,
           p_furigana: document.getElementById('ed-sub-furigana').value.trim() || null,
@@ -5256,13 +5256,57 @@ function renderEmploymentSection(e, code, session) {
           p_qualifications: document.getElementById('ed-sub-qual').value.trim() || null,
           p_health_checkup_date: null, p_next_health_checkup_date: null, p_notes: '元社員(社員番号 ' + code + ')から移行',
         });
-        const resEl = document.getElementById('ed-to-sub-result');
-        resEl.style.display = 'block';
-        resEl.textContent = '✅ 外注作業員として登録しました。外注作業員管理の一覧で確認できます(社員としての履歴はそのまま残ります)。';
+        // PostgRESTのスカラー関数戻り値(worker_id)を取り出す。
+        const workerId = Array.isArray(reg) ? (reg[0] && (reg[0].admin_register_subcontractor_from_employee ?? reg[0])) : (reg && (reg.admin_register_subcontractor_from_employee ?? reg));
+        // 続けて外注ID(login_code)を自動発行し、初回登録ワンタイムコードを発行(管理者はPINを決めない)。
+        const ho = await rpc('admin_issue_subcontractor_handoff', { p_admin_employee_code: session.employeeCode, p_worker_id: Number(workerId), p_ttl_hours: 72 });
+        const h = Array.isArray(ho) ? ho[0] : ho;
+        renderSubcontractorHandoff(h);
       } catch (err) { alert(err.message); }
       btn.disabled = false;
     };
   }
+}
+
+// 外注登録完了(引き渡し)画面: 外注ID + 初回登録コード + 有効期限 + 登録リンク/QR + 共有・コピー。
+// 管理者はPINを決めない/見ない。「初回登録の権利」だけを本人へ渡す。
+function renderSubcontractorHandoff(h) {
+  const resEl = document.getElementById('ed-to-sub-result');
+  if (!resEl || !h) return;
+  const loginCode = h.out_login_code || '';
+  const code = h.out_code || '';
+  const expires = h.out_expires_at ? new Date(h.out_expires_at).toLocaleString('ja-JP') : '';
+  // 本人ポータル(この配信の /sub/)への初回登録ディープリンク。QR/リンクはこのURLを共有する。
+  const subUrl = new URL('sub/', location.href.replace(/[^/]*$/, '')).href;
+  const link = `${subUrl}?fl=${encodeURIComponent(loginCode)}&c=${encodeURIComponent(code)}`;
+  resEl.style.display = 'block';
+  resEl.innerHTML = `
+    <div class="card" style="border:1px solid var(--border); margin-top:6px;">
+      <div style="font-weight:700; margin-bottom:6px;">外注作業員 登録完了</div>
+      <div class="row2">氏名：${(h.out_worker_name || '')}</div>
+      <div class="row2">所属：${(h.out_company_name || '')}</div>
+      <div class="row2">外注ID：<b style="font-size:16px; letter-spacing:1px;">${loginCode}</b></div>
+      <div class="row2">初回登録コード：<b style="font-size:18px; letter-spacing:2px;">${code}</b></div>
+      <div class="hint" style="margin:6px 0;">有効期限: ${expires}。このコードは本人が最初のログインで暗証番号を設定すると無効になります。暗証番号は本人だけが決めます(管理者は設定・閲覧できません)。</div>
+      <div id="ed-sub-qr" style="margin:10px 0; text-align:center;"></div>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <button type="button" class="secondary" id="ed-sub-copy-btn">外注ID・コードをコピー</button>
+        <button type="button" class="secondary" id="ed-sub-copylink-btn">初回登録リンクをコピー</button>
+        <button type="button" id="ed-sub-share-btn">本人へ共有する</button>
+      </div>
+      <div class="hint" style="margin-top:8px;">本人は外注ポータルの「会社で登録済みの方（登録コードではじめる）」からQR読取、または外注ID＋初回登録コードを入力して初回登録します。</div>
+    </div>`;
+  // QRは自己完結の軽量エンコーダが読み込まれていれば描画(無ければリンク共有で代替)。
+  try {
+    if (window.renderQrInto) window.renderQrInto(document.getElementById('ed-sub-qr'), link, 180);
+    else document.getElementById('ed-sub-qr').innerHTML = '<div class="hint">初回登録リンク（下の「共有」「リンクをコピー」から本人へ渡せます）</div>';
+  } catch (e) { /* QR描画失敗はリンク共有で代替 */ }
+  const shareText = `迅翔興業 外注ポータル 初回登録\n外注ID: ${loginCode}\n初回登録コード: ${code}\n登録リンク: ${link}`;
+  document.getElementById('ed-sub-copy-btn').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(`外注ID: ${loginCode} / 初回登録コード: ${code}`); };
+  document.getElementById('ed-sub-copylink-btn').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(link); };
+  document.getElementById('ed-sub-share-btn').onclick = async () => {
+    try { if (navigator.share) await navigator.share({ title: '外注ポータル 初回登録', text: shareText }); else { navigator.clipboard && navigator.clipboard.writeText(shareText); alert('共有に非対応のため、内容をコピーしました。本人へ送ってください。'); } } catch (e) { /* キャンセル */ }
+  };
 }
 
 // ================= 初回登録コード管理(管理者) =================

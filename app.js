@@ -259,7 +259,7 @@ const ADMIN_SCREENS = new Set([
   'daily-report-needs-review-admin', 'daily-report-edit-requests-admin',
   'subcontractor-company-admin', 'subcontractor-worker-admin', 'personnel-ledger-hub',
   'supply-holdings-admin', 'supply-request-admin', 'joyo-denpyo-summary', 'master-management-hub', 'employee-create',
-  'first-login-codes-admin', 'pin-reset-admin', 'loan-admin',
+  'first-login-codes-admin', 'pin-reset-admin', 'loan-admin', 'lucky-admin', 'lucky-preview',
 ]);
 let inAdminMode = false;
 // 「戻る」ボタンの遷移元復帰(2026-08-28)で使う、アプリ内で実際に何回画面遷移したかのカウンタ。
@@ -895,6 +895,7 @@ function enterMenu(replace) {
   renderHomeDailyReportCard(session);
   renderHomeDailyReportStatusBanner(session);
   renderHomeMonthStats(session);
+  loadHomeLucky();
   renderHomeLeaveCard(session);
   renderHomeStatusSummaryCard(session);
   renderHomeUpcomingEvents(session);
@@ -7642,6 +7643,198 @@ async function loadLoanAdminList() {
   } catch (e) { listEl.innerHTML = '<div class="hint">この画面には経理承認権限が必要です。</div>'; }
 }
 
+// ==================== 毎日のラッキー賞 ====================
+const LUCKY_CONFETTI_COLORS = {
+  blue: ['#5aa0ff', '#a7c8ff', '#ffffff', '#2f6bd6'],
+  gold: ['#ffd76e', '#ffb800', '#fff3c4', '#c9a227'],
+  green: ['#4dffb0', '#0fe08a', '#c9ffe8', '#0a9e6e'],
+  red: ['#ff5a6a', '#ff2038', '#ffd0d5', '#ffffff'],
+  rainbow: ['#ff004c', '#ff8a00', '#ffe600', '#22d36b', '#00b3ff', '#8a2be2'],
+  hotel: ['#f5d76e', '#c9a227', '#fff3c4', '#ffffff'],
+};
+function luckyConfetti(theme, count) {
+  const wrap = document.getElementById('lucky-confetti');
+  const colors = LUCKY_CONFETTI_COLORS[theme] || LUCKY_CONFETTI_COLORS.blue;
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement('div');
+    p.className = 'lucky-piece';
+    p.style.left = Math.random() * 100 + 'vw';
+    p.style.background = colors[i % colors.length];
+    p.style.animationDuration = (1.6 + Math.random() * 1.8) + 's';
+    p.style.animationDelay = (Math.random() * 0.6) + 's';
+    p.style.transform = `rotate(${Math.random() * 360}deg)`;
+    if (Math.random() < 0.3) p.style.borderRadius = '50%';
+    wrap.appendChild(p);
+  }
+}
+let luckyAnimTimers = [];
+function luckyClearTimers() { luckyAnimTimers.forEach((t) => clearTimeout(t)); luckyAnimTimers = []; }
+function luckyAfter(ms, fn) { luckyAnimTimers.push(setTimeout(fn, ms)); }
+// 演出本体: 金額(テーマ)ごとに明確に演出レベルを変える。
+function playLuckyAnimation(opts) {
+  // opts: { theme, prizeLabel, winnerName, isSpecial(hotel), sub }
+  wireLucky(); // 閉じるボタン等を必ず配線(ホーム自動表示でも動くように)
+  const ov = document.getElementById('lucky-overlay');
+  const stage = document.getElementById('lucky-stage');
+  const confetti = document.getElementById('lucky-confetti');
+  luckyClearTimers();
+  confetti.innerHTML = '';
+  ov.className = 'lucky-overlay theme-' + opts.theme;
+  ov.style.display = 'flex';
+  document.getElementById('lucky-badge').textContent = opts.theme === 'hotel' ? 'SPECIAL JACKPOT' : 'LUCKY';
+  document.getElementById('lucky-amount').textContent = opts.prizeLabel;
+  document.getElementById('lucky-winner').textContent = opts.winnerName ? (opts.winnerName + ' さん') : '';
+  document.getElementById('lucky-sub').textContent = opts.sub || '';
+  // 補助要素(リング/フラッシュ/扉)を用意
+  let ring = ov.querySelector('.lucky-ring'); if (!ring) { ring = document.createElement('div'); ring.className = 'lucky-ring'; ov.appendChild(ring); }
+  let flash = ov.querySelector('.lucky-flash'); if (!flash) { flash = document.createElement('div'); flash.className = 'lucky-flash'; ov.appendChild(flash); }
+  flash.className = 'lucky-flash';
+  const doors = ov.querySelector('.lucky-doors'); if (doors) doors.remove();
+  stage.style.visibility = 'visible';
+
+  const doFlash = () => { flash.className = 'lucky-flash go'; };
+  if (opts.theme === 'blue') {
+    luckyConfetti('blue', 40);
+  } else if (opts.theme === 'gold') {
+    luckyConfetti('gold', 70);
+  } else if (opts.theme === 'green') {
+    luckyConfetti('green', 80);
+  } else if (opts.theme === 'red') {
+    // 一度暗転 → 赤い閃光 → 強めの紙吹雪 + 大きな金額
+    stage.style.visibility = 'hidden'; ov.classList.add('dim');
+    luckyAfter(500, () => { ov.classList.remove('dim'); ov.className = 'lucky-overlay theme-red'; doFlash(); stage.style.visibility = 'visible'; luckyConfetti('red', 120); });
+  } else if (opts.theme === 'rainbow') {
+    // 最初は結果を見せない → 一瞬暗転 → 虹色の光 → 大量の紙吹雪 → 大型表示
+    document.getElementById('lucky-amount').textContent = '？';
+    document.getElementById('lucky-winner').textContent = '';
+    luckyAfter(900, () => { ov.classList.add('dim'); stage.style.visibility = 'hidden'; });
+    luckyAfter(1500, () => { ov.classList.remove('dim'); ov.className = 'lucky-overlay theme-rainbow'; doFlash(); stage.style.visibility = 'visible'; document.getElementById('lucky-amount').textContent = opts.prizeLabel; document.getElementById('lucky-winner').textContent = opts.winnerName ? (opts.winnerName + ' さん') : ''; luckyConfetti('rainbow', 180); });
+  } else if (opts.theme === 'hotel') {
+    // 暗転 → 金色の光 → 扉が開く → SPECIAL JACKPOT → ホテル券 → 当選者
+    stage.style.visibility = 'hidden';
+    const dd = document.createElement('div'); dd.className = 'lucky-doors'; dd.innerHTML = '<div class="lucky-door l"></div><div class="lucky-door r"></div>'; ov.appendChild(dd);
+    luckyAfter(600, () => { dd.classList.add('open'); });
+    luckyAfter(1500, () => { dd.remove(); doFlash(); stage.style.visibility = 'visible'; luckyConfetti('hotel', 120); });
+  }
+}
+function closeLuckyOverlay() { luckyClearTimers(); const ov = document.getElementById('lucky-overlay'); ov.style.display = 'none'; ov.className = 'lucky-overlay'; document.getElementById('lucky-confetti').innerHTML = ''; }
+
+async function loadHomeLucky() {
+  const session = getSession();
+  try {
+    const st = await rpc('get_my_lucky_status', { p_employee_code: session.employeeCode });
+    const card = document.getElementById('home-lucky-card');
+    const latestEl = document.getElementById('home-lucky-latest');
+    if (st && st.month_latest) {
+      const l = st.month_latest;
+      latestEl.textContent = `最新: ${(l.draw_date || '').slice(5).replace('-', '/')}　${l.winner_name} さん　${l.prize_label}`;
+      card.style.display = 'flex';
+    } else {
+      latestEl.textContent = '今月の当選はこれからです';
+      card.style.display = 'flex';
+    }
+    // 本人が本日当選 & 未表示 → 全画面演出(初回のみ)
+    if (st && st.latest && st.i_won && st.i_won_unseen) {
+      playLuckyAnimation({ theme: st.latest.theme, prizeLabel: st.latest.prize_label, winnerName: st.latest.winner_name, sub: (st.latest.is_yesterday ? '昨日' : (String(st.latest.draw_date).slice(5).replace('-', '/'))) + 'のラッキー賞に当選しました!' });
+      try { await rpc('mark_lucky_animation_seen', { p_employee_code: session.employeeCode, p_draw_id: st.latest.draw_id }); } catch (e) {}
+    }
+    // 日報未提出のヒント
+    const hint = document.getElementById('home-lucky-hint');
+    if (hint) hint.style.display = (st && st.is_draw_day && !st.submitted_today) ? 'block' : 'none';
+  } catch (e) { /* ラッキー賞は補助機能。失敗してもホームは表示 */ }
+}
+
+let luckyYM = null;
+function openLuckyMonth() { const now = todayJST(); luckyYM = { y: Number(now.slice(0, 4)), m: Number(now.slice(5, 7)) }; showScreen('lucky-month'); loadLuckyMonth(); }
+async function loadLuckyMonth() {
+  const session = getSession();
+  document.getElementById('lucky-month-label').textContent = `${luckyYM.y}年${luckyYM.m}月`;
+  // 本日のカード
+  try {
+    const st = await rpc('get_my_lucky_status', { p_employee_code: session.employeeCode });
+    const tc = document.getElementById('lucky-today-card');
+    if (st && st.latest) {
+      const l = st.latest;
+      const dayLabel = l.is_yesterday ? '昨日' : (String(l.draw_date).slice(5).replace('-', '/'));
+      tc.style.display = 'block';
+      tc.innerHTML = `<div style="font-weight:700;margin-bottom:4px;">🎉 ${dayLabel}のラッキー賞</div>
+        <div style="font-size:18px;font-weight:800;">${l.winner_name} さん　${l.prize_label}</div>
+        <button type="button" class="secondary" id="lucky-replay-today" style="margin-top:8px;">当選演出を見る</button>`;
+      document.getElementById('lucky-replay-today').addEventListener('click', () => playLuckyAnimation({ theme: l.theme, prizeLabel: l.prize_label, winnerName: l.winner_name, sub: dayLabel + 'のラッキー賞' }));
+    } else if (st && st.is_draw_day && !st.submitted_today) {
+      tc.style.display = 'block'; tc.innerHTML = '<div class="hint">日報を提出すると本日のラッキー賞抽選対象になります 🎁</div>';
+    } else { tc.style.display = 'none'; }
+  } catch (e) {}
+  const listEl = document.getElementById('lucky-month-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_lucky_prize_month', { p_employee_code: session.employeeCode, p_year: luckyYM.y, p_month: luckyYM.m });
+    if (!rows || !rows.length) { listEl.innerHTML = '<div class="hint">この月の当選はまだありません。</div>'; return; }
+    listEl.innerHTML = rows.map((r) => {
+      if (r.prize_type === 'hotel') {
+        return `<button type="button" class="history-item lucky-row" data-theme="hotel" data-label="${r.prize_label}" data-name="${r.winner_name}" style="width:100%;text-align:left;background:linear-gradient(90deg,#1a1204,#000);color:#f5d76e;">
+          <div style="font-weight:800;">🏨 SPECIAL</div>
+          <div>${(r.draw_date || '').slice(5).replace('-', '/')}　${r.winner_name} さん</div>
+          <div style="font-size:13px;">高級ホテル宿泊券</div></button>`;
+      }
+      return `<button type="button" class="history-item lucky-row" data-theme="${r.theme}" data-label="${r.prize_label}" data-name="${r.winner_name}" style="width:100%;text-align:left;">
+        <div class="row1"><span>${(r.draw_date || '').slice(5).replace('-', '/')}　${r.winner_name} さん</span><span style="font-weight:700;">${r.prize_label}</span></div></button>`;
+    }).join('');
+    listEl.querySelectorAll('.lucky-row').forEach((b) => b.addEventListener('click', () => playLuckyAnimation({ theme: b.dataset.theme, prizeLabel: b.dataset.label, winnerName: b.dataset.name, sub: 'ラッキー賞' })));
+  } catch (e) { listEl.innerHTML = '<div class="hint">読み込みに失敗しました。</div>'; }
+}
+
+async function loadLuckyAdmin() {
+  const session = getSession();
+  const sumEl = document.getElementById('lucky-admin-summary');
+  const listEl = document.getElementById('lucky-admin-list');
+  sumEl.innerHTML = ''; listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const y = Number(todayJST().slice(0, 4));
+    const d = await rpc('admin_list_lucky_draws', { p_admin_employee_code: session.employeeCode, p_year: y });
+    sumEl.innerHTML = `
+      <div class="field-row"><span>${y}年 現金賞 累計</span><span style="font-weight:700;">${yen(d.cash_total)}</span></div>
+      <div class="field-row"><span>年間予算</span><span>${yen(d.cash_budget)}</span></div>
+      <div class="field-row"><span>残り予算</span><span style="font-weight:700;color:${d.cash_remaining < 0 ? 'var(--danger)' : 'var(--success)'};">${yen(d.cash_remaining)}</span></div>
+      <div class="field-row"><span>ホテル賞(別予算)</span><span>${d.hotel_count}回</span></div>`;
+    const draws = d.draws || [];
+    if (!draws.length) { listEl.innerHTML = '<div class="hint">確定した抽選はまだありません。</div>'; return; }
+    listEl.innerHTML = draws.map((r) => `
+      <div class="supply-item" data-id="${r.draw_id}">
+        <div class="row1"><span style="font-weight:700;">${r.draw_date}　${r.prize_label}</span><span>${r.prize_type === 'hotel' ? '🏨' : ''}</span></div>
+        <div class="row2">当選: ${r.winner_name || '-'}　対象 ${r.pool_count}名</div>
+        ${r.prize_type === 'cash' ? `<div class="row2">支給: ${r.payout_status === 'paid' ? '<span style="color:var(--success);font-weight:700;">支給済み' + (r.paid_at ? '(' + String(r.paid_at).slice(0, 10) + ')' : '') + '</span>' : '<span style="color:var(--warning);font-weight:700;">未支給</span>'}</div>
+        <div class="qual-verify-btns"><button type="button" class="${r.payout_status === 'paid' ? 'reject-btn' : 'approve-btn'} lucky-payout" data-paid="${r.payout_status !== 'paid'}">${r.payout_status === 'paid' ? '未支給に戻す' : '支給済みにする'}</button></div>` : ''}
+      </div>`).join('');
+    listEl.querySelectorAll('.lucky-payout').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = Number(btn.closest('.supply-item').dataset.id);
+        btn.disabled = true;
+        try { await rpc('admin_set_lucky_payout', { p_admin_employee_code: session.employeeCode, p_draw_id: id, p_paid: btn.dataset.paid === 'true' }); loadLuckyAdmin(); }
+        catch (e) { btn.disabled = false; alert(e.message || '更新に失敗しました。'); }
+      });
+    });
+  } catch (e) { listEl.innerHTML = '<div class="hint">この画面には経理承認権限が必要です。</div>'; }
+}
+
+function loadLuckyPreview() {
+  document.getElementById('lucky-preview-note').textContent = IS_STAGING ? 'テスト環境(Staging)専用。各賞の演出を確認できます。' : 'この機能はテスト環境専用です。';
+}
+let _luckyWired = false;
+function wireLucky() {
+  if (_luckyWired) return; _luckyWired = true;
+  document.getElementById('lucky-close').addEventListener('click', closeLuckyOverlay);
+  document.getElementById('lucky-prev').addEventListener('click', () => { luckyYM.m -= 1; if (luckyYM.m < 1) { luckyYM.m = 12; luckyYM.y -= 1; } loadLuckyMonth(); });
+  document.getElementById('lucky-next').addEventListener('click', () => { luckyYM.m += 1; if (luckyYM.m > 12) { luckyYM.m = 1; luckyYM.y += 1; } loadLuckyMonth(); });
+  document.querySelectorAll('.lucky-preview-btn').forEach((btn) => btn.addEventListener('click', () => {
+    const [type, amt] = btn.dataset.prize.split(':');
+    const amount = Number(amt);
+    const theme = type === 'hotel' ? 'hotel' : (amount >= 10000 ? 'rainbow' : amount >= 5000 ? 'red' : amount >= 3000 ? 'green' : amount >= 2000 ? 'gold' : 'blue');
+    const label = type === 'hotel' ? '高級ホテル宿泊券' : amount.toLocaleString('ja-JP') + '円';
+    playLuckyAnimation({ theme, prizeLabel: label, winnerName: 'テスト 太郎', sub: '演出プレビュー' });
+  }));
+}
+
 async function doProposeSite(forceCreate) {
   const session = getSession();
   const name = document.getElementById('propose-site-name').value.trim();
@@ -8020,6 +8213,7 @@ function addDailyReportEntry(prefill) {
   if (prefill && prefill.is_night_shift) clone.querySelector('.dr-is-night-shift').checked = true;
   if (prefill && prefill.notes) clone.querySelector('.dr-notes').value = prefill.notes;
   if (prefill && prefill.overtime_hours != null) clone.querySelector('.dr-overtime-hours').value = prefill.overtime_hours;
+  if (prefill && prefill.early_start_hours != null) clone.querySelector('.dr-early-start-hours').value = prefill.early_start_hours;
   if (prefill && prefill.is_early_commute) clone.querySelector('.dr-is-early-commute').checked = true;
   if (prefill && prefill.is_commute_overtime) clone.querySelector('.dr-is-commute-overtime').checked = true;
   if (prefill && prefill.early_commute_hours != null) clone.querySelector('.dr-early-commute-hours').value = prefill.early_commute_hours;
@@ -8031,10 +8225,14 @@ function addDailyReportEntry(prefill) {
   if (prefill && prefill.is_transport) clone.querySelector('.dr-is-transport').checked = true;
   if (prefill && prefill.is_field_duty) clone.querySelector('.dr-is-field-duty').checked = true;
   if (prefill && prefill.is_sales) clone.querySelector('.dr-is-sales').checked = true;
-  // 対象者フラグに基づき、該当する社員(または代理入力対象)にだけ各項目を表示する
-  // (氏名のハードコードではなく社員マスタの権限フラグで判定する)。
-  clone.querySelector('.dr-driver-fields').style.display = dailyReportTargetIsDriver ? 'block' : 'none';
-  clone.querySelector('.dr-overtime-wrap').style.display = dailyReportPermissions.can_overtime ? 'block' : 'none';
+  // 本人が自分の勤務を報告する基本項目(早出・残業・通勤早出・通勤残業)は、権限フラグに
+  // 関わらず全社員で共通表示する(2026-09-04 ユーザー指摘: can_overtime/is_driver で一般社員から
+  // これらが消えると給与・出勤簿・日報データが不一致になるため)。「運転手1名のみ」等の運用ルールは
+  // 画面上の注記と管理者確認で担保し、フォーム項目自体は共通化する。
+  clone.querySelector('.dr-early-start-wrap').style.display = 'block';
+  clone.querySelector('.dr-overtime-wrap').style.display = 'block';
+  clone.querySelector('.dr-driver-fields').style.display = 'block';
+  // 現場作業・営業・運搬は職種依存の項目のため、従来どおり can_input_* フラグで表示制御する。
   const canOtherDuty = dailyReportPermissions.can_input_site_duty || dailyReportPermissions.can_input_sales || dailyReportPermissions.can_input_transport;
   clone.querySelector('.dr-other-duty-group').style.display = canOtherDuty ? 'block' : 'none';
   clone.querySelector('.dr-site-duty-wrap').style.display = dailyReportPermissions.can_input_site_duty ? 'block' : 'none';
@@ -8427,6 +8625,7 @@ async function doSubmitDailyReport(isDraft) {
       showError('daily-report-error', '現場を選択してください。'); return;
     }
     const overtimeVal = el.querySelector('.dr-overtime-hours').value;
+    const earlyStartVal = el.querySelector('.dr-early-start-hours').value;
     const earlyCommuteChecked = el.querySelector('.dr-is-early-commute').checked;
     const commuteOvertimeChecked = el.querySelector('.dr-is-commute-overtime').checked;
     const earlyCommuteHoursVal = el.querySelector('.dr-early-commute-hours').value;
@@ -8440,6 +8639,7 @@ async function doSubmitDailyReport(isDraft) {
       is_leader: el.querySelector('.dr-is-leader').checked, is_night_shift: el.querySelector('.dr-is-night-shift').checked,
       notes: el.querySelector('.dr-notes').value.trim() || null,
       overtime_hours: overtimeVal ? Number(overtimeVal) : null,
+      early_start_hours: earlyStartVal ? Number(earlyStartVal) : null,
       // 通勤早出・通勤残業は「チェックしたのに時間が0/未入力」を防ぐため、チェックされている
       // 場合だけ時間を送る(サーバー側もis_early_commute等をhours>0から再計算するため、
       // ここで矛盾した値を送っても最終的にはサーバー側の値が優先される)。
@@ -9051,6 +9251,7 @@ async function renderMyDailyReportDetailBody(dateStr) {
         <div class="field-row"><span>勤務区分</span><span>${r.work_type || ''}</span></div>
         <div class="field-row"><span>人工</span><span>${r.work_type === '終日' ? '1.0' : '0.5'}</span></div>
         <div class="field-row"><span>リーダー</span><span>${r.is_leader ? 'あり' : 'なし'}</span></div>
+        <div class="field-row"><span>早出時間</span><span>${r.early_start_hours != null ? r.early_start_hours + 'h' : '-'}</span></div>
         <div class="field-row"><span>残業時間</span><span>${r.overtime_hours != null ? r.overtime_hours + 'h' : '-'}</span></div>
         <div class="field-row"><span>通勤早出</span><span>${r.is_early_commute ? `あり(${r.early_commute_hours}h)` : 'なし'}</span></div>
         <div class="field-row"><span>通勤残業</span><span>${r.is_commute_overtime ? `あり(${r.commute_overtime_hours}h)` : 'なし'}</span></div>
@@ -10323,6 +10524,7 @@ function drdEmployeeOriginalHtml(r, effWorkType, effLeader, effNight) {
   // 【勤怠・手当】給与計算に必要な時間は入力フォームと同じ正式フィールド名で個別表示(表示用の合算値を作らない)。
   const hours = (v) => (num(v) > 0 ? num(v) + '時間' : 'なし');
   const attend = [];
+  attend.push(drdFieldRow('早出', hours(r.early_start_hours)));                 // early_start_hours(現場作業の早出)
   attend.push(drdFieldRow('残業', hours(r.overtime_hours)));                    // overtime_hours
   attend.push(drdFieldRow('通勤早出', hours(r.early_commute_hours)));           // early_commute_hours(運転手)
   attend.push(drdFieldRow('通勤残業', hours(r.commute_overtime_hours)));        // commute_overtime_hours(運転手)
@@ -11882,6 +12084,8 @@ function applyStagingIndicator() {
 function init() {
   applyStagingIndicator();
   hydrateIcons(document);
+  // 演出プレビューはテスト環境(Staging)の管理者だけに見せる(本番の一般社員には公開しない)。
+  if (IS_STAGING) document.querySelectorAll('.lucky-preview-entry').forEach((el) => { el.style.display = ''; });
 
   document.getElementById('login-btn').addEventListener('click', doSubmitEmployeeCode);
   // 外注の方の入口(仕様3): 外注ポータル(/sub/)へ遷移。社員番号入力とは別導線。
@@ -12502,6 +12706,9 @@ function init() {
   SCREEN_ENTER_HOOKS['loan-request'] = initLoanRequestForm;
   SCREEN_ENTER_HOOKS['loan-history'] = loadLoanHistory;
   SCREEN_ENTER_HOOKS['loan-admin'] = loadLoanAdminList;
+  SCREEN_ENTER_HOOKS['lucky-month'] = () => { wireLucky(); const now = todayJST(); luckyYM = { y: Number(now.slice(0, 4)), m: Number(now.slice(5, 7)) }; loadLuckyMonth(); };
+  SCREEN_ENTER_HOOKS['lucky-admin'] = () => { wireLucky(); loadLuckyAdmin(); };
+  SCREEN_ENTER_HOOKS['lucky-preview'] = () => { if (!IS_STAGING) { enterMenu(); return; } wireLucky(); loadLuckyPreview(); };
   SCREEN_ENTER_HOOKS['status-board-general'] = loadStatusBoardGeneral;
   SCREEN_ENTER_HOOKS['entertainment-late-submit'] = resetEntertainmentLateForm;
   SCREEN_ENTER_HOOKS['my-entertainment'] = loadMyEntertainmentList;

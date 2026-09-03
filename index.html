@@ -185,9 +185,20 @@
          今日やること内の同内容の行に一本化する(同じ情報を複数箇所へ出さない)。 -->
     <div class="section-title">今日やること</div>
     <div class="today-list" id="today-list"></div>
+    <div id="home-lucky-hint" style="display:none;margin:2px 2px 10px;font-size:13px;color:var(--text-faint,#7a7a7a);">日報を提出すると本日のラッキー賞抽選対象になります 🎁</div>
 <!-- §2: 「今日は休みとして登録する」は撤去。休日はカレンダー/休暇情報からシステムが判定する。 -->
 
     <div id="announce-banner-area"></div>
+
+    <!-- 毎日のラッキー賞: ホームのコンパクトな1行カード(邪魔しない) -->
+    <button type="button" class="lucky-home-card" id="home-lucky-card" data-nav="lucky-month" style="display:none;">
+      <span class="lucky-home-icon">🎁</span>
+      <span class="lucky-home-body">
+        <span class="lucky-home-title">今月のラッキー賞</span>
+        <span class="lucky-home-latest" id="home-lucky-latest"></span>
+      </span>
+      <span class="lucky-home-arrow">›</span>
+    </button>
 
     <div class="home-announce-header">
       <div class="section-title">会社からのお知らせ</div>
@@ -414,6 +425,55 @@
     </div>
   </template>
 
+  <!-- 今月のラッキー賞(社員・本人) -->
+  <section id="screen-lucky-month" class="screen">
+    <button type="button" class="back-link back-to-origin" data-nav="menu">ホームに戻る</button>
+    <div class="form-title">🎁 今月のラッキー賞</div>
+    <div class="hint" style="margin-bottom:8px;">ラッキー賞は、その日の日報を提出した社員の中から抽選されます。</div>
+    <div class="card" id="lucky-today-card" style="display:none;"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:8px 0;">
+      <button type="button" id="lucky-prev" class="seg" style="width:auto;padding:6px 16px;">＜</button>
+      <div id="lucky-month-label" style="font-weight:700;">-</div>
+      <button type="button" id="lucky-next" class="seg" style="width:auto;padding:6px 16px;">＞</button>
+    </div>
+    <div id="lucky-month-list"></div>
+  </section>
+
+  <!-- ラッキー賞 管理(管理者) -->
+  <section id="screen-lucky-admin" class="screen">
+    <button type="button" class="back-link back-to-origin" data-nav="menu">ホームに戻る</button>
+    <div class="form-title">ラッキー賞管理</div>
+    <div class="card" id="lucky-admin-summary"></div>
+    <div id="lucky-admin-list"></div>
+  </section>
+
+  <!-- 演出プレビュー(管理者・Stagingのみ) -->
+  <section id="screen-lucky-preview" class="screen">
+    <button type="button" class="back-link back-to-origin" data-nav="menu">ホームに戻る</button>
+    <div class="form-title">演出プレビュー(テスト)</div>
+    <div class="hint" id="lucky-preview-note" style="margin-bottom:10px;"></div>
+    <div class="lucky-preview-grid">
+      <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:1000">1,000円(青)</button>
+      <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:2000">2,000円(金)</button>
+      <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:3000">3,000円(緑)</button>
+      <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:5000">5,000円(赤)</button>
+      <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:10000">10,000円(虹)</button>
+      <button type="button" class="menu-btn lucky-preview-btn" data-prize="hotel:0" style="background:#111;color:#f5d76e;border-color:#c9a227;">高級ホテル(黒×金)</button>
+    </div>
+  </section>
+
+  <!-- 当選演出 全画面オーバーレイ -->
+  <div id="lucky-overlay" class="lucky-overlay" style="display:none;">
+    <div class="lucky-confetti" id="lucky-confetti"></div>
+    <div class="lucky-stage" id="lucky-stage">
+      <div class="lucky-badge" id="lucky-badge">LUCKY</div>
+      <div class="lucky-amount" id="lucky-amount"></div>
+      <div class="lucky-winner" id="lucky-winner"></div>
+      <div class="lucky-sub" id="lucky-sub"></div>
+    </div>
+    <button type="button" class="lucky-close" id="lucky-close">閉じる</button>
+  </div>
+
   <!-- 2026-08-28(第4弾): 一般社員が新しい現場を登録申請できる画面。日報を経由しなくても、
        事前に現場だけ登録申請できる(ユーザー指示)。既存のadmin_register_siteと同じ重複検出
        ロジック(propose_new_site)を使い、似ている現場があれば先にそちらを提示する。 -->
@@ -596,6 +656,11 @@
       <div class="checkbox-row">
         <input type="checkbox" class="dr-is-night-shift">
         <label>夜勤</label>
+      </div>
+      <div class="dr-early-start-wrap" style="display:none;">
+        <label>早出時間(任意)</label>
+        <div class="hint-inline">現場作業で早出が発生した場合に入力してください</div>
+        <input type="number" class="dr-early-start-hours" min="0" step="0.5" placeholder="例: 1.0">
       </div>
       <div class="dr-overtime-wrap" style="display:none;">
         <label>残業時間(任意)</label>
@@ -1957,6 +2022,16 @@
       <button type="button" class="menu-item" data-nav="loan-admin">
         <span class="icon-slot" data-icon="banknote"></span>
         <div class="menu-item-body">借入申請の管理<span class="desc">社員からの借入申請を承認/却下/差し戻し</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item" data-nav="lucky-admin">
+        <span class="icon-slot" data-icon="gift"></span>
+        <div class="menu-item-body">ラッキー賞管理<span class="desc">当選・支給状況・年間予算を確認</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
+      <button type="button" class="menu-item lucky-preview-entry" data-nav="lucky-preview" style="display:none;">
+        <span class="icon-slot" data-icon="sparkles"></span>
+        <div class="menu-item-body">演出プレビュー(テスト)<span class="desc">各賞の当選演出を確認(テスト環境のみ)</span></div>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
       <button type="button" class="menu-item" data-nav="daily-report-management">

@@ -30,6 +30,7 @@
       <div class="card">
         <div class="hint" style="margin-top:0;">外注作業員の方の入口です。所属会社を選んで登録を始めてください。会社からIDを受け取る必要はありません。</div>
         <button id="welcome-register-btn">はじめての方はこちら（外注登録）</button>
+        <button class="menu-btn secondary" id="welcome-first-login-btn" style="margin-top:12px;">会社で登録済みの方（登録コードではじめる）</button>
         <button class="menu-btn secondary" id="welcome-relink-btn" style="margin-top:12px;">機種変更・別の端末で登録済みの方</button>
       </div>
     </div>
@@ -74,6 +75,25 @@
       <input type="password" id="relink-pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
       <div class="error" id="relink-error"></div>
       <button id="relink-submit">本人確認してログイン</button>
+    </div>
+  </section>
+
+  <!-- 会社が先に登録した方(パターンB): 作業員ID + 初回登録コードで本人確認し、自分で暗証番号を設定 -->
+  <section id="screen-first-login" class="screen">
+    <button class="back-btn" data-back="welcome">← もどる</button>
+    <div class="card">
+      <div class="section-title">会社で登録済みの方の初回登録</div>
+      <div class="hint" style="margin-top:0;">会社から受け取った<b>作業員ID</b>と<b>初回登録コード</b>を入力し、自分だけの暗証番号を設定してください。QRを読み取って開いた場合は自動で入力されています。暗証番号はあなたしか知りません（会社・管理者は見られません）。</div>
+      <label for="fl-login-code" style="margin-top:10px">作業員ID<span style="color:#e23b3b">（必須）</span></label>
+      <input type="text" id="fl-login-code" autocomplete="off" placeholder="例: 12-003">
+      <label for="fl-code" style="margin-top:8px">初回登録コード（6桁）<span style="color:#e23b3b">（必須）</span></label>
+      <input type="text" id="fl-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+      <label for="fl-pin" style="margin-top:10px">暗証番号を決めてください(4〜6桁)<span style="color:#e23b3b">（必須）</span></label>
+      <input type="password" id="fl-pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+      <label for="fl-pin2" style="margin-top:8px">暗証番号(確認のためもう一度)</label>
+      <input type="password" id="fl-pin2" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+      <div class="error" id="first-login-error"></div>
+      <button id="first-login-submit">本人確認して暗証番号を設定</button>
     </div>
   </section>
 

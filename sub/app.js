@@ -64,14 +64,22 @@ async function boot() {
     showScreen('pin-entry');
     return;
   }
+  // QR/リンクから開いた初回登録(パターンB): ?fl=<作業員ID>&c=<初回登録コード>。
+  try {
+    const q = new URLSearchParams(location.search);
+    const flLogin = q.get('fl'); const flCode = q.get('c');
+    if (flLogin) { openFirstLogin({ loginCode: flLogin, code: flCode || '' }); return; }
+  } catch (e) { /* パラメータ不正時は通常のwelcomeへ */ }
   showScreen('welcome');
 }
 
 function bindEvents() {
   // 入口: 外注登録(自己登録) / 機種変更(本人再確認)
   $('welcome-register-btn').addEventListener('click', openRegister);
+  $('welcome-first-login-btn').addEventListener('click', () => openFirstLogin());
   $('welcome-relink-btn').addEventListener('click', openRelink);
   $('register-submit').addEventListener('click', doSelfRegister);
+  $('first-login-submit').addEventListener('click', doFirstLogin);
   $('relink-submit').addEventListener('click', doRelink);
 
   // 暗証番号ログイン(2回目以降・IDは端末が記憶)
@@ -185,7 +193,41 @@ async function doRelink() {
   } catch (e) { setErr('relink-error', e.message || '本人確認に失敗しました。'); }
 }
 
-// (旧・会社発行コードによる初回ログイン doFirstLogin は廃止。自己登録 doSelfRegister に統合)
+// パターンB(会社が先に登録): 作業員ID(login_code) + 初回登録コードで本人確認し、本人が暗証番号を設定。
+// 既存の subcontractor_first_login RPC を再利用。QRから開いた場合は login_code/code を事前入力する。
+function openFirstLogin(prefill) {
+  setErr('first-login-error', '');
+  if (prefill) {
+    if (prefill.loginCode) $('fl-login-code').value = prefill.loginCode;
+    if (prefill.code) $('fl-code').value = prefill.code;
+  }
+  showScreen('first-login');
+}
+
+async function doFirstLogin() {
+  setErr('first-login-error', '');
+  const lc = $('fl-login-code').value.trim();
+  const code = $('fl-code').value.trim();
+  const pin = $('fl-pin').value.trim();
+  const pin2 = $('fl-pin2').value.trim();
+  if (!lc) { setErr('first-login-error', '作業員IDを入力してください。'); return; }
+  if (!/^\d{6}$/.test(code)) { setErr('first-login-error', '初回登録コード(6桁)を入力してください。'); return; }
+  if (!pin || pin.length < 4) { setErr('first-login-error', '暗証番号は4〜6桁で決めてください。'); return; }
+  if (pin !== pin2) { setErr('first-login-error', '暗証番号(確認)が一致しません。'); return; }
+  try {
+    const r = await rpc('subcontractor_first_login', { p_login_code: lc, p_code: code, p_pin: pin });
+    const row = Array.isArray(r) ? r[0] : r;
+    if (!row || !row.out_device_token) throw new Error('初回登録に失敗しました。');
+    loginCode = lc; deviceToken = row.out_device_token;
+    currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+    saveAuth();
+    ['fl-login-code', 'fl-code', 'fl-pin', 'fl-pin2'].forEach((id) => { $(id).value = ''; });
+    // QRのパラメータをURLから消す(戻る/再読込でコードが残らないように)。
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+    enterHome();
+    openProfile();
+  } catch (e) { setErr('first-login-error', e.message || '初回登録に失敗しました。IDとコードをご確認ください。'); }
+}
 
 function doLogout() {
   rpc('subcontractor_logout', { p_login_code: loginCode }).catch(() => {});

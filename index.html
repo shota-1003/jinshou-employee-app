@@ -1295,6 +1295,22 @@
     </label>
     <div class="hint" style="margin: 0 0 14px; text-align:center;">写真内の領収書を自動で判別し、領収書ごとに明細を作成します（1枚の写真に複数の領収書が写っていてもOK）</div>
 
+    <details class="card" id="expense-bulkset-panel" style="margin-bottom:12px; display:none;">
+      <summary style="cursor:pointer; font-weight:600;">全明細へ一括設定（現場・使用目的）</summary>
+      <div style="margin-top:10px;">
+        <label>現場（全明細へ）</label>
+        <input type="text" id="expense-bulkset-site-search" placeholder="現場名で検索...">
+        <select id="expense-bulkset-site"></select>
+        <label style="margin-top:8px;">使用目的（全明細へ）</label>
+        <input type="text" id="expense-bulkset-purpose-search" placeholder="使用目的を検索...">
+        <select id="expense-bulkset-purpose"></select>
+        <label style="margin-top:8px;">備考（全明細へ・任意）</label>
+        <input type="text" id="expense-bulkset-note" placeholder="全明細に付ける備考">
+        <button type="button" class="secondary" id="expense-bulkset-apply" style="margin-top:10px;">この内容を全明細に適用する</button>
+        <div class="hint" style="margin-top:6px;">適用後も、各明細を個別に変更できます。接待交際費など追加入力が必要な使用目的を選ぶと、明細ごとに必要項目（取引先・参加者・人数・事前申請の紐付け等）が表示されます。</div>
+      </div>
+    </details>
+
     <div id="expense-item-list"></div>
 
     <button type="button" class="secondary" id="expense-add-item">＋ 明細を1件だけ追加(カメラで撮影)</button>

@@ -1659,7 +1659,57 @@ function enterExpenseScreen(category) {
   resetExpenseForm();
   hideError('expense-error');
   populateVendorList();
+  setupExpenseBulkSet();
   showScreen('expense');
+}
+
+// 統一エンジンの「全明細へ一括設定」(Phase 2)。現場・使用目的・備考を全明細へ適用する。
+// 適用後も各明細を個別に上書きできる。接待交際費等を選ぶと、各明細で必要な追加項目が表示される
+// (per-cardの purpose-category change ハンドラを dispatch して発火させるため)。
+let expenseBulkSetWired = false;
+async function setupExpenseBulkSet() {
+  const panel = document.getElementById('expense-bulkset-panel');
+  if (!panel) return;
+  const siteSel = document.getElementById('expense-bulkset-site');
+  const purposeSel = document.getElementById('expense-bulkset-purpose');
+  const siteSearch = document.getElementById('expense-bulkset-site-search');
+  const purposeSearch = document.getElementById('expense-bulkset-purpose-search');
+  try { await populateSiteSelect(siteSel, ''); } catch (e) {}
+  try { await populatePurposeSelect(purposeSel, ''); } catch (e) {}
+  if (!expenseBulkSetWired) {
+    let t1, t2;
+    siteSearch.addEventListener('input', () => { clearTimeout(t1); t1 = setTimeout(() => populateSiteSelect(siteSel, siteSearch.value.trim()), 250); });
+    purposeSearch.addEventListener('input', () => { clearTimeout(t2); t2 = setTimeout(() => populatePurposeSelect(purposeSel, purposeSearch.value.trim()), 250); });
+    document.getElementById('expense-bulkset-apply').addEventListener('click', applyExpenseBulkSetToAll);
+    expenseBulkSetWired = true;
+  }
+  updateExpenseBulkSetVisibility();
+}
+
+// 明細が2件以上のときだけ一括設定パネルを出す(1件なら不要)。
+function updateExpenseBulkSetVisibility() {
+  const panel = document.getElementById('expense-bulkset-panel');
+  if (!panel) return;
+  const count = document.querySelectorAll('#expense-item-list .expense-item-card').length;
+  panel.style.display = count >= 2 ? 'block' : 'none';
+}
+
+function applyExpenseBulkSetToAll() {
+  const siteSel = document.getElementById('expense-bulkset-site');
+  const purposeSel = document.getElementById('expense-bulkset-purpose');
+  const noteVal = (document.getElementById('expense-bulkset-note').value || '').trim();
+  const siteVal = siteSel.value;
+  const siteName = siteSel.selectedOptions[0] ? (siteSel.selectedOptions[0].dataset.name || siteSel.selectedOptions[0].textContent) : '';
+  const purposeVal = purposeSel.value;
+  const ensureOption = (sel, val, name) => { if (![...sel.options].some((o) => o.value === val)) { const o = document.createElement('option'); o.value = val; if (name) o.dataset.name = name; o.textContent = name || val; sel.appendChild(o); } };
+  document.querySelectorAll('#expense-item-list .expense-item-card').forEach((card) => {
+    if (siteVal) { const cs = card.querySelector('.item-site-select'); if (cs) { ensureOption(cs, siteVal, siteName); cs.value = siteVal; cs.dispatchEvent(new Event('change')); } }
+    if (purposeVal) { const cp = card.querySelector('.item-purpose-category'); if (cp) { ensureOption(cp, purposeVal, purposeVal); cp.value = purposeVal; cp.dispatchEvent(new Event('change')); } }
+    if (noteVal) { const nEl = card.querySelector('.item-note'); if (nEl && !nEl.value.trim()) nEl.value = noteVal; }
+  });
+  updateExpenseTotal();
+  const box = document.getElementById('expense-bulkset-panel');
+  if (box) { const h = document.createElement('div'); h.className = 'hint'; h.style.cssText = 'margin-top:6px;color:#2e7d32;font-weight:600;'; h.textContent = '全明細へ適用しました。必要な明細だけ個別に変更できます。'; const old = box.querySelector('.bulkset-applied'); if (old) old.remove(); h.classList.add('bulkset-applied'); box.querySelector('div').appendChild(h); }
 }
 
 async function populateSiteSelect(selectEl, query, dailyReportOnly) {
@@ -2125,6 +2175,7 @@ function updateExpenseTotal() {
   });
   document.getElementById('expense-total-count').textContent = `${validCount}件`;
   document.getElementById('expense-total-amount').textContent = `${total.toLocaleString()}円`;
+  updateExpenseBulkSetVisibility();
 }
 
 function resetExpenseForm() {

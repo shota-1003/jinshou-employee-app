@@ -1787,6 +1787,9 @@ function ocrFieldStatus(conf) { conf = conf || 'low'; return conf === 'high' ? '
 // 読めたものは自動入力、読めない/曖昧なものだけ要確認にして候補をワンタップ選択できるようにする
 // (勝手に誤値を確定しない)。1件の低信頼で他の明細を失敗させない。
 function fillCardFromReceipt(card, receipt) {
+  // Phase 4: AIの勘定科目候補+確信度を明細stateへ控える(submit時にreceiptsへ保存し、経理確認へ回す)。
+  const _st = expenseItemState.get(card.dataset.itemId);
+  if (_st) { _st.accountCategoryCandidate = receipt.account_category_candidate || null; _st.accountCategoryConfidence = receipt.account_category_confidence || receipt.confidence || null; }
   const ocrStatus = card.querySelector('.ocr-status');
   const dateInput = card.querySelector('.item-date');
   const storeInput = card.querySelector('.item-store');
@@ -2302,6 +2305,7 @@ async function doSubmitExpense() {
       our_participant_employee_codes: ourCodes,
       entertainment_preapproval_id: entertainmentPreapprovalId, admin_override_reason: overrideReason,
       payment_method: payment, content_description: note || null,
+      account_category_candidate: state.accountCategoryCandidate || null, account_category_confidence: state.accountCategoryConfidence || null,
       drive_file_id: state.driveFileId, drive_file_url: state.driveFileUrl,
     });
   }

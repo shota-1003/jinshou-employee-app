@@ -908,6 +908,9 @@ function consumeLoginRedirect() {
 function enterMenu(replace) {
   if (consumeLoginRedirect()) return;
   const session = getSession();
+  // セッションが失効/未確立のまま呼ばれた場合、社員名の参照で
+  // "null is not an object" 例外(finding#14/#10)になりホームが描画されない。ログインへ戻す。
+  if (!session) { showScreen('login'); return; }
   const { greeting, sub } = buildHomeGreeting();
   document.getElementById('menu-greeting-hi').textContent = greeting;
   document.getElementById('menu-greeting-name').textContent = `${session.employeeName}さん`;

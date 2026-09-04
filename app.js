@@ -9901,7 +9901,13 @@ async function loadDailyReportNeedsReviewAdmin() {
       // §3: 判断に必要な情報(社員番号・対象日・日報現場・配置現場・勤務区分・人工・提出日時・理由)を
       // 出し、各日報に【問題なしとして確定】【修正依頼】【日報を取消】を用意する。
       const memberLines = g.rows.map((r) => {
-        const siteMismatch = r.assignment_site && r.site_name && r.assignment_site !== r.site_name;
+        // 「不一致」タグは表示名の文字列比較ではなく、実際の判定(site_idで突合したCAL_MISMATCH)に従う。
+        // 表示名が違っても同一site_idなら不一致にしない(表示値と判定結果の論理矛盾を避ける)。
+        const reasonRaw = (r.review_reason || '');
+        const siteMismatch = /CAL_MISMATCH|現場が異な/.test(reasonRaw) || (r.consistency_issues || []).some((i) => /現場.*異な|現場.*不一致/.test(i.message || ''));
+        const reasonText = (r.consistency_issues || []).map((iss) => iss.message).join(' / ')
+          || reasonRaw.replace(/\[[A-Z_]+\]/g, '').split('/').map((s) => s.trim()).filter(Boolean).join(' / ')
+          || '要確認';
         return `
         <div class="card" style="margin-top:8px;padding:10px;background:var(--surface-2,rgba(255,255,255,0.03));">
           <div class="row1"><span style="font-weight:700;">${r.employee_name}</span><span class="mini-tag">${r.employee_code}</span></div>
@@ -9909,7 +9915,7 @@ async function loadDailyReportNeedsReviewAdmin() {
           <div class="field-row"><span>配置現場</span><span>${r.assignment_site || '(配置なし)'}${siteMismatch ? ' <span class="mini-tag danger">不一致</span>' : ''}</span></div>
           <div class="field-row"><span>勤務区分 / 人工</span><span>${r.work_type || '-'} / ${Number(r.headcount || 0)}人工${r.overtime_hours ? ' ・残業' + r.overtime_hours + 'h' : ''}</span></div>
           <div class="field-row"><span>提出日時</span><span>${r.submitted_at ? new Date(r.submitted_at).toLocaleString('ja-JP') : '-'}</span></div>
-          <div class="mini-tag danger" style="display:block;margin-top:4px;">⚠ ${(r.consistency_issues || []).map((iss) => iss.message).join(' / ') || r.review_reason || '要確認'}</div>
+          <div class="mini-tag danger" style="display:block;margin-top:4px;">⚠ 理由: ${reasonText}</div>
           <div class="button-row" style="margin-top:8px;">
             <button type="button" class="secondary" data-ack-id="${r.id}">問題なしとして確定</button>
             <button type="button" class="link" data-correct-id="${r.id}">修正依頼</button>
@@ -10464,16 +10470,20 @@ function renderDrmDateNav() {
   if (!nav) return;
   const today = todayJST();
   const shift = (days) => { const d = new Date(drmSelectedDate + 'T00:00:00'); d.setDate(d.getDate() + days); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  // コンパクトな1行ナビ: [‹] 日付 [今日バッジ] [›] [今日へ]。日付移動は主役にせず高さを最小化する。
+  // 「今日」バッジと「今日へ」ボタンで行の高さが変わらないよう、右端は常に固定幅の枠を確保する。
+  nav.style.padding = '4px 6px';
+  nav.style.marginBottom = '8px';
   nav.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-      <button type="button" class="secondary" id="drm-date-prev" style="flex:none;width:auto;padding:8px 14px;">‹</button>
-      <div style="flex:1;min-width:0;text-align:center;font-weight:700;font-size:16px;">${formatJpDateWithDow(drmSelectedDate)}</div>
-      <button type="button" class="secondary" id="drm-date-next" style="flex:none;width:auto;padding:8px 14px;">›</button>
-    </div>
-    <div style="display:flex;justify-content:center;margin-top:6px;">
-      ${drmSelectedDate === today
-        ? '<span class="mini-tag info">今日</span>'
-        : '<button type="button" class="link" id="drm-date-today">今日へ</button>'}
+    <div style="display:flex;align-items:center;gap:6px;">
+      <button type="button" class="secondary" id="drm-date-prev" style="flex:none;width:auto;padding:5px 11px;">‹</button>
+      <div style="flex:1;min-width:0;text-align:center;font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+        ${formatJpDateWithDow(drmSelectedDate)}${drmSelectedDate === today ? ' <span class="mini-tag info" style="vertical-align:middle;">今日</span>' : ''}
+      </div>
+      <button type="button" class="secondary" id="drm-date-next" style="flex:none;width:auto;padding:5px 11px;">›</button>
+      <div style="flex:none;width:56px;text-align:right;">
+        ${drmSelectedDate === today ? '' : '<button type="button" class="secondary" id="drm-date-today" style="width:auto;padding:5px 8px;font-size:12px;">今日へ</button>'}
+      </div>
     </div>`;
   // 日付切替時は、選択日のすべての集計(件数要約・内訳バケット・サマリーカード・未提出バナー・一覧)を
   // 選択日で再取得する。renderだけ日付を変えて中身が本日固定のまま、という状態を作らない。

@@ -52,6 +52,9 @@ window.ClientErrorReporter.init({
 
 // 任意/本番未提供の機能RPC。DBに未適用の環境では404になるが、呼び出し側でgraceful degradeするため
 // 監視へは報告しない(例: ラッキー賞は本番DB未適用のため404。有効化されれば200が返る)。
+// ブラウザ用コードのためscripts/lib/optional-degrade-rpcs.js(QA側の正本)をrequireできず値を
+// 複製している。このSetを変更する際は必ずscripts/lib/optional-degrade-rpcs.jsも同時に更新すること
+// (2026-09-04: 更新漏れでQAが想定内の404を障害として誤検知した教訓、errors.id=1300)。
 const OPTIONAL_MISSING_RPCS = new Set(['get_my_lucky_status', 'mark_lucky_animation_seen', 'get_lucky_prize_month', 'assignment_get_my_schedule']);
 async function rpc(name, params) {
   const headers = {
@@ -1721,6 +1724,46 @@ function fillCardFromReceipt(card, receipt) {
     card.querySelector('.item-store').value = '';
   }
   if (receipt.counterparty_raw && confidence !== 'low') showExpenseSuggestion(card, receipt.counterparty_raw);
+  renderAmountCandidates(card, receipt, confidence);
+}
+
+// 金額の意味理解が曖昧なとき(低〜中confidence、または支払額候補が複数)、金額欄を「要確認」にして
+// 候補をワンタップで選べるようにする。適当な確定値を押し付けない・1件の低信頼で全体を失敗させない。
+function renderAmountCandidates(card, receipt, confidence) {
+  const amountInput = card.querySelector('.item-amount');
+  if (!amountInput) return;
+  // 候補コンテナ(金額欄の直後)を用意/再利用する。
+  let box = card.querySelector('.item-amount-candidates');
+  if (!box) {
+    box = document.createElement('div');
+    box.className = 'item-amount-candidates';
+    box.style.cssText = 'margin:4px 0 2px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;';
+    amountInput.insertAdjacentElement('afterend', box);
+  }
+  box.innerHTML = '';
+  // 支払額候補(重複金額は1つに)。ラベル付きで表示。
+  const cands = Array.isArray(receipt.total_amount_candidates) ? receipt.total_amount_candidates.filter((c) => c && c.amount != null) : [];
+  const distinct = [];
+  for (const c of cands) { if (!distinct.some((d) => Number(d.amount) === Number(c.amount))) distinct.push(c); }
+  const ambiguous = confidence !== 'high' || distinct.length > 1;
+  amountInput.style.background = (ambiguous && confidence !== 'high') ? '#fff8e1' : '';
+  if (ambiguous && confidence !== 'high') {
+    const warn = document.createElement('span');
+    warn.textContent = '⚠️ 金額を確認してください';
+    warn.style.cssText = 'color:#8a5300; font-size:12px; font-weight:600;';
+    box.appendChild(warn);
+  }
+  if (distinct.length > 1) {
+    distinct.slice(0, 5).forEach((c) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'mini-tag';
+      chip.style.cssText = 'cursor:pointer; border:1px solid var(--border); background:#fff;';
+      chip.textContent = `¥${Number(c.amount).toLocaleString()}${c.label ? '（' + c.label + '）' : ''}`;
+      chip.onclick = () => { amountInput.value = Number(c.amount); amountInput.style.background = ''; updateExpenseTotal(); };
+      box.appendChild(chip);
+    });
+  }
 }
 
 // 1枚の写真をOCRし、検出したすべての領収書(receipts[])を返す。先頭領収書はこのカードへ反映する。

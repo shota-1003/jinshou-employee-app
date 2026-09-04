@@ -1706,61 +1706,77 @@ async function showExpenseSuggestion(card, storeName) {
   } catch (e) { /* 候補が引けなくても致命的ではないため無視 */ }
 }
 
-// 1件の領収書データを1枚の明細カードへ反映する(runOcrForItemと複数領収書分割で共通利用)。
+// 項目ごとのconfidenceを ok/review/low に正規化。high=確定, medium=要確認(最有力を入れる),
+// low=推測で確定しない(空にして要確認+候補提示)。
+function ocrFieldStatus(conf) { conf = conf || 'low'; return conf === 'high' ? 'ok' : (conf === 'medium' ? 'review' : 'low'); }
+
+// 1件の領収書データを1枚の明細カードへ反映する。金額と利用日は「項目ごとに独立して」判定し、
+// 読めたものは自動入力、読めない/曖昧なものだけ要確認にして候補をワンタップ選択できるようにする
+// (勝手に誤値を確定しない)。1件の低信頼で他の明細を失敗させない。
 function fillCardFromReceipt(card, receipt) {
   const ocrStatus = card.querySelector('.ocr-status');
-  if (receipt.document_date) card.querySelector('.item-date').value = receipt.document_date;
-  if (receipt.counterparty_raw) card.querySelector('.item-store').value = receipt.counterparty_raw;
-  if (receipt.total_amount != null) { card.querySelector('.item-amount').value = receipt.total_amount; updateExpenseTotal(); }
-  if (receipt.tax_amount != null) card.querySelector('.item-tax').value = receipt.tax_amount;
-  const confidence = receipt.confidence || 'low';
-  if (confidence === 'high') {
-    ocrStatus.textContent = 'AIが内容を読み取りました。内容を確認してください(間違っていれば修正できます)。';
-  } else if (confidence === 'medium') {
-    ocrStatus.textContent = '読み取り精度が高くありません。内容を必ず確認・修正してください。';
-  } else {
-    ocrStatus.textContent = '読み取りに自信が持てませんでした。手入力で確認してください。';
-    card.querySelector('.item-date').value = '';
-    card.querySelector('.item-store').value = '';
-  }
-  if (receipt.counterparty_raw && confidence !== 'low') showExpenseSuggestion(card, receipt.counterparty_raw);
-  renderAmountCandidates(card, receipt, confidence);
+  const dateInput = card.querySelector('.item-date');
+  const storeInput = card.querySelector('.item-store');
+  const amountInput = card.querySelector('.item-amount');
+  const taxInput = card.querySelector('.item-tax');
+
+  if (receipt.counterparty_raw) storeInput.value = receipt.counterparty_raw;
+  if (receipt.tax_amount != null) taxInput.value = receipt.tax_amount;
+
+  // 金額: 高=入力 / 中=最有力を入れて要確認 / 低=空にして要確認(誤値を確定しない)
+  const amtConf = ocrFieldStatus(receipt.amount_confidence || receipt.confidence);
+  const amtCands = (receipt.amount_candidates || receipt.total_amount_candidates || []).filter((c) => c && c.amount != null);
+  if (receipt.total_amount != null && amtConf !== 'low') amountInput.value = receipt.total_amount;
+  else if (amtConf === 'low') amountInput.value = '';
+  updateExpenseTotal();
+  renderOcrFieldCandidates(card, 'amount', amountInput, amtCands.map((c) => ({ v: c.amount, label: c.label })), amtConf, '金額を確認してください', (v) => { amountInput.value = Number(v); updateExpenseTotal(); });
+
+  // 利用日: 日付が無い/曖昧なら推測で埋めない。他の領収書の日付をコピーしない。
+  const dateConf = ocrFieldStatus(receipt.date_confidence || (receipt.document_date ? receipt.confidence : 'low'));
+  const dateCands = (receipt.date_candidates || []).filter((c) => c && c.date);
+  if (receipt.document_date && dateConf !== 'low') dateInput.value = receipt.document_date;
+  else if (dateConf === 'low') dateInput.value = '';
+  renderOcrFieldCandidates(card, 'date', dateInput, dateCands.map((c) => ({ v: c.date, label: c.label })), dateConf, '領収書に日付がありません。利用日を確認してください', (v) => { dateInput.value = v; });
+
+  // 総合: すべて確定できたときだけ「読み取り完了」。それ以外は要確認項目を明示。
+  const needs = [];
+  if (amtConf !== 'ok') needs.push('金額');
+  if (dateConf !== 'ok') needs.push('利用日');
+  if (needs.length === 0) { ocrStatus.textContent = '読み取り完了(内容をご確認ください)。'; ocrStatus.style.color = ''; }
+  else { ocrStatus.textContent = `⚠️ ${needs.join('・')}を確認してください。`; ocrStatus.style.color = '#8a5300'; }
+
+  if (receipt.counterparty_raw && amtConf === 'ok') showExpenseSuggestion(card, receipt.counterparty_raw);
 }
 
-// 金額の意味理解が曖昧なとき(低〜中confidence、または支払額候補が複数)、金額欄を「要確認」にして
-// 候補をワンタップで選べるようにする。適当な確定値を押し付けない・1件の低信頼で全体を失敗させない。
-function renderAmountCandidates(card, receipt, confidence) {
-  const amountInput = card.querySelector('.item-amount');
-  if (!amountInput) return;
-  // 候補コンテナ(金額欄の直後)を用意/再利用する。
-  let box = card.querySelector('.item-amount-candidates');
+// 金額/利用日の候補チップ+要確認表示(項目共通)。低〜中confidence、または候補が複数のとき出す。
+function renderOcrFieldCandidates(card, kind, input, cands, status, warnMsg, onPick) {
+  if (!input) return;
+  let box = card.querySelector('.item-' + kind + '-candidates');
   if (!box) {
     box = document.createElement('div');
-    box.className = 'item-amount-candidates';
-    box.style.cssText = 'margin:4px 0 2px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;';
-    amountInput.insertAdjacentElement('afterend', box);
+    box.className = 'item-' + kind + '-candidates';
+    box.style.cssText = 'margin:4px 0 6px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;';
+    input.insertAdjacentElement('afterend', box);
   }
   box.innerHTML = '';
-  // 支払額候補(重複金額は1つに)。ラベル付きで表示。
-  const cands = Array.isArray(receipt.total_amount_candidates) ? receipt.total_amount_candidates.filter((c) => c && c.amount != null) : [];
-  const distinct = [];
-  for (const c of cands) { if (!distinct.some((d) => Number(d.amount) === Number(c.amount))) distinct.push(c); }
-  const ambiguous = confidence !== 'high' || distinct.length > 1;
-  amountInput.style.background = (ambiguous && confidence !== 'high') ? '#fff8e1' : '';
-  if (ambiguous && confidence !== 'high') {
-    const warn = document.createElement('span');
-    warn.textContent = '⚠️ 金額を確認してください';
-    warn.style.cssText = 'color:#8a5300; font-size:12px; font-weight:600;';
-    box.appendChild(warn);
+  const review = status !== 'ok';
+  input.style.background = review ? '#fff8e1' : '';
+  if (review) {
+    const w = document.createElement('span');
+    w.textContent = '⚠️ ' + warnMsg;
+    w.style.cssText = 'color:#8a5300; font-size:12px; font-weight:600;';
+    box.appendChild(w);
   }
-  if (distinct.length > 1) {
-    distinct.slice(0, 5).forEach((c) => {
+  const distinct = [];
+  for (const c of cands) { if (c.v != null && !distinct.some((d) => String(d.v) === String(c.v))) distinct.push(c); }
+  if (distinct.length && (review || distinct.length > 1)) {
+    distinct.slice(0, 6).forEach((c) => {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'mini-tag';
       chip.style.cssText = 'cursor:pointer; border:1px solid var(--border); background:#fff;';
-      chip.textContent = `¥${Number(c.amount).toLocaleString()}${c.label ? '（' + c.label + '）' : ''}`;
-      chip.onclick = () => { amountInput.value = Number(c.amount); amountInput.style.background = ''; updateExpenseTotal(); };
+      chip.textContent = (kind === 'amount' ? '¥' + Number(c.v).toLocaleString() : c.v) + (c.label ? '（' + c.label + '）' : '');
+      chip.onclick = () => { onPick(c.v); input.style.background = ''; };
       box.appendChild(chip);
     });
   }

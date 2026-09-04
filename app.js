@@ -1588,6 +1588,26 @@ function createEmployeeCardPicker(container) {
 const participantSelects = new Map(); // itemId -> インスタンス(経費明細ごとの自社参加者選択)
 
 // 領収書の日付・店舗・金額から、承認済みの接待事前申請を検索して紐付け候補を出す。
+// Phase 3(照合): 事前申請の予定金額と本人が入力した実際額を即時にクライアント側で照合し(backendと同じ閾値)、
+// 差異が大きい明細には「要確認」を表示する。誤って大きく異なる金額のまま確定させないための即時フィードバック。
+function renderPreapprovalDiscrepancy(card, state) {
+  const block = card.querySelector('.item-entertainment-block');
+  if (!block) return;
+  let warn = block.querySelector('.preapproval-discrepancy-warn');
+  const planned = state && state.preapprovalPlanned;
+  const amt = Number(card.querySelector('.item-amount').value || 0);
+  if (!planned || !state.entertainmentPreapprovalId || !amt || planned.amount == null) { if (warn) warn.remove(); return; }
+  const diff = amt - Number(planned.amount);
+  const pct = Number(planned.amount) !== 0 ? Math.abs(diff) / Number(planned.amount) * 100 : null;
+  let level = 'none';
+  if (Math.abs(diff) >= 30000 || (pct != null && pct >= 50)) level = 'major';
+  else if (Math.abs(diff) >= 10000 || (pct != null && pct >= 20)) level = 'attention';
+  if (level === 'none') { if (warn) warn.remove(); return; }
+  if (!warn) { warn = document.createElement('div'); warn.className = 'preapproval-discrepancy-warn'; block.appendChild(warn); }
+  warn.style.cssText = 'margin-top:8px; padding:8px 10px; border-radius:8px; background:#fff8e1; color:#8a5300; font-size:13px; font-weight:600;';
+  warn.textContent = `⚠️ 事前申請の予定金額 ${Number(planned.amount).toLocaleString()}円 に対し、実際 ${amt.toLocaleString()}円（差 ${diff >= 0 ? '+' : ''}${diff.toLocaleString()}円${pct != null ? '・' + pct.toFixed(0) + '%' : ''}）と${level === 'major' ? '大きく異なります' : '差があります'}。内容をご確認ください。`;
+}
+
 async function searchAndShowPreapprovals(card, itemId) {
   const area = card.querySelector('.preapproval-search-area');
   const session = getSession();
@@ -1636,6 +1656,9 @@ async function searchAndShowPreapprovals(card, itemId) {
             card.querySelector('.item-our-count').textContent = pSelect.getCount();
           });
         }
+        // Phase 3: 事前申請の予定金額・予定人数を控え、実際額との差異を即時に照合表示する。
+        state.preapprovalPlanned = { amount: c.planned_amount, count: (c.partner_participant_count || 0) + (c.our_participant_count || 0) };
+        renderPreapprovalDiscrepancy(card, state);
       });
     });
   } else {
@@ -2130,7 +2153,11 @@ function addExpenseItem(initialFile) {
     updateExpenseTotal(); // 再び空明細に戻るので明細件数の表示に反映する
   });
 
-  clone.querySelector('.item-amount').addEventListener('input', updateExpenseTotal);
+  clone.querySelector('.item-amount').addEventListener('input', () => {
+    updateExpenseTotal();
+    const st = expenseItemState.get(itemId); const cardEl = document.querySelector(`[data-item-id="${itemId}"]`);
+    if (st && cardEl) renderPreapprovalDiscrepancy(cardEl, st);
+  });
   clone.querySelector('.item-store').addEventListener('blur', (e) => {
     const cardEl = document.querySelector(`[data-item-id="${itemId}"]`);
     if (e.target.value.trim()) showExpenseSuggestion(cardEl, e.target.value.trim());

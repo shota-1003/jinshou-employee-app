@@ -9011,6 +9011,30 @@ async function resetDailyReportForm() {
   loadDailyReportForDate(target);
 }
 
+// 日報提出時のエラーを、利用者(社員)にそのまま見せてよい日本語メッセージへ変換する。
+// DBの内部エラー(制約名・violates・SQLSTATE・column/relation等)は絶対に画面へ出さない。
+// 2026-09-04のP0障害(ux_daily_reports_employee_slot_active重複)で、生のDBエラー文字列が
+// そのまま社員の画面に表示されていたため追加。原文はconsoleにだけ残して診断に使う。
+function friendlyDailyReportError(e) {
+  const raw = (e && e.message) ? String(e.message) : '';
+  try { if (raw) console.warn('[daily-report submit] raw error:', raw); } catch (_) {}
+  // 業務的に意味が確定していて、そのまま見せてよい既知の日本語メッセージは通す。
+  if (/修正には理由|理由の入力|現場を|日付を|選択してください|入力してください/.test(raw) && !/duplicate|constraint|violates|null value|column|relation/i.test(raw)) return raw;
+  // 二重登録・重複(unique制約)は「既に提出済み」の可能性が高い。復旧も自動で進む旨を伝える。
+  if (/duplicate key|ux_daily_reports|unique constraint|already exists/i.test(raw)) {
+    return '本日の日報はすでに提出されている可能性があります。日報履歴からご確認ください。表示されない場合は、少し時間をおいてもう一度お試しください（自動で復旧を進めています）。';
+  }
+  // 権限・セッション切れ。
+  if (/permission denied|require_.*session|セッション|not authorized|権限/i.test(raw)) {
+    return 'ログイン状態を確認できませんでした。お手数ですが、一度ログインし直してからもう一度お試しください。';
+  }
+  // それ以外のDB内部エラー・想定外はすべて汎用メッセージに丸める(生のエラーは出さない)。
+  if (/duplicate|constraint|violates|null value|column|relation|syntax|SQLSTATE|pg_|function .* does not exist/i.test(raw)) {
+    return '日報を提出できませんでした。システム側の一時的な問題の可能性があります。少し時間をおいてもう一度お試しください。解消しない場合は管理者へご連絡ください。';
+  }
+  return raw || '送信に失敗しました。もう一度お試しください。';
+}
+
 async function doSubmitDailyReport(isDraft) {
   const session = getSession();
   hideError('daily-report-error');
@@ -9150,7 +9174,7 @@ async function doSubmitDailyReport(isDraft) {
       : `日報を受け付けました(${dateStr}、合計${r ? Number(r.total_headcount).toFixed(1) : ''}人工)。`) + qualWarning + consistencyWarning;
     showDone(msg, 'menu-apply');
   } catch (e) {
-    showError('daily-report-error', e.message || '送信に失敗しました。もう一度お試しください。');
+    showError('daily-report-error', friendlyDailyReportError(e));
   } finally {
     btn.disabled = false;
   }

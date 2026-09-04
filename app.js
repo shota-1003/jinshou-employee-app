@@ -1809,6 +1809,7 @@ async function runOcrForItem(card, file) {
 // 同じ写真から検出した2枚目以降の領収書を、写真(driveFileId)を共有する明細カードへ分割する。
 // 通常利用では自動で進む(人間操作を増やさない)。重複の可能性は削除せず注意表示する。
 function expandExtraReceiptsIntoItems(originCard, originState, extraReceipts) {
+  const created = [];
   for (const receipt of extraReceipts) {
     const itemId = addExpenseItem(); // 空カードを作る
     const card = document.querySelector(`[data-item-id="${itemId}"]`);
@@ -1827,6 +1828,67 @@ function expandExtraReceiptsIntoItems(originCard, originState, extraReceipts) {
     const ps = card.querySelector('.photo-status'); if (ps) { ps.textContent = '同じ写真から検出した領収書です'; ps.className = 'photo-status ok'; }
     fillCardFromReceipt(card, receipt);
     flagPossibleDuplicateCard(card);
+    created.push(card);
+  }
+  updateExpenseTotal();
+  return created;
+}
+
+// 検出した領収書のbbox領域を、元の高解像度画像から切り出して1枚の領収書だけを大きく写した画像にする。
+// 複数領収書写真では各領収書が小さく写り、圧縮後は桁が潰れて誤読(900→200等)しやすいため、
+// 1枚ずつ高解像度でcropして読み直す(1領収書がフレーム全体を占める=実効解像度が大きく上がる)。
+async function cropReceiptFromFile(file, bbox) {
+  try {
+    if (!Array.isArray(bbox) || bbox.length !== 4) return null;
+    let [x, y, w, h] = bbox.map(Number);
+    if ([x, y, w, h].some((n) => isNaN(n)) || w <= 0 || h <= 0) return null;
+    const pad = 0.02;
+    x = Math.max(0, x - pad); y = Math.max(0, y - pad);
+    w = Math.min(1 - x, w + pad * 2); h = Math.min(1 - y, h + pad * 2);
+    const bmp = await createImageBitmap(file);
+    const sx = Math.round(x * bmp.width), sy = Math.round(y * bmp.height);
+    const sw = Math.round(w * bmp.width), sh = Math.round(h * bmp.height);
+    if (sw < 20 || sh < 20) return null;
+    // cropは高解像度を保つ(単一領収書なので最大辺1800px程度でも1枚に十分な精細さ)。
+    const maxSide = 1800; const scale = Math.min(1, maxSide / Math.max(sw, sh));
+    const cw = Math.round(sw * scale), ch = Math.round(sh * scale);
+    const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
+    canvas.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, cw, ch);
+    bmp.close && bmp.close();
+    const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.92));
+    return blob ? new File([blob], 'crop.jpg', { type: 'image/jpeg' }) : null;
+  } catch (e) { return null; }
+}
+
+async function ocrCropReceipt(cropFile) {
+  try {
+    const base64 = await fileToBase64(cropFile);
+    const session = getSession();
+    const res = await fetch(`${N8N_BASE_URL}/webhook/receipt-ocr-proxy`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeCode: session.employeeCode, mimeType: 'image/jpeg', base64 }),
+    });
+    const json = await res.json().catch(() => null);
+    const rs = (json && Array.isArray(json.receipts)) ? json.receipts : [];
+    return rs[0] || null; // cropは1領収書のはず
+  } catch (e) { return null; }
+}
+
+// 複数領収書のとき、各カードをbbox cropの高解像度再OCR結果で上書きする(精度優先)。
+// 元画像fileから切り出すので、圧縮で失われた桁を取り戻せる。低コスト化のため単票(1枚)では行わない。
+async function refineReceiptCardsByCrop(file, cards, receipts) {
+  const n = Math.min(cards.length, receipts.length);
+  for (let i = 0; i < n; i++) {
+    const rec = receipts[i];
+    if (!rec || !Array.isArray(rec.bbox)) continue;
+    const crop = await cropReceiptFromFile(file, rec.bbox);
+    if (!crop) continue;
+    const refined = await ocrCropReceipt(crop);
+    if (refined && refined.total_amount != null) {
+      // 元の店舗名が空なら補完(cropで店舗が切れる場合の保険)
+      if (!refined.counterparty_raw && rec.counterparty_raw) refined.counterparty_raw = rec.counterparty_raw;
+      fillCardFromReceipt(cards[i], refined);
+    }
   }
   updateExpenseTotal();
 }
@@ -1986,14 +2048,21 @@ function addExpenseItem(initialFile) {
     try {
       const receipts = await ocrPromise;
       if (receipts && receipts.length > 1) {
+        let cards = [cardEl];
         if (state.driveFileId) {
-          expandExtraReceiptsIntoItems(cardEl, state, receipts.slice(1));
+          cards = cards.concat(expandExtraReceiptsIntoItems(cardEl, state, receipts.slice(1)));
         }
         const os = cardEl.querySelector('.ocr-status');
         const head = `この写真から${receipts.length}枚の領収書を検出しました。明細を${receipts.length}件に分けました。`;
         if (os) os.textContent = head + (os.textContent ? ' / ' + os.textContent : '');
+        // 精度優先: 各領収書をbbox cropの高解像度で読み直す(複数領収書で桁が潰れる誤読を防ぐ)。
+        if (cards.length > 1) {
+          if (os) os.textContent = head + ' 各領収書を精査中...';
+          await refineReceiptCardsByCrop(file, cards, receipts);
+          if (os) os.textContent = head;
+        }
       }
-    } catch (e) { /* 分割失敗時も先頭明細はそのまま使える */ }
+    } catch (e) { /* 分割・精査に失敗しても先頭明細はそのまま使える */ }
   }
 
   clone.querySelector('.item-photo-input').addEventListener('change', (e) => handlePhotoFile(e.target.files[0]));

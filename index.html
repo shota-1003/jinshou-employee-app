@@ -1267,32 +1267,20 @@
   <section id="screen-expense-select" class="screen">
     <button type="button" class="back-link back-to-origin" data-nav="menu-apply">申請一覧に戻る</button>
     <div class="form-title">経費</div>
-    <div class="hint" style="margin-bottom:6px;">領収書1枚だけをその場で申請する場合</div>
-    <div class="home-card-grid" style="margin-bottom:18px;">
-      <button type="button" class="home-card" data-nav="expense-advance">
-        <span class="icon-slot" data-icon="receipt"></span>
-        <span class="home-card-label">かんたん申請</span>
-        <span class="home-card-desc">経費立替(領収書1枚〜)</span>
-      </button>
+    <div class="hint" style="margin-bottom:12px;">どちらのお金を使いましたか？（撮影方法は自由。領収書1枚でも、複数まとめてでもOK）</div>
+    <div class="home-card-grid">
       <button type="button" class="home-card" data-nav="expense-company">
         <span class="icon-slot" data-icon="building"></span>
-        <span class="home-card-label">会社経費</span>
-        <span class="home-card-desc">会社が支払った経費</span>
+        <span class="home-card-label">会社のお金を使った</span>
+        <span class="home-card-desc">経費使用報告（会社現金・法人カード・会社口座など／返金なし）</span>
+      </button>
+      <button type="button" class="home-card" data-nav="expense-advance">
+        <span class="icon-slot" data-icon="receipt"></span>
+        <span class="home-card-label">自分のお金で立替えた</span>
+        <span class="home-card-desc">立替経費精算（あとで会社から返金されます）</span>
       </button>
     </div>
-    <div class="hint" style="margin-bottom:6px;">駐車場代など、複数の領収書を月まとめて1回で申請する場合</div>
-    <div class="home-card-grid">
-      <button type="button" class="home-card" data-nav="expense-bulk-advance">
-        <span class="icon-slot" data-icon="clipboard-list"></span>
-        <span class="home-card-label">まとめて精算</span>
-        <span class="home-card-desc">経費立替・複数枚の領収書をまとめて1件で申請</span>
-      </button>
-      <button type="button" class="home-card" data-nav="expense-bulk-company">
-        <span class="icon-slot" data-icon="clipboard-list"></span>
-        <span class="home-card-label">まとめて精算(会社経費)</span>
-        <span class="home-card-desc">会社経費を複数枚まとめて1件で申請</span>
-      </button>
-    </div>
+    <div class="hint" style="margin-top:16px; text-align:center;">どちらも同じ画面で、<b>領収書1枚</b>・<b>複数の領収書を1枚の写真</b>・<b>写真を複数選択</b>・<b>続けて撮影</b>のどれでも申請できます。写真内の領収書を自動で判別して明細に分けます。</div>
   </section>
 
   <section id="screen-expense" class="screen">

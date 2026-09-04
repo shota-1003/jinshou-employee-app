@@ -8934,6 +8934,9 @@ async function loadDailyReportAssignmentChips(dateStr) {
   if (!area || !row) return;
   // 本人・社員の日報のみ対象(外注作業員の代理入力は配置カレンダーの社員配置とは別)。
   if (dailyReportTarget.type === 'subcontractor') { area.style.display = 'none'; return; }
+  // 日付が未入力/不正のままRPCへ渡すと Production 400(invalid input syntax for type date: "")に
+  // なる(finding#13/#9)。正しいYYYY-MM-DDのときだけ配置を問い合わせる。
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))) { area.style.display = 'none'; row.innerHTML = ''; return; }
   try {
     // 代理入力(他の社員)では、対象社員本人の端末トークンが無いため assignment_get_my_schedule
     // (対象社員コードでセッション検証)は使えない(呼ぶと管理者セッションが破棄されログイン画面へ

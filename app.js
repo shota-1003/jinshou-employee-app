@@ -2321,6 +2321,34 @@ function bulkItemSummaryHtml(item) {
   return `${item.amount != null ? Number(item.amount).toLocaleString('ja-JP') + '円' : '金額未読取'} ${badgeHtml}${item.siteName ? `・現場: ${item.siteName}` : ''}${item.purposeCategory ? `・${item.purposeCategory}` : ''}${traceHtml}`;
 }
 
+// まとめて精算の各明細に、対応する領収書画像(bboxがあればcrop、無ければ元写真)を表示する。
+// タップで元写真全体を拡大(openImageZoom)。元写真とcropの対応が目で分かるようにする。
+function attachBulkItemPhoto(row, item) {
+  if (!item._file || typeof URL === 'undefined' || !URL.createObjectURL) return;
+  let holder = row.querySelector('.bulk-item-photo');
+  if (!holder) {
+    holder = document.createElement('div');
+    holder.className = 'bulk-item-photo';
+    holder.style.cssText = 'flex:0 0 auto; margin-right:8px;';
+    const labelRow = row.querySelector('.item-label') && row.querySelector('.item-label').parentElement;
+    (labelRow || row).insertAdjacentElement('afterbegin', holder);
+  }
+  const img = document.createElement('img');
+  img.alt = '領収書';
+  img.loading = 'lazy';
+  img.style.cssText = 'width:76px; height:76px; object-fit:cover; border-radius:8px; border:1px solid var(--border); background:#f4f4f4; cursor:zoom-in;';
+  holder.innerHTML = '';
+  holder.appendChild(img);
+  const origUrl = URL.createObjectURL(item._file);
+  // まず元写真を即時表示 → bboxがあればcropに差し替え(高解像度で該当領収書だけを見せる)。
+  img.src = origUrl;
+  if (item._bbox) {
+    cropReceiptFromFile(item._file, item._bbox).then((crop) => { if (crop) img.src = URL.createObjectURL(crop); }).catch(() => {});
+  }
+  // タップで元写真全体(分割前)を拡大表示 → どの写真のどの領収書かが分かる。
+  img.addEventListener('click', () => { try { openImageZoom(origUrl); } catch (e) {} });
+}
+
 function renderBulkItemRow(item) {
   const tpl = document.getElementById('expense-bulk-item-template');
   const row = tpl.content.firstElementChild.cloneNode(true);
@@ -2328,6 +2356,10 @@ function renderBulkItemRow(item) {
   if (item.photoQueueId) row.dataset.photoQueueId = item.photoQueueId;
   row.querySelector('.item-label').textContent = `${item.date || '日付未読取'}・${item.store || '支払先不明'}`;
   row.querySelector('.bulk-item-summary').innerHTML = bulkItemSummaryHtml(item);
+
+  // 領収書画像を表示する(まとめて精算でも「この明細はこの領収書から読み取った」と目で確認できるように)。
+  // 複数領収書を1枚から分割した場合は、その明細のcrop画像を出し、タップで元写真全体を拡大表示する。
+  attachBulkItemPhoto(row, item);
 
   row.querySelector('.remove-item-btn').addEventListener('click', () => {
     bulkItems = bulkItems.filter((it) => it.id !== item.id);
@@ -2425,7 +2457,7 @@ function addBulkItemsFromPhoto(entry, uploadResult, receipts, fileHash) {
       id: 'bulk-item-' + bulkItemSeq, date: null, store: null, amount: null, tax: null, confidence: 'low',
       driveFileId: uploadResult.driveFileId, driveFileUrl: uploadResult.driveFileUrl, fileHash,
       siteId: null, siteName: null, purposeCategory: null, note: null, photoLabel: `${entry.photoLabel}(自動検出なし・要手動入力)`,
-      photoQueueId: entry.id,
+      photoQueueId: entry.id, _file: entry.file, _bbox: null,
     };
     bulkItems.push(item);
     renderBulkItemRow(item);
@@ -2439,7 +2471,7 @@ function addBulkItemsFromPhoto(entry, uploadResult, receipts, fileHash) {
         confidence: r.confidence || 'low',
         driveFileId: uploadResult.driveFileId, driveFileUrl: uploadResult.driveFileUrl, fileHash,
         siteId: null, siteName: null, purposeCategory: null, note: r.content_description || null, photoLabel: label,
-        photoQueueId: entry.id,
+        photoQueueId: entry.id, _file: entry.file, _bbox: (r.bbox && r.bbox.length === 4) ? r.bbox : null,
       };
       bulkItems.push(item);
       renderBulkItemRow(item);

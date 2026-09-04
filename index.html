@@ -1305,7 +1305,7 @@
       <span>複数の領収書をまとめて選ぶ</span>
       <input type="file" accept="image/*" multiple id="expense-batch-input">
     </label>
-    <div class="hint" style="margin: 0 0 14px; text-align:center;">選んだ写真1枚ごとに、自動で明細を1件作成します</div>
+    <div class="hint" style="margin: 0 0 14px; text-align:center;">写真内の領収書を自動で判別し、領収書ごとに明細を作成します（1枚の写真に複数の領収書が写っていてもOK）</div>
 
     <div id="expense-item-list"></div>
 
@@ -3099,6 +3099,13 @@
       <div class="hint">ログイン中の端末を一覧表示します。不審な端末や紛失した端末は無効化できます。無効化された端末は、次回利用時に暗証番号の再入力が必要になります。</div>
       <button type="button" class="secondary danger" id="employee-detail-revoke-all-devices-btn">この社員の全端末を無効化する</button>
       <div id="employee-detail-devices-list"></div>
+
+      <!-- 経費等の承認免除(self_approval_exempt)。代表取締役のみ設定可。氏名ハードコードでなく属性で管理。 -->
+      <div class="card" id="employee-detail-approval-exempt-card" style="border:1px solid var(--border); display:none;">
+        <div class="row1"><span>経費等の承認免除</span><span id="employee-detail-approval-exempt-status" class="mini-tag">-</span></div>
+        <div class="hint" style="margin:6px 0;">オンにすると、この社員の経費・会議・支給品・接待事前申請は本人登録時点で自動的に承認済みになり、承認待ちキューへ入りません(記録・監査ログは通常どおり残ります)。代表取締役のみ設定できます。</div>
+        <button type="button" class="secondary" id="employee-detail-approval-exempt-toggle-btn">-</button>
+      </div>
 
       <!-- 雇用状態(退職処理)。「アカウント停止(在職のまま一時停止・復旧可)」とは明確に別概念。 -->
       <div class="section-title" style="margin-top:22px;">雇用状態</div>

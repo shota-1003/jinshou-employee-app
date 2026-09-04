@@ -1703,6 +1703,28 @@ async function showExpenseSuggestion(card, storeName) {
   } catch (e) { /* 候補が引けなくても致命的ではないため無視 */ }
 }
 
+// 1件の領収書データを1枚の明細カードへ反映する(runOcrForItemと複数領収書分割で共通利用)。
+function fillCardFromReceipt(card, receipt) {
+  const ocrStatus = card.querySelector('.ocr-status');
+  if (receipt.document_date) card.querySelector('.item-date').value = receipt.document_date;
+  if (receipt.counterparty_raw) card.querySelector('.item-store').value = receipt.counterparty_raw;
+  if (receipt.total_amount != null) { card.querySelector('.item-amount').value = receipt.total_amount; updateExpenseTotal(); }
+  if (receipt.tax_amount != null) card.querySelector('.item-tax').value = receipt.tax_amount;
+  const confidence = receipt.confidence || 'low';
+  if (confidence === 'high') {
+    ocrStatus.textContent = 'AIが内容を読み取りました。内容を確認してください(間違っていれば修正できます)。';
+  } else if (confidence === 'medium') {
+    ocrStatus.textContent = '読み取り精度が高くありません。内容を必ず確認・修正してください。';
+  } else {
+    ocrStatus.textContent = '読み取りに自信が持てませんでした。手入力で確認してください。';
+    card.querySelector('.item-date').value = '';
+    card.querySelector('.item-store').value = '';
+  }
+  if (receipt.counterparty_raw && confidence !== 'low') showExpenseSuggestion(card, receipt.counterparty_raw);
+}
+
+// 1枚の写真をOCRし、検出したすべての領収書(receipts[])を返す。先頭領収書はこのカードへ反映する。
+// 2枚目以降は呼び出し側(handlePhotoFile)が同じ写真を共有する明細カードへ分割する(1画像:N領収書)。
 async function runOcrForItem(card, file) {
   const ocrStatus = card.querySelector('.ocr-status');
   ocrStatus.textContent = 'AIが内容を読み取っています...';
@@ -1715,31 +1737,58 @@ async function runOcrForItem(card, file) {
       body: JSON.stringify({ employeeCode: session.employeeCode, mimeType: file.type || 'image/jpeg', base64 }),
     });
     const json = await res.json().catch(() => null);
-    const receipt = json && json.receipts && json.receipts[0];
-    if (!receipt) { ocrStatus.textContent = ''; return; }
-
-    // 読み取れた事実だけをフォームへ候補入力する(現場・使用目的・取引先はプロンプト側で
-    // 出力させていないため、ここで埋まることはない=AIが推測で確定しない設計)。
-    if (receipt.document_date) card.querySelector('.item-date').value = receipt.document_date;
-    if (receipt.counterparty_raw) card.querySelector('.item-store').value = receipt.counterparty_raw;
-    if (receipt.total_amount != null) { card.querySelector('.item-amount').value = receipt.total_amount; updateExpenseTotal(); }
-    if (receipt.tax_amount != null) card.querySelector('.item-tax').value = receipt.tax_amount;
-
-    const confidence = receipt.confidence || 'low';
-    if (confidence === 'high') {
-      ocrStatus.textContent = 'AIが内容を読み取りました。内容を確認してください(間違っていれば修正できます)。';
-    } else if (confidence === 'medium') {
-      ocrStatus.textContent = '読み取り精度が高くありません。内容を必ず確認・修正してください。';
-    } else {
-      ocrStatus.textContent = '読み取りに自信が持てませんでした。手入力で確認してください。';
-      // 低信頼は候補として埋めない方が安全なため、金額以外はクリアする
-      card.querySelector('.item-date').value = '';
-      card.querySelector('.item-store').value = '';
-    }
-
-    if (receipt.counterparty_raw && confidence !== 'low') showExpenseSuggestion(card, receipt.counterparty_raw);
+    const receipts = (json && Array.isArray(json.receipts)) ? json.receipts : [];
+    if (!receipts.length) { ocrStatus.textContent = ''; return []; }
+    fillCardFromReceipt(card, receipts[0]);
+    return receipts;
   } catch (e) {
     ocrStatus.textContent = '';
+    return [];
+  }
+}
+
+// 同じ写真から検出した2枚目以降の領収書を、写真(driveFileId)を共有する明細カードへ分割する。
+// 通常利用では自動で進む(人間操作を増やさない)。重複の可能性は削除せず注意表示する。
+function expandExtraReceiptsIntoItems(originCard, originState, extraReceipts) {
+  for (const receipt of extraReceipts) {
+    const itemId = addExpenseItem(); // 空カードを作る
+    const card = document.querySelector(`[data-item-id="${itemId}"]`);
+    if (!card) continue;
+    const st = expenseItemState.get(itemId);
+    // 同じ写真を証憑として共有する(社員が撮り直す必要はない)。
+    st.driveFileId = originState.driveFileId;
+    st.driveFileUrl = originState.driveFileUrl;
+    st.uploading = false;
+    const photoStep = card.querySelector('.item-photo-step');
+    const photoAttached = card.querySelector('.item-photo-attached');
+    const details = card.querySelector('.item-details');
+    if (photoStep) photoStep.style.display = 'none';
+    if (photoAttached) photoAttached.style.display = 'block';
+    if (details) details.style.display = 'block';
+    const ps = card.querySelector('.photo-status'); if (ps) { ps.textContent = '同じ写真から検出した領収書です'; ps.className = 'photo-status ok'; }
+    fillCardFromReceipt(card, receipt);
+    flagPossibleDuplicateCard(card);
+  }
+  updateExpenseTotal();
+}
+
+// 明細カードの内容(利用日・支払先・金額)が他の明細と一致していれば重複候補として注意表示する。
+function flagPossibleDuplicateCard(card) {
+  const d = (card.querySelector('.item-date') || {}).value;
+  const s = ((card.querySelector('.item-store') || {}).value || '').trim();
+  const a = (card.querySelector('.item-amount') || {}).value;
+  if (!a) return;
+  let dup = false;
+  document.querySelectorAll('#expense-item-list .expense-item-card').forEach((other) => {
+    if (other === card) return;
+    const od = (other.querySelector('.item-date') || {}).value;
+    const os = ((other.querySelector('.item-store') || {}).value || '').trim();
+    const oa = (other.querySelector('.item-amount') || {}).value;
+    if (oa === a && od === d && os === s) dup = true;
+  });
+  if (dup) {
+    const st = card.querySelector('.ocr-status');
+    if (st) st.textContent = '⚠️ 他の明細と同じ内容です。重複撮影の可能性があります(必要なら削除してください)。' + (st.textContent ? ' / ' + st.textContent : '');
   }
 }
 
@@ -1860,7 +1909,7 @@ function addExpenseItem(initialFile) {
     const state = expenseItemState.get(itemId);
     state.uploading = true;
     const cardEl = document.querySelector(`[data-item-id="${itemId}"]`);
-    runOcrForItem(cardEl, file); // 並行実行(アップロード完了を待たずにOCRも進める)
+    const ocrPromise = runOcrForItem(cardEl, file); // 並行実行(アップロード完了を待たずにOCRも進める)
     try {
       const session = getSession();
       const result = await uploadReceiptPhoto(session.employeeCode, file);
@@ -1874,6 +1923,18 @@ function addExpenseItem(initialFile) {
     } finally {
       state.uploading = false;
     }
+    // 1画像:N領収書。写真内に複数の領収書を検出したら、同じ写真を共有する明細へ自動分割する。
+    try {
+      const receipts = await ocrPromise;
+      if (receipts && receipts.length > 1) {
+        if (state.driveFileId) {
+          expandExtraReceiptsIntoItems(cardEl, state, receipts.slice(1));
+        }
+        const os = cardEl.querySelector('.ocr-status');
+        const head = `この写真から${receipts.length}枚の領収書を検出しました。明細を${receipts.length}件に分けました。`;
+        if (os) os.textContent = head + (os.textContent ? ' / ' + os.textContent : '');
+      }
+    } catch (e) { /* 分割失敗時も先頭明細はそのまま使える */ }
   }
 
   clone.querySelector('.item-photo-input').addEventListener('change', (e) => handlePhotoFile(e.target.files[0]));
@@ -1901,6 +1962,7 @@ function addExpenseItem(initialFile) {
   renumberExpenseItems();
   updateExpenseTotal();
   if (initialFile) handlePhotoFile(initialFile);
+  return itemId;
 }
 
 // 複数の領収書写真を一度に選択したとき、写真1枚ごとに明細を1件自動作成してOCRを走らせる
@@ -5151,7 +5213,30 @@ async function loadEmployeeDetailPortalAccess() {
     };
 
     renderEmploymentSection(e, code, session);
+    renderApprovalExemptCard(code, session);
   } catch (e) { /* 読み込み失敗時は静かに諦める(端末一覧は別途表示されるため) */ }
+}
+
+// 経費等の承認免除(self_approval_exempt)。代表取締役のみ表示・設定可能。
+async function renderApprovalExemptCard(code, session) {
+  const card = document.getElementById('employee-detail-approval-exempt-card');
+  if (!card) return;
+  if (session.requestRole !== 'executive') { card.style.display = 'none'; return; }
+  const statusEl = document.getElementById('employee-detail-approval-exempt-status');
+  const btn = document.getElementById('employee-detail-approval-exempt-toggle-btn');
+  try {
+    const exempt = await rpc('admin_get_self_approval_exempt', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
+    card.style.display = '';
+    statusEl.textContent = exempt ? '承認免除' : '通常(承認必要)';
+    statusEl.className = 'mini-tag ' + (exempt ? 'info' : '');
+    btn.textContent = exempt ? '承認免除を解除する' : '承認免除にする';
+    btn.onclick = async () => {
+      if (!confirm(exempt ? 'この社員の承認免除を解除します。以後の申請は通常の承認フローに戻ります。よろしいですか？' : 'この社員を承認免除にします。以後の経費等は本人登録時点で自動承認され、承認待ちに入りません。よろしいですか？')) return;
+      btn.disabled = true;
+      try { await rpc('admin_set_self_approval_exempt', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code, p_exempt: !exempt }); await renderApprovalExemptCard(code, session); } catch (e2) { alert(e2.message); }
+      btn.disabled = false;
+    };
+  } catch (e) { card.style.display = 'none'; }
 }
 
 // 雇用状態(退職処理)。アカウント停止(portal_access)とは別概念として明確に分けて扱う。

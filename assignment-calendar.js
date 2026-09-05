@@ -209,6 +209,8 @@
             month_data: null,
             day_data: null,
             issues: null,
+            issuesOpen: false,   // 警告を開いているか(既定は畳む。一覧性を優先する)
+            memberOpen: {},      // 現場ID -> 社員名を全員出しているか
             confirmation: null,
             categories: [],
             employees: [],
@@ -800,7 +802,45 @@
             const available = Math.max(240, h - (gridTop || 0));
             const cell = Math.max(wide ? 96 : 72, Math.min(wide ? 220 : 170, Math.floor(available / weeks)));
             const chips = Math.max(3, Math.floor((cell - num) / row));
-            return { cell, chips };
+            // 週ごとに高さを変えるための下限・上限。予定の無い週は詰め、忙しい週は伸ばす。
+            // 上限を置くのは、1日だけ極端に多い週で他の週が画面外へ押し出されないようにするため。
+            return {
+                cell, chips, row, num, available,
+                min: wide ? 76 : 56,
+                max: wide ? 260 : 210,
+            };
+        }
+
+        // その週にいくつ予定が並ぶかを見て、週ごとの高さを決める。
+        // 全週を同じ高さにすると、空いている週が場所を取り、忙しい週だけ「+N」で切れる。
+        // 実データ(2029年11月)では、空き週4つが高いまま、予定のある週だけ +2〜+5 になっていた。
+        function weekHeights(cells, byDate, holidays, layout) {
+            const weeks = Math.ceil(cells.length / 7);
+            const out = [];
+            const needs = [];
+            for (let w = 0; w < weeks; w += 1) {
+                let need = 0;
+                for (let d = 0; d < 7; d += 1) {
+                    const date = cells[w * 7 + d];
+                    if (!date) continue;
+                    const n = (byDate.get(date) || []).length + (holidays.has(date) ? 1 : 0);
+                    if (n > need) need = n;
+                }
+                needs.push(need);
+                const want = layout.num + (need * layout.row) + 4;
+                out.push(Math.max(layout.min, Math.min(layout.max, want)));
+            }
+            // 全部足しても画面が余るときは、週の比率を保ったまま全体を引き伸ばす。
+            // 余りを均等に足すと空いている週まで同じだけ伸び、
+            // 予定の多い週へ寄せて足すとその週だけ間延びする。倍率で伸ばすと両方を避けられる。
+            // 伸ばしすぎないよう1.6倍までにする(それ以上は下に余白が残ってよい)。
+            const total = out.reduce((a, b) => a + b, 0);
+            const avail = layout.available || 0;
+            if (total > 0 && avail > total) {
+                const f = Math.min(1.6, avail / total);
+                for (let i = 0; i < out.length; i += 1) out[i] = Math.round(out[i] * f);
+            }
+            return out;
         }
 
         // グリッドを描いたあとに実際の開始位置を測り、想定とずれていたら1度だけ組み直す。
@@ -841,12 +881,21 @@
             const layout = computeLayout(cells.length / 7, lastGridTop);
             // ユーザーがメニューで表示件数を明示指定した場合はそちらを優先する
             const chipLimit = state.maxChipsOverride || layout.chips;
+            // 週ごとの高さ。件数の指定があるときは、その件数で全週そろえる。
+            const rowH = state.maxChipsOverride
+                ? new Array(Math.ceil(cells.length / 7)).fill(layout.num + chipLimit * layout.row + 4)
+                : weekHeights(cells, byDate, holidays, layout);
+            const limitOfWeek = (w) => (state.maxChipsOverride
+                ? chipLimit
+                : Math.max(2, Math.floor((rowH[w] - layout.num) / layout.row)));
 
             const grid = el('div', 'ac-grid');
-            grid.style.gridAutoRows = `${layout.cell}px`;
+            grid.style.gridTemplateRows = rowH.map((h) => `${h}px`).join(' ');
             attachSwipe(grid);
             const t = todayJST();
-            for (const date of cells) {
+            for (let ci = 0; ci < cells.length; ci += 1) {
+                const date = cells[ci];
+                const weekIdx = Math.floor(ci / 7);
                 const inMonth = Number(date.slice(5, 7)) === state.month;
                 const d = dowOf(date);
                 const hol = holidays.get(date);
@@ -878,7 +927,8 @@
                 // LifeBearと同じく、チップとして予定の先頭に並べる。
                 if (hol) cell.append(el('div', 'ac-chip ac-holchip', hol));
 
-                const base = hol ? Math.max(2, chipLimit - 1) : chipLimit;
+                const weekLimit = limitOfWeek(weekIdx);
+                const base = hol ? Math.max(2, weekLimit - 1) : weekLimit;
                 const limit = state.showNames ? Math.max(2, Math.floor(base / 2)) : base;
                 list.slice(0, limit).forEach((s) => {
                     const mi = modeInfo(s);
@@ -1391,7 +1441,36 @@
 
             if (state.canEdit && state.issues && state.issues.issues && state.issues.issues.length) {
                 const box = el('div', 'ac-issues');
-                for (const i of state.issues.issues) {
+                // 警告は「重大さ」ではなく「件数」で畳む。
+                // 時間の重なりは1人ずつ1件になるため、実データで15件出た日は警告だけで
+                // 2000px近くになり、現場が1件も見えなかった(2026-09-05 実機相当データで確認)。
+                // 重要なもの(error)を先頭へ寄せたうえで先頭2件だけ出し、残りは件数で畳む。
+                // 畳んでも「何が何件あるか」は必ず読めるようにする。
+                // 畳んでいるあいだは見出しの1行だけにする。1件でも本文を出すと
+                // 承認・編集のボタン2つが付いて100px近く使い、現場が1つ隠れる。
+                const ISSUE_PREVIEW = 0;
+                const rank = (x) => (x.severity === 'error' ? 0 : (x.severity === 'warning' ? 1 : 2));
+                const all = state.issues.issues.slice().sort((a, b) => rank(a) - rank(b));
+                const collapse = all.length > 1 && !state.issuesOpen;
+                const shown = collapse ? all.slice(0, ISSUE_PREVIEW) : all;
+                const foldable = all.length > 1;
+                if (foldable) {
+                    const kinds = {};
+                    const add = (k) => { kinds[k] = (kinds[k] || 0) + 1; };
+                    for (const x of all) {
+                        if (x.rule === 'no_leader') add('職長が未定');
+                        else if (x.rule === 'double_booking' || x.rule === 'vehicle_conflict') add('時間の重なり');
+                        else if (x.rule === 'double_booking_approved' || x.rule === 'vehicle_conflict_approved') add('承認済みの重なり');
+                        else add('その他');
+                    }
+                    const label = Object.entries(kinds).map(([k, v]) => `${k} ${v}件`).join(' / ');
+                    const bar = el('button', 'ac-issuefold', collapse
+                        ? `▼ 確認したいこと ${all.length}件（${label}）›`
+                        : `▲ 確認したいこと ${all.length}件（${label}）を畳む`);
+                    bar.addEventListener('click', () => { state.issuesOpen = !state.issuesOpen; render(); });
+                    box.append(bar);
+                }
+                for (const i of shown) {
                     const line = el('div', 'ac-issue ac-' + i.severity, i.message);
                     // 意図した複数現場配置なら承認して警告から外せるようにする。
                     // 本当に危険な二重配置が警告の山に埋もれないようにするため。
@@ -1584,12 +1663,15 @@
                 meta.push(`社員${s.employee_count}人 外注${s.subcontractor_count}人`);
             }
             if (!s.counts_as_deployment) meta.push('※配置人数に含めない種別');
-            box.append(el('div', 'ac-schedmeta', meta.join(' ／ ')));
+            if (meta.length) box.append(el('div', 'ac-schedmeta', meta.join(' ／ ')));
 
             // 通知済みなのに未確認の人だけを色で示す。未確認者の名前を別バッジで
             // もう一度並べると、同じ名前が2回出て日別詳細の行数が無駄に増える。
             const mem = el('div', 'ac-members');
-            for (const m of s.members) {
+            const MEM_PREVIEW = 5;
+            const openAll = !!state.memberOpen[s.id];
+            const memList = openAll ? s.members : s.members.slice(0, MEM_PREVIEW);
+            for (const m of memList) {
                 const confirmed = m.notification_status === 'confirmed';
                 const waiting = m.notification_status === 'notified';
                 const haul = m.assignment_kind === 'haul';
@@ -1629,6 +1711,24 @@
                 // 現場を見たいのに社員を押してしまう事故が起きていた。
                 // 「1人を別の現場へ移す」操作は現場詳細の中から行う。
                 mem.append(chip);
+            }
+            if (s.members.length > memList.length) {
+                const more = el('button', 'ac-memmore', `他${s.members.length - memList.length}人 ▾`);
+                more.title = 'この現場の残りの人を表示します';
+                more.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    state.memberOpen[s.id] = true;
+                    render();
+                });
+                mem.append(more);
+            } else if (openAll && s.members.length > MEM_PREVIEW) {
+                const less = el('button', 'ac-memmore', '畳む ▴');
+                less.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    delete state.memberOpen[s.id];
+                    render();
+                });
+                mem.append(less);
             }
             box.append(mem);
 

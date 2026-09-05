@@ -30,6 +30,18 @@
 </div>
 <main>
 
+  <!-- LINEのトーク画面から開いたとき(LINEアプリの中のブラウザ)に出す案内 (2026-09-05追加)。
+       LINEの中のブラウザは、SafariやPWA(ホーム画面のアイコン)とログイン情報の保存場所が
+       別々になる。ここで登録しても、あとでSafari/ホーム画面から開くと「登録していない端末」
+       として扱われ、暗証番号の入れ直し → 管理者の承認待ち、になってしまう
+       (本番の実データで、実際に最初の登録がLINEの中のブラウザで行われていた)。
+       JSがLINEを検知したときだけ表示する。 -->
+  <div id="line-browser-notice" class="line-browser-notice" style="display:none;">
+    <div class="line-browser-notice-title">Safariで開いてください</div>
+    <div class="line-browser-notice-body">いまLINEの中の画面で開いています。このまま登録すると、次に開いたときにまたログインが必要になります。下のボタンでSafariに切り替えてから登録してください。</div>
+    <a id="line-browser-open-safari" class="line-browser-notice-btn" href="#">Safariで開く</a>
+  </div>
+
   <!-- ログイン画面(社員番号入力、初回またはログイン先切り替え時のみ) -->
   <section id="screen-login" class="screen">
     <div class="login-wrap">
@@ -95,6 +107,9 @@
           <input type="text" id="pin-register-first-code" autocomplete="off" autocapitalize="characters" placeholder="例: QMSJCN8R2C">
           <div class="error" id="pin-register-error"></div>
           <button id="pin-register-identify">次へ</button>
+          <!-- 既に初回登録が済んでいる社員がこの画面に来てしまったときだけ表示する
+               (2026-09-05追加)。暗証番号の入力画面へ1タップで戻れるようにする。 -->
+          <button class="link" id="pin-register-use-pin" style="display:none;">暗証番号でログインする</button>
           <button class="link" id="pin-register-switch">別の社員番号でログイン</button>
         </div>
         <div id="pin-register-step2" style="display:none;">
@@ -157,6 +172,23 @@
         <div class="hint" style="margin-bottom:14px;">セキュリティのため、新しい端末からのご利用には管理者の承認が必要です。承認され次第ご利用いただけます。承認までしばらくお待ちください。</div>
         <button id="device-pending-retry">更新して確認する</button>
         <button class="link" id="device-pending-switch">別の社員番号でログイン</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 通信不良でログイン状態を確認できなかったときの画面 (2026-09-05追加)。
+       ここで暗証番号の再入力へ誘導すると、有効な端末があるのに新しい端末が作られ、
+       管理者の承認待ちで詰まる。まず「もう一度つなぐ」を試してもらう。 -->
+  <section id="screen-connection-retry" class="screen">
+    <div class="login-wrap">
+      <img src="brand/logo-gold.png" alt="迅翔興業" class="login-logo">
+      <div class="login-company">つながりませんでした</div>
+      <div class="card">
+        <div class="hint" style="margin-bottom:14px;">電波が届きにくい場所のようです。ログインしたままの状態は残っていますので、電波の良い場所で「もう一度つなぐ」を押してください。</div>
+        <button id="connection-retry-btn">もう一度つなぐ</button>
+        <div class="error" id="connection-retry-error"></div>
+        <div class="hint" style="margin-top:14px;">何度試してもつながらない場合のみ、下から暗証番号を入れ直してください。</div>
+        <button class="link" id="connection-retry-pin">暗証番号を入力してログインする</button>
       </div>
     </div>
   </section>
@@ -454,23 +486,66 @@
     <div class="hint" id="lucky-preview-note" style="margin-bottom:10px;"></div>
     <div class="lucky-preview-grid">
       <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:1000">1,000円(青)</button>
-      <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:2000">2,000円(金)</button>
-      <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:3000">3,000円(緑)</button>
-      <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:5000">5,000円(赤)</button>
+      <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:2000">2,000円(緑)</button>
+      <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:3000">3,000円(赤)</button>
+      <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:5000">5,000円(金)</button>
       <button type="button" class="menu-btn lucky-preview-btn" data-prize="cash:10000">10,000円(虹)</button>
       <button type="button" class="menu-btn lucky-preview-btn" data-prize="hotel:0" style="background:#111;color:#f5d76e;border-color:#c9a227;">高級ホテル(黒×金)</button>
     </div>
   </section>
 
-  <!-- 当選演出 全画面オーバーレイ -->
+  <!-- 当選演出 全画面オーバーレイ(r11移植 2026-09-05: 鼓動→上から落ちる稲妻→結果、
+       結果確定後もサイド稲妻/星/紙吹雪を継続。移植元: jinshou-employee-app-staging/lucky-preview/index.html) -->
   <div id="lucky-overlay" class="lucky-overlay" style="display:none;">
-    <div class="lucky-confetti" id="lucky-confetti"></div>
-    <div class="lucky-stage" id="lucky-stage">
-      <div class="lucky-badge" id="lucky-badge">LUCKY</div>
-      <div class="lucky-amount" id="lucky-amount"></div>
-      <div class="lucky-winner" id="lucky-winner"></div>
-      <div class="lucky-sub" id="lucky-sub"></div>
+    <div class="lucky-beat-flash" id="lucky-beat-flash"></div>
+    <div class="lucky-rays" id="lucky-rays"></div>
+    <div class="lucky-door-wrap" id="lucky-doors"><div class="lucky-door-panel l"></div><div class="lucky-door-panel r"></div><div class="lucky-door-gap"></div></div>
+    <div class="lucky-inner" id="lucky-inner">
+      <div class="lucky-shock" id="lucky-shock"></div>
+      <div class="lucky-core" id="lucky-core"></div>
+      <div class="lucky-star-flare" id="lucky-star-flare"></div>
+      <div class="lucky-tame-dots" id="lucky-tame-dots">…</div>
+      <div class="lucky-prompt-line" id="lucky-prompt-line">抽選開始…</div>
+      <div class="lucky-beat-dots" id="lucky-beat-dots"><i></i><i></i><i></i><i></i></div>
+      <div class="lucky-stage" id="lucky-stage">
+        <div class="lucky-badge" id="lucky-badge">LUCKY</div>
+        <div class="lucky-amount" id="lucky-amount"></div>
+        <div class="lucky-winner" id="lucky-winner"></div>
+        <div class="lucky-sub" id="lucky-sub"></div>
+      </div>
     </div>
+    <div class="lucky-bolt-head" id="lucky-bolt-head"></div>
+    <svg class="lucky-bolt" id="lucky-bolt" viewBox="0 0 100 300" preserveAspectRatio="none">
+      <defs><linearGradient id="lucky-rbg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#3a86ff"/><stop offset="0.16" stop-color="#8b5cf6"/><stop offset="0.33" stop-color="#ff3b30"/>
+        <stop offset="0.5" stop-color="#ff9500"/><stop offset="0.66" stop-color="#ffd60a"/><stop offset="0.82" stop-color="#34c759"/><stop offset="1" stop-color="#5ac8fa"/>
+      </linearGradient></defs>
+      <path class="bmain" d="M54 -4 L44 56 L60 92 L41 150 L62 196 L47 244 L57 304"/>
+      <path class="bbr" d="M60 92 L79 118 L70 140"/>
+      <path class="bbr" d="M41 150 L21 178 L33 200"/>
+      <path class="bbr" d="M62 196 L83 220"/>
+      <path class="bbr" d="M47 244 L29 266"/>
+    </svg>
+    <svg class="lucky-bolt-side" id="lucky-bolt-l" viewBox="0 0 100 300" preserveAspectRatio="none">
+      <path class="bmain" d="M62 -4 L38 60 L58 120 L34 182 L54 240 L40 304"/>
+      <path class="bbr" d="M58 120 L82 150"/>
+      <path class="bbr" d="M34 182 L12 210"/>
+      <path class="bbr" d="M54 240 L80 268"/>
+      <path class="bbr" d="M38 60 L16 88"/>
+      <path class="bbr" d="M58 120 L44 96"/>
+    </svg>
+    <svg class="lucky-bolt-side" id="lucky-bolt-r" viewBox="0 0 100 300" preserveAspectRatio="none">
+      <path class="bmain" d="M38 -4 L62 60 L42 120 L66 182 L46 240 L60 304"/>
+      <path class="bbr" d="M42 120 L18 150"/>
+      <path class="bbr" d="M66 182 L88 210"/>
+      <path class="bbr" d="M46 240 L20 268"/>
+      <path class="bbr" d="M62 60 L84 88"/>
+      <path class="bbr" d="M42 120 L56 96"/>
+    </svg>
+    <div class="lucky-cut-fill" id="lucky-cut-fill"></div>
+    <div class="lucky-cut-label" id="lucky-cut-label"></div>
+    <div class="lucky-cut-white" id="lucky-cut-white"></div>
+    <div class="lucky-confetti" id="lucky-confetti"></div>
     <button type="button" class="lucky-close" id="lucky-close">閉じる</button>
   </div>
 
@@ -780,6 +855,7 @@
     <button type="button" class="back-link" data-nav="daily-report-management">日報管理に戻る</button>
     <div class="form-title">日報の要確認一覧</div>
     <div class="hint" style="margin-bottom:10px;">配置・人工・勤務区分・他社員との整合などに確認事項がある日報です（各カードに「理由」を表示します）。現場が一致していて他に問題がなければ自動で確認済みになります。内容を確認し、問題なければ「確認済みにする」、修正が必要なら理由を添えて「修正依頼」してください。</div>
+    <div class="hint" id="drnr-range" style="margin-bottom:10px;font-weight:600;"></div>
     <div id="daily-report-needs-review-list"></div>
   </section>
 
@@ -2425,7 +2501,8 @@
   <!-- 2026-08-28: セキュリティ強化。新しい端末からの利用は管理者承認制にしたため、
        承認待ち一覧をここで確認・承認/却下する。 -->
   <section id="screen-device-approval-admin" class="screen">
-    <button type="button" class="back-link back-to-origin" data-nav="menu">ホームに戻る</button>
+    <!-- 入口は管理者ダッシュボードのみ。入口不明時(deep link/リロード)の既定もそこへ揃える。 -->
+    <button type="button" class="back-link back-to-origin" data-nav="admin-dashboard">ダッシュボードに戻る</button>
     <div class="form-title">端末承認</div>
     <div class="hint" style="margin:0 0 10px;">新しい端末からポータルを開いた社員が一覧に表示されます。本人からの申請であることを確認してから承認してください。</div>
     <div id="device-approval-list"><div class="hint">読み込み中...</div></div>

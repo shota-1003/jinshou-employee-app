@@ -338,11 +338,15 @@
             return b;
         }
 
+        // 月を切り替えたとき、どちら向きに動いたかを覚えておく。
+        // 何の動きもなく中身だけ差し替わると、切り替わったこと自体が分かりにくい。
+        let monthSlide = 0;
         function shiftMonth(delta) {
             let y = state.year, m = state.month + delta;
             if (m < 1) { m = 12; y -= 1; }
             if (m > 12) { m = 1; y += 1; }
             state.year = y; state.month = m;
+            monthSlide = delta;
             syncSelectedToMonth();
             // 月を切り替える操作なので、スマホでは月全体表示に戻して見せる。
             if (!isWide() && state.view !== 'me') state.mobileMode = 'month';
@@ -807,40 +811,8 @@
             return {
                 cell, chips, row, num, available,
                 min: wide ? 76 : 56,
-                max: wide ? 260 : 210,
+                max: wide ? 300 : 260,
             };
-        }
-
-        // その週にいくつ予定が並ぶかを見て、週ごとの高さを決める。
-        // 全週を同じ高さにすると、空いている週が場所を取り、忙しい週だけ「+N」で切れる。
-        // 実データ(2029年11月)では、空き週4つが高いまま、予定のある週だけ +2〜+5 になっていた。
-        function weekHeights(cells, byDate, holidays, layout) {
-            const weeks = Math.ceil(cells.length / 7);
-            const out = [];
-            const needs = [];
-            for (let w = 0; w < weeks; w += 1) {
-                let need = 0;
-                for (let d = 0; d < 7; d += 1) {
-                    const date = cells[w * 7 + d];
-                    if (!date) continue;
-                    const n = (byDate.get(date) || []).length + (holidays.has(date) ? 1 : 0);
-                    if (n > need) need = n;
-                }
-                needs.push(need);
-                const want = layout.num + (need * layout.row) + 4;
-                out.push(Math.max(layout.min, Math.min(layout.max, want)));
-            }
-            // 全部足しても画面が余るときは、週の比率を保ったまま全体を引き伸ばす。
-            // 余りを均等に足すと空いている週まで同じだけ伸び、
-            // 予定の多い週へ寄せて足すとその週だけ間延びする。倍率で伸ばすと両方を避けられる。
-            // 伸ばしすぎないよう1.6倍までにする(それ以上は下に余白が残ってよい)。
-            const total = out.reduce((a, b) => a + b, 0);
-            const avail = layout.available || 0;
-            if (total > 0 && avail > total) {
-                const f = Math.min(1.6, avail / total);
-                for (let i = 0; i < out.length; i += 1) out[i] = Math.round(out[i] * f);
-            }
-            return out;
         }
 
         // グリッドを描いたあとに実際の開始位置を測り、想定とずれていたら1度だけ組み直す。
@@ -854,6 +826,45 @@
             if (lastGridTop !== null && Math.abs(top - lastGridTop) < 4) return;
             lastGridTop = top;
             render();
+        }
+
+        // 月表示の行の高さ。**全週そろえる**。高さはその月の中身から決める。
+        //
+        // ここは3回作り直している。実機で使った結果、前の2つはどちらも駄目だった。
+        //   1回目「週ごとに高さを変える」  → 予定の多い週が伸び、他の週が画面外へ出て月が読めない
+        //   2回目「いちばん忙しい日に全週を合わせる」
+        //        → 18件の日が1つあるだけで全週が252pxになり、予定1件の週まで同じ高さの
+        //          白い箱になった。月ぜんぶが1.5画面ぶんに伸び、スクロールしても白ばかり
+        //          見える(2026年9月の実データで確認)。
+        //
+        // 3回目の考え方: **基準は「月ぜんぶが1画面に収まる高さ」**。画面は余さず使い、
+        // 下に白を残さない。そのうえで「その月のふつうの日(中央値)」が入りきらないときだけ
+        // 少し伸ばす。伸ばしてよいのは1画面の1.4倍まで。
+        // これで「1日だけ極端に多い日」に月ぜんぶが引きずられなくなる。
+        // 入りきらない日は「+N」を出し、その日をタップすれば下の一覧で全部見られる。
+        function weekHeights(cells, byDate, holidays, layout) {
+            const weeks = Math.ceil(cells.length / 7);
+            // その月の日を全部数える(0件の日も含める)。予定のある日だけで中央値を取ると、
+            // 月の後半しか稼働していない月(2026年8月は24日以降だけ実データがある)で
+            // 行が伸び、空の週4つが画面を占めて肝心の週が画面外へ出た。
+            // 「半分以上の日が入りきらないときだけ伸ばす」という基準にする。
+            const counts = [];
+            for (const date of cells) {
+                if (!date) continue;
+                if (Number(date.slice(5, 7)) !== state.month) continue;
+                counts.push((byDate.get(date) || []).length + (holidays.has(date) ? 1 : 0));
+            }
+            counts.sort((a, b) => a - b);
+            const typical = counts.length ? counts[Math.floor((counts.length - 1) / 2)] : 0;
+            // 画面にちょうど収まる高さ。ここが基準で、下限でもある。
+            const fit = Math.floor(layout.available / weeks);
+            // ふつうの日が切れない高さ。
+            const want = layout.num + (typical * layout.row) + 4;
+            // 伸ばしてよい上限。スクロールは1画面の4割ぶんで終わる。
+            const grown = Math.floor((layout.available * 1.4) / weeks);
+            const h = Math.max(layout.min,
+                Math.min(layout.max, Math.max(fit, Math.min(want, grown))));
+            return new Array(weeks).fill(h);
         }
 
         function renderMonth(container) {
@@ -890,6 +901,10 @@
                 : Math.max(2, Math.floor((rowH[w] - layout.num) / layout.row)));
 
             const grid = el('div', 'ac-grid');
+            if (monthSlide) {
+                grid.classList.add(monthSlide > 0 ? 'ac-slidenext' : 'ac-slideprev');
+                monthSlide = 0;
+            }
             grid.style.gridTemplateRows = rowH.map((h) => `${h}px`).join(' ');
             attachSwipe(grid);
             const t = todayJST();
@@ -4808,11 +4823,37 @@
         // このモジュールの上に別の帯(開発用シェルのSTAGING帯、統合後は社員ポータルの
         // ヘッダー等)がある場合、その高さぶんだけ自分の高さを縮める。
         // これをやらないと画面からはみ出し、結局ページ全体がスクロールしてしまう。
+        // 載せた側が画面の下へ固定しているもの(社員ポータルの下タブ等)の高さを測る。
+        // 以前はポータル側のCSSが 64px と決め打ちしていたが、実際の下タブは 82px あり、
+        // 月表示の最後の週がその下へ隠れていた(2026-09-06 実機指摘)。決め打ちをやめ、
+        // カレンダー自身が実測する。自分の高さに影響されない要素だけを見るので、
+        // 「高さを変える→測り直す→また高さが変わる」の往復にはならない。
+        function hostBottomInset() {
+            const vh = window.innerHeight || 0;
+            if (!vh) return 0;
+            let inset = 0;
+            for (const node of document.querySelectorAll('body *')) {
+                if (node === root || node.contains(root) || root.contains(node)) continue;
+                const st = getComputedStyle(node);
+                if (st.position !== 'fixed' && st.position !== 'sticky') continue;
+                if (st.display === 'none' || st.visibility === 'hidden') continue;
+                const r = node.getBoundingClientRect();
+                if (r.height < 8) continue;
+                if (r.bottom < vh - 4) continue;      // 画面の底に接していない
+                if (r.top < vh * 0.5) continue;       // 画面の下半分にない(全画面の覆い等は数えない)
+                inset = Math.max(inset, Math.round(vh - r.top));
+            }
+            return Math.min(inset, Math.round(vh * 0.4));
+        }
+
         function syncHostOffset() {
             const top = Math.max(0, Math.round(root.getBoundingClientRect().top));
             const cur = parseInt(root.style.getPropertyValue('--ac-host-offset') || '0', 10) || 0;
             // 自分自身の高さを変えると rect.top も動きうるので、実際に変わったときだけ書く
             if (Math.abs(top - cur) >= 1) root.style.setProperty('--ac-host-offset', `${top}px`);
+            const bottom = hostBottomInset();
+            const curB = parseInt(root.style.getPropertyValue('--ac-host-bottom') || '0', 10) || 0;
+            if (Math.abs(bottom - curB) >= 1) root.style.setProperty('--ac-host-bottom', `${bottom}px`);
         }
 
         // 再描画で elBody を作り直すため、そのままだと保存のたびに先頭へ飛ぶ。

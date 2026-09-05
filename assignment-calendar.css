@@ -46,8 +46,11 @@
      その高さ。JS側が実測して入れる。 */
   display: flex;
   flex-direction: column;
-  height: calc(100vh - var(--ac-host-offset, 0px));
-  height: calc(100dvh - var(--ac-host-offset, 0px));
+  /* --ac-host-bottom は、画面の下に固定で乗っているもの(社員ポータルの下タブ等)の高さ。
+     上だけ引くと、月表示の最後の週がその下タブに隠れる(2026-09-06 実機指摘)。
+     載せる側が決め打ちで指定するのではなく、カレンダー自身が実測して入れる。 */
+  height: calc(100vh - var(--ac-host-offset, 0px) - var(--ac-host-bottom, 0px));
+  height: calc(100dvh - var(--ac-host-offset, 0px) - var(--ac-host-bottom, 0px));
   overflow: hidden;
 }
 .ac-header, .ac-weeknav, .ac-offline { flex: 0 0 auto; }
@@ -1169,3 +1172,13 @@
 .ac-nophone { margin-top: 10px; padding: 10px 12px; border-radius: 8px; text-align: center;
   background: rgba(0,0,0,.05); color: var(--ac-muted); font-size: 13px; font-weight: 700; }
 .ac-nophone-inline { color: var(--ac-muted); font-size: 13px; }
+
+/* 月を切り替えたときに、動いた向きへ短く滑らせる。
+   何の反応もなく中身だけ差し替わると、切り替わったことが分かりにくい(2026-09-05 実機指摘)。 */
+@keyframes ac-slide-next { from { opacity: .3; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes ac-slide-prev { from { opacity: .3; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
+.ac-grid.ac-slidenext { animation: ac-slide-next .18s ease-out; }
+.ac-grid.ac-slideprev { animation: ac-slide-prev .18s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .ac-grid.ac-slidenext, .ac-grid.ac-slideprev { animation: none; }
+}

@@ -56,18 +56,37 @@ window.ClientErrorReporter.init({
 // 複製している。このSetを変更する際は必ずscripts/lib/optional-degrade-rpcs.jsも同時に更新すること
 // (2026-09-04: 更新漏れでQAが想定内の404を障害として誤検知した教訓、errors.id=1300)。
 const OPTIONAL_MISSING_RPCS = new Set(['get_my_lucky_status', 'mark_lucky_animation_seen', 'get_lucky_prize_month', 'assignment_get_my_schedule', 'admin_list_lucky_draws', 'admin_run_lucky_draw', 'admin_set_lucky_payout']);
-async function rpc(name, params) {
+// 2026-09-05(初回登録・ログイン担当): 第3引数optsを追加した。既存の呼び出しは
+// すべて2引数のままで挙動が変わらない。opts.noSessionReset=true のときだけ、
+// 「セッション失効エラーを受け取ったらその場でログイン画面へ強制的に戻す」処理を
+// 抑止する(端末トークンの生死を確かめる目的で意図的に古いトークンを試す場合に、
+// その確認そのものが保存済みトークンを消してしまうのを防ぐ)。
+// opts.deviceToken を渡すと、そのトークンだけをこの1回の呼び出しに使う。
+async function rpc(name, params, opts) {
+  opts = opts || {};
   const headers = {
     apikey: SUPABASE_ANON_KEY,
     Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
     'Content-Type': 'application/json',
   };
-  if (currentDeviceToken) headers['X-Device-Token'] = currentDeviceToken;
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(params),
-  });
+  const tokenForCall = opts.deviceToken || currentDeviceToken;
+  if (tokenForCall) headers['X-Device-Token'] = tokenForCall;
+  let res;
+  try {
+    res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(params),
+    });
+  } catch (netErr) {
+    // 圏外・トンネル・電波の切り替わり等でfetch自体が失敗した場合。サーバーは
+    // 何も答えていないので「認証が無効になった」とは絶対に解釈してはならない
+    // (2026-09-05: この取り違えが端末トークンの消失＝再登録ループの原因だった)。
+    const e = new Error('通信できませんでした。電波の良い場所でもう一度お試しください。');
+    e.isNetworkError = true;
+    e.rpcName = name;
+    throw e;
+  }
   const text = await res.text();
   if (!res.ok) {
     // SupabaseのRPCエラー(RAISE EXCEPTIONのメッセージ)はJSONで返るため、
@@ -87,7 +106,12 @@ async function rpc(name, params) {
       message === 'このアカウントは現在ご利用いただけません' ||
       message === 'この端末はまだ管理者の承認待ちです。承認され次第ご利用いただけます'
     );
-    if (message === 'セッションが確認できませんでした。再度ログインしてください' || message === 'このアカウントは現在ご利用いただけません') {
+    // 呼び出し側が「サーバーが明示的に認証を否定したのか」「単に通信・サーバーの
+    // 不調なのか」を取り違えないよう、例外へ分類の印を付ける(2026-09-05)。
+    const isSessionInvalid = message === 'セッションが確認できませんでした。再度ログインしてください'
+      || message === 'このアカウントは現在ご利用いただけません';
+    const isPendingApproval = message === 'この端末はまだ管理者の承認待ちです。承認され次第ご利用いただけます';
+    if (isSessionInvalid && !opts.noSessionReset) {
       clearSession();
       clearDeviceAuth();
       currentDeviceToken = null;
@@ -95,6 +119,8 @@ async function rpc(name, params) {
         showScreen('login');
         showError('login-error', message === 'このアカウントは現在ご利用いただけません' ? message : 'ログイン状態が無効になりました。もう一度ログインしてください。');
       }
+    } else if (isSessionInvalid) {
+      // noSessionReset: 端末トークンの生死確認中。保存済みトークンには触れない。
     } else if (isAuthRejection) {
       // 端末承認待ち・resume時の失効など。エラー報告せず、案内だけ出してログイン/承認待ちへ。
       if (document.getElementById('screen-login')) {
@@ -108,7 +134,14 @@ async function rpc(name, params) {
       // セッション失効・認証拒否(想定内)以外は、可視化マップが検知できるよう実Productionエラーとして報告する。
       window.ClientErrorReporter.reportHttpError(`rpc/${name}`, res.status, message);
     }
-    throw new Error(message);
+    const err = new Error(message);
+    err.httpStatus = res.status;
+    err.rpcName = name;
+    err.isSessionInvalid = isSessionInvalid;   // サーバーが明示的に「このトークンは無効」と答えた
+    err.isPendingApproval = isPendingApproval; // 端末は登録済みだが管理者の承認待ち
+    // 5xx・404・想定外のエラーは「サーバー側の不調」であってトークンの失効ではない。
+    err.isServerTrouble = res.status >= 500 || (res.status === 404 && !OPTIONAL_MISSING_RPCS.has(name));
+    throw err;
   }
   return text ? JSON.parse(text) : null;
 }
@@ -122,6 +155,41 @@ function todayJST() {
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+// ---------- 画面遷移で渡す状態(日付・絞り込み・遷移元)の単一の正 ----------
+// 2026-09-05 実機不具合の根本対策。管理者HOME「今日やること」の「本日の配置ありで日報が
+// 未提出の社員 19」をタップすると、遷移先が「NaN月NaN日の未提出 / 0名 / 対象者はいません。」
+// になった。原因は、遷移先の画面が日付をグローバル変数 drmSelectedDate に暗黙依存しており、
+// その変数は日報管理画面を一度開かないと初期化されない(=HOMEから直行すると null のまま)ため。
+//   null → drmDayPrefix(): new Date('nullT00:00:00') = Invalid Date → 「NaN月NaN日」
+//   null → RPC p_date=NULL → schedule_date = NULL は常に偽 → 0件
+// 以後、画面間の日付・絞り込みは必ず navState(明示的なオブジェクト)で渡し、
+// 受け側はグローバル変数ではなく渡された state を読む。日付は必ず normalizeNavDate を通す。
+
+// 'YYYY-MM-DD' として妥当な文字列だけを通し、それ以外(null/undefined/Invalid Date/NaN)は
+// 本日(JST)へフォールバックする。ここが「日付が undefined/NaN のまま下流へ流れる」唯一の関門。
+function normalizeNavDate(value) {
+  const m = value == null ? null : String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return todayJST();
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  // 2026-02-31 のような存在しない日付を弾く(Date は繰り上げてしまうため往復で検証する)。
+  if (d.getFullYear() !== Number(m[1]) || d.getMonth() !== Number(m[2]) - 1 || d.getDate() !== Number(m[3])) return todayJST();
+  return `${m[1]}-${m[2]}-${m[3]}`;
+}
+
+// 遷移時に渡す状態を1つの形にそろえる。C.Navigation担当の共通Navigation
+// (entryRoute / returnTo / selectedDate / filter / origin)へそのまま寄せられるよう、
+// キー名を合わせてある。date は必ず正規化済みの 'YYYY-MM-DD'。
+function buildNavState(state) {
+  const s = state || {};
+  return {
+    date: normalizeNavDate(s.date),
+    filter: s.filter == null ? null : s.filter,
+    origin: s.origin || (typeof currentScreenId === 'function' ? currentScreenId() : null),
+    returnTo: s.returnTo || null,
+    entryRoute: s.entryRoute || null,
+  };
 }
 
 // 2026-08-28: 管理者お知らせ管理画面で、DB側の列欠落(list_announcements_admin、
@@ -207,26 +275,100 @@ async function uploadReceiptPhoto(employeeCode, file) {
   return json;
 }
 
+// ============================================================
+// 端末に残す情報の読み書き (2026-09-05 全面的に例外安全化)
+//
+// 【なぜ直したか】localStorage / sessionStorage は、iOSのプライベートブラウズ・
+// ストレージ制限・容量超過で **setItem が例外を投げる**ことがある。従来は素の
+// setItem を直接呼んでいたため、1回でも例外が出ると呼び出し元(端末トークンの保存・
+// セッション復元)ごと失敗し、「登録できたのに次に開くと未登録」という症状になった。
+// 例外は握りつぶさず、書けなかったという事実だけを返す(呼び出し側で分岐できる)。
+//
+// 【トークンの保存先を二重化した理由】端末トークンはこの端末の唯一の認証情報であり、
+// これを失うと必ず暗証番号の再入力 → 新しい端末行の作成 → 管理者承認待ち、になる。
+// localStorageを主、Cookieを控えとして同じ値を書き、読み出し時はlocalStorage →
+// Cookieの順に探す。片方が消えても、もう片方から復元してlocalStorageへ書き戻す。
+// ============================================================
+const DEVICE_AUTH_COOKIE = 'jinshou_device_auth';
+const DEVICE_AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1年
+
+function safeLocalGet(key) {
+  try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+function safeLocalSet(key, value) {
+  try { localStorage.setItem(key, value); return true; } catch (e) { return false; }
+}
+function safeLocalRemove(key) {
+  try { localStorage.removeItem(key); } catch (e) { /* 消せなくても続行する */ }
+}
+
+function readCookie(name) {
+  try {
+    const hit = document.cookie.split('; ').find((row) => row.startsWith(`${name}=`));
+    return hit ? decodeURIComponent(hit.slice(name.length + 1)) : null;
+  } catch (e) { return null; }
+}
+function writeCookie(name, value) {
+  try {
+    const secure = location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = `${name}=${encodeURIComponent(value)}; Max-Age=${DEVICE_AUTH_COOKIE_MAX_AGE}; Path=/; SameSite=Lax${secure}`;
+    return true;
+  } catch (e) { return false; }
+}
+function deleteCookie(name) {
+  try { document.cookie = `${name}=; Max-Age=0; Path=/; SameSite=Lax`; } catch (e) { /* 消せなくても続行する */ }
+}
+
 function getSession() {
   try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch { return null; }
 }
-function setSession(session) { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); }
-function clearSession() {
-  sessionStorage.removeItem(SESSION_KEY);
-  localStorage.removeItem(REMEMBERED_CODE_KEY);
+function setSession(session) {
+  // sessionStorageが使えない環境でも、ログインそのものは成立させる(画面表示用の
+  // キャッシュに過ぎず、実際の認証は端末トークンが担っているため)。
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); return true; } catch (e) { return false; }
 }
-function getRememberedCode() { return localStorage.getItem(REMEMBERED_CODE_KEY); }
-function setRememberedCode(code) { localStorage.setItem(REMEMBERED_CODE_KEY, code); }
+function clearSession() {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch (e) { /* 消せなくても続行する */ }
+  // 2026-09-05: ここで社員番号の記憶まで消していたため、セッションが切れるたびに
+  // 「社員番号の入力」からやり直しになり、社員には「また最初から登録し直し」に見えていた。
+  // 社員番号は入力補助でしかなく秘密情報でもないため、明示的なログアウト
+  // (switchEmployee)のときだけ消す。
+}
+function getRememberedCode() { return safeLocalGet(REMEMBERED_CODE_KEY); }
+function setRememberedCode(code) { safeLocalSet(REMEMBERED_CODE_KEY, code); }
+function clearRememberedCode() { safeLocalRemove(REMEMBERED_CODE_KEY); }
+
+function parseDeviceAuth(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.token && parsed.employeeCode) return parsed;
+  } catch (e) { /* 壊れた値は無いものとして扱う */ }
+  return null;
+}
 
 function getDeviceAuth() {
-  try { return JSON.parse(localStorage.getItem(DEVICE_AUTH_KEY)); } catch { return null; }
+  const fromLocal = parseDeviceAuth(safeLocalGet(DEVICE_AUTH_KEY));
+  if (fromLocal) return fromLocal;
+  // localStorageが消えていてもCookieに残っていれば復元する(iOSのストレージ削除・
+  // プライベートブラウズ・容量超過などで主保存先だけが失われる場合の救済)。
+  const fromCookie = parseDeviceAuth(readCookie(DEVICE_AUTH_COOKIE));
+  if (fromCookie) {
+    safeLocalSet(DEVICE_AUTH_KEY, JSON.stringify(fromCookie));
+    return fromCookie;
+  }
+  return null;
 }
 function setDeviceAuth(employeeCode, token) {
-  localStorage.setItem(DEVICE_AUTH_KEY, JSON.stringify({ employeeCode, token }));
+  const raw = JSON.stringify({ employeeCode, token });
+  const okLocal = safeLocalSet(DEVICE_AUTH_KEY, raw);
+  const okCookie = writeCookie(DEVICE_AUTH_COOKIE, raw);
   currentDeviceToken = token;
+  return okLocal || okCookie; // どちらか一方でも残せたか
 }
 function clearDeviceAuth() {
-  localStorage.removeItem(DEVICE_AUTH_KEY);
+  safeLocalRemove(DEVICE_AUTH_KEY);
+  deleteCookie(DEVICE_AUTH_COOKIE);
   currentDeviceToken = null;
 }
 
@@ -289,12 +431,15 @@ const ADMIN_SCREENS = new Set([
 ]);
 let inAdminMode = false;
 
-// 管理者画面の論理的な親画面(PARENT_ROUTE、2026-09-05 ユーザー指示)。
-// 管理者画面の「戻る」はブラウザ履歴(どこから来たか)に任せず、この表で定めた親画面へ必ず戻る。
-// 同じ画面を複数の入口(ダッシュボード/日報管理/人員・台帳管理/HOMEの件数カード)から開いても
-// 「戻る先がバラバラ」にならないための単一の正。index.html の各管理者画面の戻るボタン(data-nav)も
-// この表と一致させる(scripts/audit-portal-nav.js の auditParentRoutes() が不一致を検出する)。
-// 個人側の画面(申請・履歴など)は従来どおり履歴ベース(goBackToOrigin)のまま。
+// 管理者画面の論理的な親画面(PARENT_ROUTE)。
+//
+// 【2026-09-05 改訂・重要】当初(同日午前)は「管理者画面の戻る先はこの表で固定する」という
+// 設計だったが、ユーザーから「原則は『入った場所へ戻る』。ダッシュボードのカードから開いた
+// 未提出/要確認一覧の戻るが『日報管理に戻る』になっているのは誤り」と再指摘された。
+// 固定表は入口が複数ある画面(要確認一覧・未提出一覧・申請詳細・外注管理など)で必ず
+// 入口と食い違うため、この表は **入口が分からないときの既定値(deep link・リロード・
+// ウィジェット起動)** へ格下げする。通常の戻り先は navStack(下記)の origin/returnTo が決める。
+// index.html の戻るボタンの data-nav は、そのさらに後ろの最終フォールバックとして残す。
 const PARENT_ROUTE = Object.freeze({
   'admin-dashboard': 'menu',
   // ダッシュボード直下(管理機能の一覧から開く画面)
@@ -334,11 +479,127 @@ function currentScreenId() {
 // 無い(リロード直後等)ことを示す。
 let appNavDepth = 0;
 
+// ============================================================
+// 共通ナビゲーション状態 (navStack、2026-09-05 ユーザー指示)
+//
+// 原則:「入った場所へ戻る」。画面ごとに「ホームに戻る」「日報管理に戻る」といった固定の
+// 戻り先を書くのをやめ、遷移のたびに 1 件のナビゲーション状態を積む。戻るボタンは常に
+// この状態から戻り先を決める。ブラウザ/iOS のスワイプバック(popstate)とも同じ状態を共有
+// するため、ボタンとスワイプで戻り先が食い違わない。
+//
+//   { screen, origin, returnTo, selectedDate, filter, params }
+//     screen       … その画面ID
+//     origin       … 実際にこの画面を開いた入口の画面ID(戻る先の第一候補)
+//     returnTo     … 呼び出し側が明示指定した戻り先(origin より優先。完了画面・申請詳細など)
+//     selectedDate … その画面が持つ選択日(日報管理→未提出一覧 などで引き継ぐ入れ物)
+//     filter       … その画面が持つ絞り込み条件(同上)
+//     params       … その他の任意の引き継ぎ値
+//
+// 日付・filter の中身をどう使うかは各画面の担当(B)に委ねる。ここは「運ぶ入れ物」と
+// 「戻り先の決定」だけを持つ。
+// ============================================================
+let navStack = [];
+
+function navTop() { return navStack.length ? navStack[navStack.length - 1] : null; }
+// 現在画面のナビゲーション状態(selectedDate / filter / params の受け渡し口)。
+function navCurrent() { return navTop() || null; }
+function screenExists(id) { return !!(id && document.getElementById(`screen-${id}`)); }
+
+function makeNavEntry(id, nav, defaultOrigin, inherit) {
+  const pick = (key, fallback) => (nav && nav[key] !== undefined ? nav[key] : fallback);
+  return {
+    screen: id,
+    origin: pick('origin', defaultOrigin || null),
+    returnTo: pick('returnTo', null),
+    selectedDate: pick('selectedDate', inherit ? (inherit.selectedDate || null) : null),
+    filter: pick('filter', inherit ? (inherit.filter || null) : null),
+    params: pick('params', inherit ? (inherit.params || null) : null),
+  };
+}
+
+// 「◯◯に戻る」のラベルは戻り先の画面名から動的に作る。画面名は index.html の .form-title を
+// 正とし(名前の表を二重管理しない)、form-title が無い・動詞的で戻り先の呼び名に向かない
+// 画面だけをここで上書きする。
+const BACK_LABEL_OVERRIDE = Object.freeze({
+  menu: 'ホーム', 'menu-apply': '申請一覧', myinfo: '自分の情報',
+  'admin-dashboard': 'ダッシュボード', 'expense-select': '経費',
+  'daily-report': '日報入力', 'employee-detail': '社員詳細',
+  'loan-request': '入力', 'my-daily-reports': '日報提出履歴',
+  'assignment-calendar': '配置カレンダー', events: '社内イベント',
+  'anon-thread': '相談', 'anon-admin-thread': '相談', 'anon-done': '匿名相談',
+  'joyo-denpyo-print': '常用伝票', 'event-detail': '社内イベント', done: '完了',
+});
+const screenLabelCache = {};
+function screenLabel(id) {
+  if (!id) return null;
+  if (BACK_LABEL_OVERRIDE[id]) return BACK_LABEL_OVERRIDE[id];
+  if (id in screenLabelCache) return screenLabelCache[id];
+  const sec = document.getElementById(`screen-${id}`);
+  const t = sec ? sec.querySelector('.form-title') : null;
+  const label = t ? t.textContent.replace(/\s+/g, ' ').trim() : '';
+  screenLabelCache[id] = label || null;
+  return screenLabelCache[id];
+}
+
+// 戻り先の決定(単一の正)。優先順位は次のとおり。
+//   1. returnTo   … 呼び出し側が明示した戻り先
+//   2. origin     … 実際に入ってきた入口(=「入った場所へ戻る」の本体)
+//   3. PARENT_ROUTE … 入口が分からないとき(deep link・リロード・ウィジェット起動)の既定
+//   4. data-nav   … index.html に書かれた最終フォールバック
+function resolveBackTarget(fallbackTarget) {
+  const cur = currentScreenId();
+  const top = navTop();
+  if (top && top.screen === cur) {
+    if (top.returnTo && screenExists(top.returnTo)) return { target: top.returnTo, source: 'returnTo' };
+    if (top.origin && top.origin !== cur && screenExists(top.origin)) return { target: top.origin, source: 'origin' };
+  }
+  if (cur && PARENT_ROUTE[cur] && screenExists(PARENT_ROUTE[cur])) return { target: PARENT_ROUTE[cur], source: 'parent-route' };
+  if (fallbackTarget && screenExists(fallbackTarget)) return { target: fallbackTarget, source: 'data-nav' };
+  return { target: 'menu', source: 'home' };
+}
+
+// 表示中の画面の戻るボタンのラベルを、実際の戻り先から作り直す。
+// (固定文言「日報管理に戻る」等が入口と食い違う不具合の再発防止。showScreen の最後に呼ぶ)
+function updateBackLabel(id) {
+  const sec = document.getElementById(`screen-${id}`);
+  if (!sec) return;
+  sec.querySelectorAll('.back-link, .back-to-origin').forEach((btn) => {
+    if (btn.dataset.staticLabel === undefined) btn.dataset.staticLabel = btn.textContent.replace(/\s+/g, ' ').trim();
+    const name = screenLabel(resolveBackTarget(btn.getAttribute('data-nav')).target);
+    btn.textContent = name ? `${name}に戻る` : btn.dataset.staticLabel;
+  });
+}
+
+// 「戻る」の実行。履歴の1つ前が戻り先と同じなら history.back() を使う(iOS のスワイプバックと
+// 完全に同じ経路になり、ボタンとスワイプで結果が食い違わない)。一致しない場合(deep link・
+// returnTo が履歴と違う場合)だけ、履歴を伸ばさない置き換え遷移で戻る。
+function goBack(fallbackTarget) {
+  navReturn(resolveBackTarget(fallbackTarget).target);
+}
+
+// 「保存しました」「承認しました」の直後に元の画面へ返すときは、必ずこれを使う(showScreen を
+// 直接呼ばない)。showScreen(親) は *前進* 扱いになるため、親画面の入口(origin)が保存フォーム側に
+// 書き換わり、その親から「戻る」を押すと送信済みフォームへ再入場してしまう(二重送信の誘発)。
+// 履歴の1つ前が戻り先ならブラウザの戻ると同じ経路(history.back)で返し、そうでなければ
+// 履歴を伸ばさない置き換えで返す。
+function navReturn(target) {
+  const prev = navStack.length >= 2 ? navStack[navStack.length - 2] : null;
+  if (appNavDepth > 0 && prev && prev.screen === target) { history.back(); return; }
+  if (target === 'menu') { enterMenu(true); return; }
+  showScreen(target, { replace: true, nav: { origin: null } });
+}
+
 function showScreen(id, opts) {
   opts = opts || {};
   document.querySelectorAll('.screen').forEach((el) => el.classList.remove('active'));
   document.getElementById(`screen-${id}`).classList.add('active');
-  const preAuthScreens = ['login', 'pin-entry', 'pin-register'];
+  // 2026-09-05修正: 'device-pending'(端末の承認待ち)・'pin-forgot'(暗証番号を忘れた)・
+  // 'connection-retry'(通信不良)がこの一覧から漏れていたため、まだログインが成立して
+  // いないのに下部ナビ・案内AIのボタンが表示されていた。社員がそれを押すと
+  // enterMenu()/loadMyInfo()がセッション未確立のまま走り、JavaScriptが例外で停止して
+  // 画面が固まる(本番のクライアントエラーログで、承認待ちの時間帯に
+  // 「null is not an object (evaluating 'session.employeeName')」を計8件記録していた)。
+  const preAuthScreens = ['login', 'pin-entry', 'pin-register', 'device-pending', 'pin-forgot', 'connection-retry'];
   if (!preAuthScreens.includes(id)) {
     if (ADMIN_SCREENS.has(id)) inAdminMode = true;
     else if (BOTTOM_NAV_MAP[id] || id === 'menu') inAdminMode = false; // 個人側の画面へ来たら管理者モードを解除
@@ -353,6 +614,9 @@ function showScreen(id, opts) {
   document.getElementById('admin-bottom-nav').style.display = (!preAuthScreens.includes(id) && inAdminMode) ? 'flex' : 'none';
   // ログイン前・管理者モード中は案内AIを表示しない(下部ナビと同じ扱い)。
   document.getElementById('ai-guide-fab-wrap').style.display = (!preAuthScreens.includes(id) && !inAdminMode) ? '' : 'none';
+  // LINEの中のブラウザで開いている間だけ、ログイン前の画面にSafariへの切り替え案内を出す。
+  const lineNotice = document.getElementById('line-browser-notice');
+  if (lineNotice) lineNotice.style.display = (preAuthScreens.includes(id) && isLineInAppBrowser()) ? '' : 'none';
   if (preAuthScreens.includes(id) || inAdminMode) closeAiGuidePanel();
   document.querySelectorAll('.bottom-nav-item').forEach((btn) => {
     btn.classList.toggle('active', btn.getAttribute('data-nav') === (BOTTOM_NAV_MAP[id] || id));
@@ -360,26 +624,56 @@ function showScreen(id, opts) {
   document.querySelectorAll('.admin-bottom-nav-item').forEach((btn) => {
     btn.classList.toggle('active', btn.getAttribute('data-nav') === id);
   });
+  // 既存の一時変数(dailyReportPrefillDate)もナビゲーション状態(selectedDate)へ載せる。
+  // 個別画面の呼び出し側を書き換えずに、選択日をスタックで運べるようにするための橋渡し。
+  if (id === 'daily-report' && typeof dailyReportPrefillDate === 'string' && dailyReportPrefillDate
+      && !(opts.nav && opts.nav.selectedDate)) {
+    opts.nav = Object.assign({}, opts.nav, { selectedDate: dailyReportPrefillDate });
+  }
   if (!opts.fromPopstate && !preAuthScreens.includes(id)) {
+    // ナビゲーション状態(navStack)と history を必ず同じ操作で更新する。
+    // history.state に entry ごと載せることで、リロード・スワイプバック後も
+    // 「どこから入ったか」を失わない。
     if (opts.replace) {
       // 完了画面(screen-done)への遷移・そこからの離脱に使う。pushStateすると、
       // 送信フォーム→完了画面→次の画面、と積み上がった履歴を「戻る」で辿るたびに
       // 完了画面へ戻ってきてしまう(無限ループに見える)・フォーム画面へ戻って
       // 二重送信を誘発する、という2つの問題が起きるため、履歴を積まずに置き換える。
-      history.replaceState({ screen: id }, '', location.pathname + location.search);
+      const idx = Math.max(0, navStack.length - 1);
+      const replaced = navStack[idx] || null;
+      const entry = makeNavEntry(id, opts.nav, replaced ? replaced.origin : null, replaced);
+      navStack[idx] = entry;
+      navStack.length = idx + 1;
+      history.replaceState({ screen: id, navIndex: idx, nav: entry }, '', location.pathname + location.search);
     } else {
-      history.pushState({ screen: id }, '', location.pathname + location.search);
+      const prevEntry = navTop();
+      const entry = makeNavEntry(id, opts.nav, prevEntry ? prevEntry.screen : null, null);
+      navStack.push(entry);
+      history.pushState({ screen: id, navIndex: navStack.length - 1, nav: entry }, '', location.pathname + location.search);
       appNavDepth += 1;
     }
   }
   window.scrollTo(0, 0);
   if (SCREEN_ENTER_HOOKS[id]) SCREEN_ENTER_HOOKS[id]();
+  // 戻るボタンのラベルは入口から作る。enterフックが固定文言を書き込む画面(申請詳細など)も
+  // あるため、フックのあとに実行して必ずこちらを最終値にする。
+  updateBackLabel(id);
 }
 
 window.addEventListener('popstate', (e) => {
   if (!getSession()) return; // ログイン前はブラウザ標準の戻る動作に任せる
   if (appNavDepth > 0) appNavDepth -= 1;
   const id = (e.state && e.state.screen) || 'menu';
+  // ブラウザ/iOS スワイプの戻る・進むでも navStack を history と同じ位置へ揃える
+  // (ボタンの戻る先とスワイプの戻る先を必ず一致させるための同期点)。
+  const idx = e.state && typeof e.state.navIndex === 'number' ? e.state.navIndex : 0;
+  if (e.state && e.state.nav) {
+    navStack.length = idx;
+    navStack[idx] = e.state.nav;
+    navStack.length = idx + 1;
+  } else {
+    navStack.length = Math.min(navStack.length, idx + 1);
+  }
   if (document.getElementById(`screen-${id}`)) showScreen(id, { fromPopstate: true });
 });
 
@@ -388,10 +682,8 @@ window.addEventListener('popstate', (e) => {
 // 指示に対応する。history.pushStateは画面遷移のたびに既に積んでいるため、本当に前の画面が
 // あるとわかっている場合(appNavDepthで管理)だけhistory.back()を使い、直接この画面を開いた
 // (リロード等でアプリ内の遷移履歴が無い)場合はdata-navの固定先へ安全にフォールバックする。
-function goBackToOrigin(fallbackTarget) {
-  if (appNavDepth > 0) { history.back(); return; }
-  showScreen(fallbackTarget);
-}
+// 2026-09-05: 共通ナビゲーション(navStack)へ一本化した。旧名は既存の呼び出し互換のため残す。
+function goBackToOrigin(fallbackTarget) { goBack(fallbackTarget); }
 
 // 各種申請の完了画面(screen-done)は共通だが、「メニューに戻る」を常にホームへ
 // 固定すると申請のたびにホームへ戻されて不便なため、申請元の画面へ戻れるように
@@ -408,10 +700,15 @@ function revealReasonBox(boxEl) {
 
 function showDone(message, returnTo) {
   document.getElementById('done-message').textContent = message;
-  document.querySelector('#screen-done [data-nav]').setAttribute('data-nav', returnTo || 'menu');
+  const doneBtn = document.querySelector('#screen-done [data-nav]');
+  const doneTarget = returnTo || 'menu';
+  doneBtn.setAttribute('data-nav', doneTarget);
+  // 完了画面の遷移先も「◯◯に戻る」を戻り先から作る(固定文言「メニューに戻る」をやめる)。
+  const doneName = screenLabel(doneTarget);
+  doneBtn.textContent = doneName ? `${doneName}に戻る` : 'メニューに戻る';
   // 送信元のフォーム画面をそのまま履歴に残さず完了画面へ置き換える(戻るでフォームへ
   // 戻って二重送信、を防ぐ)。
-  showScreen('done', { replace: true });
+  showScreen('done', { replace: true, nav: { returnTo: doneTarget } });
 }
 
 function showError(elId, message) {
@@ -428,24 +725,44 @@ let pendingLoginCode = null; // 社員番号入力〜暗証番号入力/登録�
 // 起動時: この端末が有効な端末トークンを持っていれば、暗証番号なしでログイン状態を
 // 復元する(「初回だけ本人確認、以後はログイン状態を維持」の実体)。トークンが
 // 無効(別端末・管理者に無効化された・退職/利用停止)なら暗証番号の入力へフォールバックする。
+// 【2026-09-05 重大修正】以前はここが「例外が出たら理由を問わず clearDeviceAuth()」
+// だった。そのため圏外・電波の切り替わり・サーバーの一時不調・localStorageの書き込み
+// 失敗といった **認証とは無関係な失敗** でも、この端末の唯一の認証情報である端末トークンを
+// 消してしまい、社員は暗証番号を入れ直す → 新しい端末行が作られる → 管理者の承認待ちに
+// なる、という流れで「登録できない」状態に落ちていた(本番の実データで、1人の社員に
+// 9件の端末行・別の社員に50件の端末行が作られていた)。
+//
+// サーバーが「このトークンは無効だ」と明示的に答えたときだけトークンを消す。
+// それ以外(通信不良・サーバー不調)は 'network' を返し、トークンは必ず残す。
+// 通信の一時的な失敗は、その場で数回だけ静かに再試行する。
 async function tryResumeDeviceSession() {
   const auth = getDeviceAuth();
   if (!auth || !auth.token || !auth.employeeCode) return false;
   currentDeviceToken = auth.token;
-  try {
-    const rows = await rpc('resume_employee_session', { p_employee_code: auth.employeeCode });
-    const info = rows && rows[0];
-    if (!info) throw new Error('empty');
-    setSession({ employeeCode: auth.employeeCode, employeeId: info.out_employee_id, employeeName: info.out_employee_name, requestRole: info.out_request_role });
-    return true;
-  } catch (e) {
-    // この端末が管理者の承認待ちなだけの場合は、トークンを消さずに承認待ち画面へ留める
-    // (ここでclearDeviceAuth()してしまうと、承認待ちの間にアプリを開くたびPIN再入力を要求し、
-    // そのたびに新しい「承認待ち端末」が作られてしまう)。
-    if ((e.message || '').includes('承認待ち')) return 'pending';
-    clearDeviceAuth();
-    return false;
+  const RETRY_DELAYS_MS = [0, 700, 1800]; // 圏外から復帰しかけている場面を拾う
+  let lastError = null;
+  for (const delay of RETRY_DELAYS_MS) {
+    if (delay) await new Promise((r) => setTimeout(r, delay));
+    try {
+      const rows = await rpc('resume_employee_session', { p_employee_code: auth.employeeCode });
+      const info = rows && rows[0];
+      if (!info) { lastError = { isServerTrouble: true }; continue; }
+      // sessionStorageへ書けなくてもログイン自体は成立させる(実際の認証は端末トークン)。
+      setSession({ employeeCode: auth.employeeCode, employeeId: info.out_employee_id, employeeName: info.out_employee_name, requestRole: info.out_request_role });
+      return true;
+    } catch (e) {
+      lastError = e;
+      // 端末は登録済みだが管理者の承認待ち。トークンは有効なので絶対に消さない
+      // (消すと開くたびに暗証番号を要求し、そのたびに新しい承認待ち端末が増える)。
+      if (e.isPendingApproval || (e.message || '').includes('承認待ち')) return 'pending';
+      // サーバーが明示的に「無効」と答えた場合だけ、保存済みトークンを破棄する。
+      if (e.isSessionInvalid) { clearDeviceAuth(); return false; }
+      if (e.isNetworkError || e.isServerTrouble) continue; // 再試行の価値がある
+      // 分類できない失敗もトークンは残す(消して困るのは社員のほうであるため)。
+      return 'network';
+    }
   }
+  return (lastError && lastError.isNetworkError) ? 'network' : 'network';
 }
 
 // 起動時: 端末が社員番号を覚えていれば暗証番号入力画面へ、覚えていなければ社員番号入力画面へ。
@@ -453,6 +770,10 @@ async function startLoginFlow() {
   const resumeResult = await tryResumeDeviceSession();
   if (resumeResult === true) { enterMenu(); return; }
   if (resumeResult === 'pending') { showScreen('device-pending'); return; }
+  // 通信不良で自動ログインを確認できなかった場合。端末トークンは残したまま、
+  // 「もう一度つなぐ」を案内する画面を出す(ここで暗証番号を入れさせてしまうと、
+  // 有効な端末があるのに新しい端末行が作られ、承認待ちで詰む原因になる)。
+  if (resumeResult === 'network') { showScreen('connection-retry'); return; }
 
   const remembered = getRememberedCode();
   if (!remembered) { showScreen('login'); return; }
@@ -467,6 +788,7 @@ async function startLoginFlow() {
     if (!info || !info.exists_and_active) {
       // 退職・無効化された社員番号を端末が覚えていた場合は、社員番号入力からやり直させる。
       clearSession();
+      clearRememberedCode();
       showScreen('login');
       return;
     }
@@ -601,8 +923,11 @@ async function doPinForgotReset() {
     if (!rows || rows.length === 0) { showError('pin-forgot-error', '設定できましたが、ログインに失敗しました。もう一度お試しください。'); return; }
     const emp = rows[0];
     setSession({ employeeCode: pendingLoginCode, employeeId: emp.out_employee_id, employeeName: emp.out_employee_name, requestRole: emp.out_request_role });
-    setDeviceAuth(pendingLoginCode, emp.out_device_token);
-    if (emp.out_approval_status === 'pending') { showScreen('device-pending'); return; }
+    // この経路は「端末トークンが手元にある人」だけが通る(reset_my_pin_with_deviceが
+    // 端末トークンで本人確認しているため)。承認済みの手持ちトークンを、
+    // 新しい承認待ちトークンで上書きして自分を締め出さないようにする。
+    const adopted = await adoptDeviceTokenAfterAuth(pendingLoginCode, emp);
+    if (adopted === 'pending') { showScreen('device-pending'); return; }
     enterMenu();
   } catch (e) {
     showError('pin-forgot-error', e.message);
@@ -704,6 +1029,38 @@ function unmountAssignmentCalendar() {
   if (root) root.innerHTML = '';
 }
 
+// ============================================================
+// 暗証番号ログイン/初回登録が成功したあとの、端末トークンの採用判断 (2026-09-05追加)
+//
+// 【直した問題】暗証番号ログインに成功すると、サーバーは必ず新しい端末トークンを発行する。
+// その新しい端末が「承認待ち」で返ってきた場合、従来は無条件に保存し直していたため、
+// **もともと手元にあった承認済みトークンを、使えない承認待ちトークンで上書きしていた**。
+// その瞬間からアプリは全RPCで「この端末はまだ管理者の承認待ちです」と言われ続け、
+// 管理者が押すまで何もできなくなる。実際に本番で、承認済み端末を持っていた社員が
+// 承認待ちに落ちて約23時間ポータルを使えなかった(2026-09-02 23:04 〜 09-03 22:12)。
+//
+// そこで、新端末が承認待ちで返ってきたときだけ、保存済みの古いトークンがまだ有効か
+// サーバーへ確かめ、有効ならそちらを残す。社員から見ると「今までどおり使えるまま」になる。
+// 確認の呼び出しでは noSessionReset を付け、確認そのものが保存済みトークンを消さないようにする。
+async function adoptDeviceTokenAfterAuth(employeeCode, emp) {
+  if (emp.out_approval_status === 'pending') {
+    const previous = getDeviceAuth();
+    if (previous && previous.employeeCode === employeeCode && previous.token && previous.token !== emp.out_device_token) {
+      try {
+        const rows = await rpc('resume_employee_session', { p_employee_code: employeeCode },
+          { deviceToken: previous.token, noSessionReset: true });
+        if (rows && rows[0]) {
+          // 古い端末トークンは今も承認済みで有効。こちらを使い続ける。
+          setDeviceAuth(employeeCode, previous.token);
+          return 'kept-existing';
+        }
+      } catch (e) { /* 古いトークンも使えない。新しい承認待ちトークンを採用する。 */ }
+    }
+  }
+  setDeviceAuth(employeeCode, emp.out_device_token);
+  return emp.out_approval_status === 'pending' ? 'pending' : 'approved';
+}
+
 async function doVerifyPin() {
   const pin = document.getElementById('pin-entry-code').value.trim();
   hideError('pin-entry-error');
@@ -719,9 +1076,9 @@ async function doVerifyPin() {
     }
     const emp = rows[0];
     setSession({ employeeCode: pendingLoginCode, employeeId: emp.out_employee_id, employeeName: emp.out_employee_name, requestRole: emp.out_request_role });
-    setDeviceAuth(pendingLoginCode, emp.out_device_token);
+    const adopted = await adoptDeviceTokenAfterAuth(pendingLoginCode, emp);
     document.getElementById('pin-entry-code').value = '';
-    if (emp.out_approval_status === 'pending') { showScreen('device-pending'); return; }
+    if (adopted === 'pending') { showScreen('device-pending'); return; }
     enterMenu();
   } catch (e) {
     showError('pin-entry-error', e.message);
@@ -743,6 +1100,8 @@ function resetRegisterSteps() {
   if (identified) identified.textContent = '';
   hideError('pin-register-error');
   hideError('pin-register-error2');
+  const usePinBtn = document.getElementById('pin-register-use-pin');
+  if (usePinBtn) usePinBtn.style.display = 'none';
   for (const id of ['pin-register-code', 'pin-register-confirm']) {
     const el = document.getElementById(id);
     if (el) el.value = '';
@@ -770,6 +1129,15 @@ async function doIdentifyForRegister() {
     document.getElementById('pin-register-step2').style.display = '';
     hideError('pin-register-error2');
   } catch (e) {
+    // 2026-09-05: 「既に暗証番号を登録済み」の人がこの画面に来てしまった場合、
+    // 「コードが正しくありません」とだけ言われると、非エンジニアの社員には
+    // 「使えない・詰んだ」としか読めない。何をすればよいかまで書く。
+    if ((e.message || '').includes('既に暗証番号が登録されて')) {
+      showError('pin-register-error', 'この社員番号は初回登録がすでに済んでいます。初回登録コードは不要です。前の画面から、ご自分で決めた4〜6桁の暗証番号でログインしてください。');
+      const back = document.getElementById('pin-register-use-pin');
+      if (back) back.style.display = '';
+      return;
+    }
     showError('pin-register-error', e.message);
   } finally {
     btn.disabled = false;
@@ -800,11 +1168,11 @@ async function doRegisterPin() {
     const rows = await rpc('register_employee_pin', { p_employee_code: pendingLoginCode, p_first_login_code: firstCode, p_pin: pin });
     const emp = rows[0];
     setSession({ employeeCode: pendingLoginCode, employeeId: emp.out_employee_id, employeeName: emp.out_employee_name, requestRole: emp.out_request_role });
-    setDeviceAuth(pendingLoginCode, emp.out_device_token);
+    const adopted = await adoptDeviceTokenAfterAuth(pendingLoginCode, emp);
     document.getElementById('pin-register-first-code').value = '';
     document.getElementById('pin-register-code').value = '';
     document.getElementById('pin-register-confirm').value = '';
-    if (emp.out_approval_status === 'pending') { showScreen('device-pending'); return; }
+    if (adopted === 'pending') { showScreen('device-pending'); return; }
     enterMenu();
   } catch (e) {
     showError('pin-register-error2', e.message);
@@ -824,6 +1192,73 @@ async function retryDevicePending() {
   if (btn) btn.disabled = false;
 }
 
+// ============================================================
+// 通信不良画面 (2026-09-05追加)
+// 端末トークンは残したまま、つながるまで何度でも試せるようにする。
+// ============================================================
+async function retryConnection() {
+  const btn = document.getElementById('connection-retry-btn');
+  if (btn) btn.disabled = true;
+  hideError('connection-retry-error');
+  try {
+    const resumeResult = await tryResumeDeviceSession();
+    if (resumeResult === true) { enterMenu(); return; }
+    if (resumeResult === 'pending') { showScreen('device-pending'); return; }
+    if (resumeResult === false) { startLoginFlow(); return; } // トークンが本当に無効だった
+    showError('connection-retry-error', 'まだつながりません。電波の良い場所でもう一度お試しください。');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// 通信不良画面から、あえて暗証番号の入力へ進む(何度試してもつながらない場合の逃げ道)。
+function fallBackToPinEntry() {
+  const remembered = getRememberedCode();
+  const auth = getDeviceAuth();
+  const code = remembered || (auth && auth.employeeCode);
+  if (!code) { showScreen('login'); return; }
+  pendingLoginCode = code;
+  hideError('pin-entry-error');
+  document.getElementById('pin-entry-name').textContent = '';
+  showScreen('pin-entry');
+}
+
+// ============================================================
+// LINEのトーク内から開かれた場合の案内 (2026-09-05追加)
+//
+// 社員へのポータルの配布はLINEグループのリンクで行っている。iPhoneでそのリンクを
+// 押すとLINEアプリの中のブラウザで開き、Safari本体・ホーム画面のアイコン(PWA)とは
+// **別の保存領域**になる。そこで初回登録を済ませても、あとでSafariやホーム画面から
+// 開くと「登録していない端末」として扱われ、暗証番号の入力 → 新しい端末 →
+// 管理者の承認待ち、という流れになる。本番の実データでも、最初の登録が
+// LINEの中のブラウザ(User-Agentに Line/26.13.0)で行われ、その9分後に
+// Safariから別の端末として承認申請が出ていた。
+//
+// LINEは、URLに openExternalBrowser=1 を付けたリンクを外部ブラウザ(Safari)で開く。
+// ============================================================
+function isLineInAppBrowser() {
+  return /\bLine\//i.test(navigator.userAgent || '');
+}
+
+function buildOpenExternalBrowserUrl() {
+  try {
+    const url = new URL(location.href);
+    url.searchParams.set('openExternalBrowser', '1');
+    return url.toString();
+  } catch (e) {
+    return location.href + (location.href.includes('?') ? '&' : '?') + 'openExternalBrowser=1';
+  }
+}
+
+function setupLineBrowserNotice() {
+  const notice = document.getElementById('line-browser-notice');
+  if (!notice) return;
+  if (!isLineInAppBrowser()) { notice.style.display = 'none'; return; }
+  const link = document.getElementById('line-browser-open-safari');
+  if (link) link.setAttribute('href', buildOpenExternalBrowserUrl());
+  notice.style.display = '';
+}
+
 // 「別の社員番号でログインし直す」= 実質的なログアウト。既にログイン済みであれば、
 // この端末のトークンをサーバー側でも明示的に無効化してから画面を切り替える
 // (共有端末の切り替え時に前の利用者のトークンを残さないため)。
@@ -834,6 +1269,9 @@ async function switchEmployee() {
   }
   clearSession();
   clearDeviceAuth();
+  // 明示的な「別の社員番号でログイン」のときだけ、覚えていた社員番号も消す
+  // (共有端末で前の利用者の番号が残らないようにするため)。
+  clearRememberedCode();
   pendingLoginCode = null;
   document.getElementById('login-code').value = '';
   showScreen('login');
@@ -1026,8 +1464,11 @@ function enterMenu(replace) {
   if (consumeLoginRedirect()) return;
   const session = getSession();
   // セッションが失効/未確立のまま呼ばれた場合、社員名の参照で
-  // "null is not an object" 例外(finding#14/#10)になりホームが描画されない。ログインへ戻す。
-  if (!session) { showScreen('login'); return; }
+  // "null is not an object" 例外(finding#14/#10)になりホームが描画されない。
+  // 2026-09-05: 単に'login'を出すと、端末トークンは有効なのに社員番号の入力から
+  // やり直しに見えてしまう。startLoginFlow()へ戻し、端末トークンでの自動復帰・
+  // 承認待ち・通信不良を正しく振り分ける。
+  if (!session) { startLoginFlow(); return; }
   const { greeting, sub } = buildHomeGreeting();
   document.getElementById('menu-greeting-hi').textContent = greeting;
   document.getElementById('menu-greeting-name').textContent = `${session.employeeName}さん`;
@@ -3258,7 +3699,7 @@ let currentMyRequestDetail = null;
 async function openMyRequestDetail(requestId, returnTo) {
   returnTo = MRD_RETURN_LABEL[returnTo] ? returnTo : 'history';
   currentMyRequestDetail = { requestId: Number(requestId), returnTo };
-  showScreen('my-request-detail');
+  showScreen('my-request-detail', { nav: { returnTo: returnTo === 'home' ? 'menu' : returnTo } });
 }
 
 // showScreen('my-request-detail')のたびにSCREEN_ENTER_HOOKSから呼ばれる(戻る/進むを含む)。
@@ -4517,7 +4958,14 @@ const DASH_CARDS = [
   { key: 'health_checkup_overdue_count', filter: null, label: '健診 期限超過', icon: 'check-circle', nav: 'health-admin', healthFilter: 'overdue', status: 'pending' },
   { key: 'health_checkup_due_soon_count', filter: null, label: '健診 期限間近', icon: 'clock', nav: 'health-admin', healthFilter: 'due_soon', status: 'pending' },
   { key: 'health_checkup_retest_pending_count', filter: null, label: '再検査確認待ち', icon: 'alert-triangle', nav: 'health-admin', healthFilter: 'retest', status: 'pending' },
-  { key: 'today_submissions_count', filter: null, label: '本日の申請', icon: 'clock', nav: 'admin-all-requests', areqFilter: { type: '', status: '' }, status: 'neutral' },
+  // areqWindow: カードのラベルが期間を含むとき、遷移先の一覧へ渡す申請日(requested_at)の窓。
+  // 件数側と一覧側が同じ日付列で絞れるカードにだけ付ける(下の30日カード参照)。
+  { key: 'today_submissions_count', filter: null, label: '本日の申請', icon: 'clock', nav: 'admin-all-requests', areqFilter: { type: '', status: '' }, areqWindow: () => ({ dateFrom: todayJST(), dateTo: todayJST() }), status: 'neutral' },
+  // 「(30日)」の2枚は件数側が approved_at(決裁日)基準、一覧側 admin_search_requests は
+  // requested_at(申請日)基準で、絞る列自体が違う。requested_at で30日窓を渡すと
+  // 「40日前に申請 → 昨日承認」が一覧から消え、かえって件数がずれるため窓は渡さない。
+  // 恒久対応には admin_search_requests に決裁日での絞り込み(p_decided_from/p_decided_to)が必要。
+  // docs/dashboard-semantic-integrity-20260905.md の残課題 R-1 参照。
   { key: 'approved_recent_count', filter: null, label: '承認済み(30日)', icon: 'check-circle', nav: 'admin-all-requests', areqFilter: { type: '', status: 'approved' }, status: 'good' },
   { key: 'rejected_recent_count', filter: null, label: '却下(30日)', icon: 'x-circle', nav: 'admin-all-requests', areqFilter: { type: '', status: 'rejected' }, status: 'warn' },
   { key: 'entertainment_special_review_count', filter: null, label: '接待: 後日申請(特別承認待ち)', icon: 'alert-triangle', nav: 'admin-all-requests', areqFilter: { type: 'entertainment_preapproval', status: 'special_review' }, status: 'pending' },
@@ -4557,7 +5005,13 @@ async function renderAdminTodayTasks(session) {
     // 日報系: 未提出/配置未確認は対象者一覧へ。要確認(§3)は処理できる要確認一覧(確定/修正依頼/取消)へ。
     const TASK_TO_PEOPLE = { daily_report_missing: 'missing', assignment_unconfirmed: 'unconfirmed' };
     el.querySelectorAll('.admin-today-task').forEach((btn) => btn.addEventListener('click', () => {
-      if (btn.dataset.taskKey === 'daily_report_anomaly') { showScreen('daily-report-needs-review-admin'); return; }
+      // 2026-09-05: 「今日やること」の件数は admin_home_today_tasks が v_today(JST)で数えている。
+      // 遷移先にも必ず同じ日付を明示的に渡す(受け側のグローバル変数任せにしない)。渡さなかったため
+      // 「未提出19 → タップ → NaN月NaN日 / 0名」になっていた。
+      const navDate = todayJST();
+      const nav = { date: navDate, origin: 'admin-home', returnTo: 'admin-home' };
+      // 要確認日報: 件数は「直近7日」で数えているので、一覧も同じ7日窓で開く(全期間にしない)。
+      if (btn.dataset.taskKey === 'daily_report_anomaly') { openDailyReportNeedsReview({ ...nav, days: 7 }); return; }
       // 承認カテゴリを一元定義(HOME件数RPCと同じ分類)。カテゴリ毎に絞り込んで申請管理へ。
       // count(admin_home_today_tasks) と list(admin_search_requests p_category) を同一定義に固定する。
       const APPROVAL_TASK_CATEGORY = {
@@ -4568,8 +5022,15 @@ async function renderAdminTodayTasks(session) {
       if (cat) { openAdminRequestsByCategory(cat, 'pending'); return; }
       // 支給品は専用画面(支給品の記録・検索)で処理する。
       if (btn.dataset.taskKey === 'approval_supply') { showScreen('supply-request-admin'); return; }
+      // 健診カードは「未登録 or 期限超過」の合算。健診管理側に残っている前回の絞り込み(期限間近/
+      // 再検査など)をそのまま引き継ぐと件数が合わないため、明示的に「すべて」へ戻す。
+      if (btn.dataset.taskKey === 'health_checkup') { setHealthAdminFilter(''); showScreen('health-admin'); return; }
       const b = TASK_TO_PEOPLE[btn.dataset.taskKey];
-      if (b) openDailyReportPeople(b); else showScreen(btn.dataset.nav);
+      if (b) { openDailyReportPeople(b, nav); return; }
+      // 外注 出勤報告不足など、日報管理画面そのものへ行くカードも当日で開く
+      // (前回見ていた過去日が残っていると、カード件数と画面の数字がずれる)。
+      if (btn.dataset.nav === 'daily-report-management') drmSelectedDate = navDate;
+      showScreen(btn.dataset.nav);
     }));
   } catch (e) {
     // 集約が取れなくても下のカードは別途表示されるため、静かに隠す
@@ -4597,19 +5058,17 @@ async function loadAdminDashboard() {
     grid.querySelectorAll('.dash-card').forEach((el) => {
       el.addEventListener('click', () => {
         const c = DASH_CARDS[Number(el.dataset.idx)];
-        if (c.healthFilter) {
-          healthAdminFilter = c.healthFilter;
-          document.querySelectorAll('#screen-health-admin .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.healthFilter === c.healthFilter));
-        }
-        if (c.areqFilter) {
-          areqFilters = { type: c.areqFilter.type || '', status: c.areqFilter.status || '', name: '', dateFrom: '', dateTo: '', site: '', partner: '' };
-        }
+        // 健診カードは絞り込みを持つ。持たないカードから来たときに前回の絞り込みが
+        // 残らないよう、health-admin へ行くカードは必ず絞り込みを明示指定する。
+        if (c.nav === 'health-admin') setHealthAdminFilter(c.healthFilter || '');
         if (c.nav) {
-          showScreen(c.nav);
+          // 絞り込みは必ず setAreqFilters(単一の入口)を通し、showScreen より先に確定させる。
+          // カードのラベルが期間を含む場合はその期間も渡す(「本日の申請」なのに全期間が出る、を防ぐ)。
           if (c.areqFilter) {
-            document.querySelectorAll('#areq-type-filter .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.type === areqFilters.type));
-            document.querySelectorAll('#areq-status-filter .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.status === areqFilters.status));
+            const win = typeof c.areqWindow === 'function' ? c.areqWindow() : {};
+            setAreqFilters({ type: c.areqFilter.type || '', status: c.areqFilter.status || '', ...win });
           }
+          showScreen(c.nav);
           return;
         }
         openAdminRequestList(c.filter);
@@ -4627,24 +5086,41 @@ function openAdminRequestList(filter) {
   showScreen('admin-request-list');
 }
 
+// 申請管理(admin-all-requests)の絞り込みを設定する唯一の入口。
+// 2026-09-05: 遷移元ごとに areqFilters を直接組み立て、チップだけ手で塗り直していたため、
+// (1)日付窓を渡し忘れる(「本日の申請」カードなのに全期間が出る)、(2)日付入力欄と
+// 実際の絞り込みがずれる、という不整合が起きていた。state と画面表示は必ずここで同時に合わせる。
+// nav = { type, category, status, dateFrom, dateTo, name, site, partner }
+function setAreqFilters(nav) {
+  const n = nav || {};
+  areqFilters = {
+    type: n.type || '', category: n.category || '', status: n.status || '', name: n.name || '',
+    dateFrom: n.dateFrom || '', dateTo: n.dateTo || '', site: n.site || '', partner: n.partner || '',
+  };
+  // チップ: カテゴリ指定時は種類チップを「すべて」にする(カテゴリ側で絞るため)。
+  const activeType = areqFilters.category ? '' : areqFilters.type;
+  document.querySelectorAll('#areq-type-filter .filter-chip').forEach((chip) => chip.classList.toggle('active', (chip.dataset.type || '') === activeType));
+  document.querySelectorAll('#areq-status-filter .filter-chip').forEach((chip) => chip.classList.toggle('active', (chip.dataset.status || '') === areqFilters.status));
+  // 入力欄も必ず同期する(画面に出ている条件＝実際に問い合わせている条件、を保証する)。
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+  set('areq-date-from', areqFilters.dateFrom); set('areq-date-to', areqFilters.dateTo);
+  set('areq-site', areqFilters.site); set('areq-partner', areqFilters.partner);
+  set('areq-search-name', areqFilters.name);
+}
+
 // 有給P0: 申請管理を「種類×状態」で絞り込んで開く(HOME件数と一覧を同一データソース admin_search_requests で一致させる)。
-function openAdminRequestsFiltered(type, status) {
-  areqFilters = { type: type || '', category: '', status: status || '', name: '', dateFrom: '', dateTo: '', site: '', partner: '' };
+function openAdminRequestsFiltered(type, status, nav) {
+  // 絞り込みは showScreen より先に確定させる(画面入場フックが古い条件で先に問い合わせてしまい、
+  // 後から来た正しい結果を上書きする競合を防ぐ)。
+  setAreqFilters({ ...(nav || {}), type: type || '', category: '', status: status || '' });
   showScreen('admin-all-requests');
-  document.querySelectorAll('#areq-type-filter .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.type === areqFilters.type));
-  document.querySelectorAll('#areq-status-filter .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.status === areqFilters.status));
-  if (typeof loadAdminAllRequests === 'function') loadAdminAllRequests();
 }
 // 承認カテゴリ(複数source_typeを束ねる)で申請管理を開く。HOME件数と一覧を admin_search_requests の
 // p_category で完全一致させる(「その他→経費」誤遷移・支給品の"その他"混入を防ぐ)。
 const APPROVAL_CATEGORY_LABEL = { paid_leave: '有給', expense: '経費', supply: '支給品', meeting: '接待・会議費', other: 'その他(現場・個人情報)' };
-function openAdminRequestsByCategory(category, status) {
-  areqFilters = { type: '', category: category || '', status: status || '', name: '', dateFrom: '', dateTo: '', site: '', partner: '' };
+function openAdminRequestsByCategory(category, status, nav) {
+  setAreqFilters({ ...(nav || {}), type: '', category: category || '', status: status || '' });
   showScreen('admin-all-requests');
-  // カテゴリ指定時は種類チップは「すべて」を選択状態に(カテゴリで絞るため)。
-  document.querySelectorAll('#areq-type-filter .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.type === ''));
-  document.querySelectorAll('#areq-status-filter .filter-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.status === areqFilters.status));
-  if (typeof loadAdminAllRequests === 'function') loadAdminAllRequests();
 }
 
 async function loadAdminRequestList() {
@@ -6504,7 +6980,7 @@ async function doSubmitExpensePayment() {
     // openEmployeeMonthlyDetail自身がshowScreen('employee-monthly-detail')を呼ぶため
     // 再度フックが発火して無限ループになるため使わない。
     if (emdContext) await openEmployeeMonthlyDetail(emdContext.code, emdContext.name, emdContext.year, emdContext.month);
-    else showScreen('employee-summary');
+    else navReturn('employee-summary');
   } catch (e) {
     showError('ep-error', e.message || '登録に失敗しました。');
   } finally {
@@ -6910,7 +7386,7 @@ async function doSaveEmployeeBasic() {
       // 空文字は「自動判定へ戻す」。RPC側がその意味で受け取る(nullは変更しない)。
       p_headcount_category: document.getElementById('employee-edit-headcount-category').value,
     });
-    showScreen('employee-detail');
+    navReturn('employee-detail');
     await loadEmployeeDetailBasic();
   } catch (e) {
     showError('employee-edit-error', e.message || '保存に失敗しました。');
@@ -7535,11 +8011,28 @@ async function loadStatusSubmitScreen() {
   } catch (e) { /* 一覧取得に失敗してもフォーム自体は使えるようにする */ }
 }
 
-// 外出/遅刻の予定時刻は「当日の時刻」だけを入力させる(年月日の入力は不要、常に本日扱い)。
-// <input type="time">の値("HH:MM")へtodayJST()の日付を合成してISO文字列化する。
-function todayTimeToISOJST(timeStr) {
-  if (!timeStr) return null;
-  return new Date(`${todayJST()}T${timeStr}:00+09:00`).toISOString();
+// 外出の予定帰着時刻・遅刻の到着予定時刻をISO文字列(UTC)へ変換する。
+// 入力欄は<input type="datetime-local">("YYYY-MM-DDTHH:MM")だが、過去に<input type="time">
+// ("HH:MM")だった経緯があり、時刻だけの値も届きうる。時刻だけの場合は当日(JST)の日付を
+// 補う。どちらの形式もJSTとして解釈する(端末のタイムゾーンに依存させない)。
+// 2026-09-05: datetime-localの値を"HH:MM"前提で連結していたため
+// new Date("2026-09-05T2026-09-05T09:30:00+09:00")=Invalid Dateとなり、
+// .toISOString()がRangeErrorを投げて「遅刻を報告」が必ず送信失敗していた(導線10の不具合)。
+function todayTimeToISOJST(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  let local = null;
+  const timeOnly = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(s);
+  const dateTime = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(s);
+  if (timeOnly) {
+    local = `${todayJST()}T${timeOnly[1].padStart(2, '0')}:${timeOnly[2]}:${timeOnly[3] || '00'}`;
+  } else if (dateTime) {
+    local = `${dateTime[1]}T${dateTime[2]}:${dateTime[3]}:${dateTime[4] || '00'}`;
+  } else {
+    return null;
+  }
+  const d = new Date(`${local}+09:00`);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 async function doSubmitStatusOuting() {
@@ -7585,6 +8078,8 @@ async function doSubmitStatusLate() {
   hideError('status-late-error');
   if (!expectedArrival) { showError('status-late-error', '到着予定時刻を入力してください。'); return; }
   if (!reason) { showError('status-late-error', '理由を入力してください。'); return; }
+  const expectedArrivalIso = todayTimeToISOJST(expectedArrival);
+  if (!expectedArrivalIso) { showError('status-late-error', '到着予定時刻の形式が正しくありません。入力し直してください。'); return; }
 
   const btn = document.getElementById('status-late-submit');
   btn.disabled = true;
@@ -7592,7 +8087,7 @@ async function doSubmitStatusLate() {
     await rpc('submit_status_report_late_arrival', {
       p_employee_code: session.employeeCode,
       p_scheduled_start_at: null,
-      p_expected_arrival_at: todayTimeToISOJST(expectedArrival),
+      p_expected_arrival_at: expectedArrivalIso,
       p_reason: reason,
       p_note: note,
     });
@@ -8332,57 +8827,296 @@ function luckyConfetti(theme, count) {
     wrap.appendChild(p);
   }
 }
+// ---- 全画面演出エンジン(r11移植 2026-09-05) ----
+// 移植元: jinshou-employee-app-staging/lucky-preview/index.html(LP-2026-09-04-r11、
+// 演出プレビュー単独ページ・ログイン不要・DB非接続)。ユーザー要件(引継ぎ資料
+// docs/迅翔興業_社員ポータル_開発引継ぎ_20260905.md §4-1): 抽選前に鼓動で緊張感を作る
+// (即結果表示禁止)/稲妻は上から落ちる/漢字の色ラベルを出さない/10,000円は虹色の稲妻/
+// 結果確定後も稲妻を消さない(サイドで演出継続)/ホテル演出の順番(プシュン→暗転→金の点→
+// 扉→開放→星型キラーン→JACKPOT)を維持する。
+// r11プレビューの「ホテル紙吹雪に金貨の円が混ざる」問題(要件は金の紙吹雪、進捗記録
+// docs/lucky-prize-staging-progress-20260905.md §5-2)は、コイン型グラフィックを
+// 移植せず既存の矩形紙吹雪(luckyConfetti)へ統一することで解消した。
+// RPC呼び出し・IS_STAGINGゲート・OPTIONAL_MISSING_RPCSはこのエンジンでは一切変更しない
+// (loadHomeLucky/loadLuckyMonth/loadLuckyAdmin/loadLuckyPreviewは既存のまま)。
+const LUCKY_RANK_COLOR = { blue: '#3a86ff', green: '#22d07a', red: '#ff3b30', gold: '#ffc531', rainbow: '#ffffff' };
+const LUCKY_RANK_LEVEL = { blue: 0, green: 1, red: 2, gold: 3, rainbow: 4 };
+const LUCKY_RANK_VIB = { blue: [0, 50], green: [0, 70], red: [0, 95], gold: [0, 120, 40, 70], rainbow: [0, 170, 60, 140] };
+const LUCKY_BEATS = [500, 1350, 2200, 3050], LUCKY_SIL_MARK = 3450, LUCKY_SIL = 5500, LUCKY_STEP = 1050;
+let _luckyElCache = null;
+function luckyEls() {
+  if (_luckyElCache) return _luckyElCache;
+  const id = (x) => document.getElementById(x);
+  _luckyElCache = {
+    ov: id('lucky-overlay'), inner: id('lucky-inner'), beatFlash: id('lucky-beat-flash'),
+    shock: id('lucky-shock'), core: id('lucky-core'), promptLine: id('lucky-prompt-line'),
+    beatDots: id('lucky-beat-dots'), tameDots: id('lucky-tame-dots'),
+    badge: id('lucky-badge'), amount: id('lucky-amount'), winner: id('lucky-winner'), sub: id('lucky-sub'),
+    confetti: id('lucky-confetti'), doors: id('lucky-doors'), rays: id('lucky-rays'), starFlare: id('lucky-star-flare'),
+    boltHead: id('lucky-bolt-head'), cutFill: id('lucky-cut-fill'), cutWhite: id('lucky-cut-white'),
+    bolt: id('lucky-bolt'), cutLabel: id('lucky-cut-label'), boltL: id('lucky-bolt-l'), boltR: id('lucky-bolt-r'),
+  };
+  return _luckyElCache;
+}
+function luckyVibe(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
+function luckyVibeStop() { try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {} }
 let luckyAnimTimers = [];
 function luckyClearTimers() { luckyAnimTimers.forEach((t) => clearTimeout(t)); luckyAnimTimers = []; }
 function luckyAfter(ms, fn) { luckyAnimTimers.push(setTimeout(fn, ms)); }
-// 演出本体: 金額(テーマ)ごとに明確に演出レベルを変える。
-function playLuckyAnimation(opts) {
-  // opts: { theme, prizeLabel, winnerName, isSpecial(hotel), sub }
-  wireLucky(); // 閉じるボタン等を必ず配線(ホーム自動表示でも動くように)
-  const ov = document.getElementById('lucky-overlay');
-  const stage = document.getElementById('lucky-stage');
-  const confetti = document.getElementById('lucky-confetti');
+function luckyReset() {
   luckyClearTimers();
-  confetti.innerHTML = '';
-  ov.className = 'lucky-overlay theme-' + opts.theme;
-  ov.style.display = 'flex';
-  document.getElementById('lucky-badge').textContent = opts.theme === 'hotel' ? 'SPECIAL JACKPOT' : 'LUCKY';
-  document.getElementById('lucky-amount').textContent = opts.prizeLabel;
-  document.getElementById('lucky-winner').textContent = opts.winnerName ? (opts.winnerName + ' さん') : '';
-  document.getElementById('lucky-sub').textContent = opts.sub || '';
-  // 補助要素(リング/フラッシュ/扉)を用意
-  let ring = ov.querySelector('.lucky-ring'); if (!ring) { ring = document.createElement('div'); ring.className = 'lucky-ring'; ov.appendChild(ring); }
-  let flash = ov.querySelector('.lucky-flash'); if (!flash) { flash = document.createElement('div'); flash.className = 'lucky-flash'; ov.appendChild(flash); }
-  flash.className = 'lucky-flash';
-  const doors = ov.querySelector('.lucky-doors'); if (doors) doors.remove();
-  stage.style.visibility = 'visible';
-
-  const doFlash = () => { flash.className = 'lucky-flash go'; };
-  if (opts.theme === 'blue') {
-    luckyConfetti('blue', 40);
-  } else if (opts.theme === 'gold') {
-    luckyConfetti('gold', 70);
-  } else if (opts.theme === 'green') {
-    luckyConfetti('green', 80);
-  } else if (opts.theme === 'red') {
-    // 一度暗転 → 赤い閃光 → 強めの紙吹雪 + 大きな金額
-    stage.style.visibility = 'hidden'; ov.classList.add('dim');
-    luckyAfter(500, () => { ov.classList.remove('dim'); ov.className = 'lucky-overlay theme-red'; doFlash(); stage.style.visibility = 'visible'; luckyConfetti('red', 120); });
-  } else if (opts.theme === 'rainbow') {
-    // 最初は結果を見せない → 一瞬暗転 → 虹色の光 → 大量の紙吹雪 → 大型表示
-    document.getElementById('lucky-amount').textContent = '？';
-    document.getElementById('lucky-winner').textContent = '';
-    luckyAfter(900, () => { ov.classList.add('dim'); stage.style.visibility = 'hidden'; });
-    luckyAfter(1500, () => { ov.classList.remove('dim'); ov.className = 'lucky-overlay theme-rainbow'; doFlash(); stage.style.visibility = 'visible'; document.getElementById('lucky-amount').textContent = opts.prizeLabel; document.getElementById('lucky-winner').textContent = opts.winnerName ? (opts.winnerName + ' さん') : ''; luckyConfetti('rainbow', 180); });
-  } else if (opts.theme === 'hotel') {
-    // 暗転 → 金色の光 → 扉が開く → SPECIAL JACKPOT → ホテル券 → 当選者
-    stage.style.visibility = 'hidden';
-    const dd = document.createElement('div'); dd.className = 'lucky-doors'; dd.innerHTML = '<div class="lucky-door l"></div><div class="lucky-door r"></div>'; ov.appendChild(dd);
-    luckyAfter(600, () => { dd.classList.add('open'); });
-    luckyAfter(1500, () => { dd.remove(); doFlash(); stage.style.visibility = 'visible'; luckyConfetti('hotel', 120); });
+  const el = luckyEls();
+  el.ov.className = 'lucky-overlay'; el.ov.style.background = ''; el.ov.style.setProperty('--rankc', '#ffffff');
+  el.promptLine.style.display = ''; el.promptLine.textContent = '抽選開始…'; el.tameDots.style.display = '';
+  el.confetti.innerHTML = ''; el.amount.className = 'lucky-amount';
+  el.cutFill.className = 'lucky-cut-fill'; el.cutWhite.className = 'lucky-cut-white';
+  el.bolt.setAttribute('class', 'lucky-bolt'); el.bolt.style.opacity = 0; el.boltHead.className = 'lucky-bolt-head'; el.cutLabel.className = 'lucky-cut-label';
+  el.boltL.setAttribute('class', 'lucky-bolt-side'); el.boltL.style.opacity = 0; el.boltR.setAttribute('class', 'lucky-bolt-side'); el.boltR.style.opacity = 0;
+  el.rays.className = 'lucky-rays'; el.starFlare.className = 'lucky-star-flare'; el.doors.className = 'lucky-door-wrap';
+  Array.prototype.forEach.call(el.beatDots.children, (d) => { d.className = ''; });
+  Array.prototype.forEach.call(document.querySelectorAll('.lucky-spark,.lucky-starspk'), (s) => s.remove());
+}
+function luckyFireBeat(i) {
+  const el = luckyEls();
+  el.shock.style.borderColor = ['#c23a2f', '#e0392f', '#ff5a4c', '#ff7a4c'][i] || '#ff7a4c';
+  try { el.shock.animate([{ transform: 'translate(-50%,-50%) scale(.15)', opacity: 0 }, { transform: 'translate(-50%,-50%) scale(.9)', opacity: .9 }, { transform: 'translate(-50%,-50%) scale(' + (2.6 + i * 1.1) + ')', opacity: 0 }], { duration: 520, easing: 'cubic-bezier(.15,.6,.3,1)' }); } catch (e) {}
+  try { el.core.animate([{ transform: 'translate(-50%,-50%) scale(.3)', opacity: 0 }, { transform: 'translate(-50%,-50%) scale(' + (1 + i * .4) + ')', opacity: 1 }, { transform: 'translate(-50%,-50%) scale(.3)', opacity: 0 }], { duration: 380, easing: 'ease-out' }); } catch (e) {}
+  try { el.beatFlash.animate([{ opacity: 0, transform: 'scale(1)' }, { opacity: (.35 + i * .17), transform: 'scale(' + (1.06 + i * .04) + ')' }, { opacity: 0, transform: 'scale(1)' }], { duration: 440, easing: 'ease-out' }); } catch (e) {}
+  if (el.beatDots.children[i]) el.beatDots.children[i].className = 'lit';
+  luckyVibe(28 + i * 18);
+}
+function luckyStartHeart() {
+  const el = luckyEls();
+  el.promptLine.textContent = '抽選開始…';
+  LUCKY_BEATS.forEach((t, i) => luckyAfter(t, () => luckyFireBeat(i)));
+  luckyAfter(LUCKY_SIL_MARK, () => { el.ov.classList.add('lucky-tame'); el.promptLine.textContent = ''; });
+}
+function luckyFireBolt(colorKey) {
+  const el = luckyEls();
+  const level = LUCKY_RANK_LEVEL[colorKey] != null ? LUCKY_RANK_LEVEL[colorKey] : 4;
+  const w = 3 + level * 1.7;
+  el.ov.style.setProperty('--rankc', LUCKY_RANK_COLOR[colorKey] || '#fff');
+  el.bolt.setAttribute('class', 'lucky-bolt' + (colorKey === 'rainbow' ? ' lucky-rainbow' : ''));
+  el.bolt.style.opacity = 1;
+  const paths = el.bolt.querySelectorAll('path'); const branches = 1 + level;
+  el.boltHead.className = 'lucky-bolt-head'; el.boltHead.style.opacity = 0;
+  try { el.boltHead.animate([{ top: '2%', opacity: 0, transform: 'translate(-50%,-50%) scale(.4)' }, { top: '8%', opacity: 1, transform: 'translate(-50%,-50%) scale(1)' }, { top: '92%', opacity: 1, transform: 'translate(-50%,-50%) scale(1.2)' }, { top: '98%', opacity: 0, transform: 'translate(-50%,-50%) scale(.4)' }], { duration: 240, easing: 'linear' }); } catch (e) {}
+  paths.forEach((p, idx) => {
+    const isMain = idx === 0;
+    if (!isMain && idx > branches) { p.style.opacity = 0; return; }
+    p.style.opacity = 1; p.style.strokeWidth = (isMain ? w : Math.max(2, w - 1.6));
+    let len; try { len = p.getTotalLength(); } catch (e) { len = 380; }
+    p.style.strokeDasharray = len; p.style.strokeDashoffset = len;
+    const delay = isMain ? 0 : 70 + idx * 45, dur = isMain ? 210 : 110;
+    try { p.animate([{ strokeDashoffset: len, opacity: 1 }, { strokeDashoffset: 0, opacity: 1 }], { duration: dur, delay, fill: 'forwards', easing: 'linear' }); } catch (e) { p.style.strokeDashoffset = 0; }
+  });
+  try { el.bolt.animate([{ opacity: 1 }, { opacity: 1 }, { opacity: .7 }, { opacity: 0 }], { duration: 560, easing: 'ease-out' }); } catch (e) {}
+}
+// r11: 結果確定後も左右サイドで走らせ続ける稲妻(中央=金額には重ねない、稲妻を消さない要件)。
+function luckyDrawSideBolt(node, colorKey) {
+  const level = LUCKY_RANK_LEVEL[colorKey] != null ? LUCKY_RANK_LEVEL[colorKey] : 4;
+  const w = 2.4 + level * 1.2;
+  node.style.setProperty('--rankc', LUCKY_RANK_COLOR[colorKey] || '#fff');
+  node.setAttribute('class', 'lucky-bolt-side' + (colorKey === 'rainbow' ? ' lucky-rainbow' : ''));
+  node.style.opacity = 1;
+  const paths = node.querySelectorAll('path'); const branches = 2 + level;
+  paths.forEach((p, idx) => {
+    const isMain = idx === 0;
+    if (!isMain && idx > branches) { p.style.opacity = 0; return; }
+    p.style.opacity = 1; p.style.strokeWidth = (isMain ? w : Math.max(1.4, w - 1.2));
+    let len; try { len = p.getTotalLength(); } catch (e) { len = 380; }
+    p.style.strokeDasharray = len; p.style.strokeDashoffset = len;
+    const delay = isMain ? 0 : 45 + idx * 30, dur = isMain ? 170 : 85;
+    try { p.animate([{ strokeDashoffset: len, opacity: 1 }, { strokeDashoffset: 0, opacity: 1 }], { duration: dur, delay, fill: 'forwards', easing: 'linear' }); } catch (e) { p.style.strokeDashoffset = 0; }
+  });
+  try { node.animate([{ opacity: 1 }, { opacity: 1 }, { opacity: .5 }, { opacity: 0 }], { duration: 500, easing: 'ease-out' }); } catch (e) {}
+  setTimeout(() => { node.style.opacity = 0; }, 500);
+}
+function luckySpawnSideSparks(colorKey, n, side) {
+  const el = luckyEls();
+  let col = LUCKY_RANK_COLOR[colorKey] || '#fff'; if (colorKey === 'rainbow') col = '#ffd23b';
+  const ox = side * 34;
+  for (let i = 0; i < n; i++) {
+    const s = document.createElement('span'); s.className = 'lucky-spark'; s.style.background = col; s.style.boxShadow = '0 0 12px ' + col;
+    s.style.transform = 'translate(calc(-50% + ' + ox + 'vw),-50%)'; el.inner.appendChild(s);
+    const ang = Math.random() * Math.PI * 2, dist = 50 + Math.random() * 150;
+    try { s.animate([{ transform: 'translate(calc(-50% + ' + ox + 'vw),-50%) scale(1)', opacity: 1 }, { transform: 'translate(calc(-50% + ' + ox + 'vw + ' + Math.cos(ang) * dist + 'px),calc(-50% + ' + Math.sin(ang) * dist + 'px)) scale(0)', opacity: 0 }], { duration: 520 + Math.random() * 260, easing: 'cubic-bezier(.2,.7,.3,1)' }); } catch (e) {}
+    setTimeout(() => s.remove(), 820);
   }
 }
-function closeLuckyOverlay() { luckyClearTimers(); const ov = document.getElementById('lucky-overlay'); ov.style.display = 'none'; ov.className = 'lucky-overlay'; document.getElementById('lucky-confetti').innerHTML = ''; }
+function luckySpawnStarsSide(n, side) {
+  const el = luckyEls();
+  const chars = ['✦', '✧', '⋆']; const ox = side * 30;
+  for (let i = 0; i < n; i++) {
+    setTimeout(() => {
+      const s = document.createElement('span'); s.className = 'lucky-starspk'; s.textContent = chars[i % chars.length];
+      s.style.fontSize = (13 + Math.random() * 18) + 'px'; s.style.transform = 'translate(calc(-50% + ' + ox + 'vw),-50%)'; el.inner.appendChild(s);
+      const ang = Math.random() * Math.PI * 2, dist = 60 + Math.random() * 160;
+      try { s.animate([{ transform: 'translate(calc(-50% + ' + ox + 'vw),-50%) scale(.3) rotate(0)', opacity: 0 }, { transform: 'translate(calc(-50% + ' + ox + 'vw + ' + Math.cos(ang) * dist + 'px),calc(-50% + ' + Math.sin(ang) * dist + 'px)) scale(1.1) rotate(120deg)', opacity: 1 }, { transform: 'translate(calc(-50% + ' + ox + 'vw + ' + Math.cos(ang) * dist * 1.3 + 'px),calc(-50% + ' + Math.sin(ang) * dist * 1.3 + 'px)) scale(.4) rotate(220deg)', opacity: 0 }], { duration: 1100 + Math.random() * 500, easing: 'cubic-bezier(.2,.7,.3,1)' }); } catch (e) {}
+      setTimeout(() => s.remove(), 1750);
+    }, i * 40);
+  }
+}
+// r11: 結果確定後もサイドで演出を継続(最低3〜4秒)。中央の金額には重ねない。
+function luckyCelebrate(colorKey, dur) {
+  const el = luckyEls();
+  const volleys = [0, 300, 560, 900, 1250, 1650, 2050, 2500, 2950, 3350];
+  volleys.forEach((t, i) => { if (t > dur) return; const side = (i % 2 === 0) ? -1 : 1; const node = side < 0 ? el.boltL : el.boltR;
+    luckyAfter(t, () => { luckyDrawSideBolt(node, colorKey); luckySpawnSideSparks(colorKey, 6, side); }); });
+  const stars = [200, 700, 1300, 1900, 2500, 3100];
+  stars.forEach((t, i) => { if (t > dur) return; luckyAfter(t, () => luckySpawnStarsSide(4, (i % 2 === 0) ? -1 : 1)); });
+}
+function luckySpawnSparks(colorKey, n) {
+  const el = luckyEls();
+  let col = LUCKY_RANK_COLOR[colorKey] || '#fff'; if (colorKey === 'rainbow') col = '#ffd23b';
+  for (let i = 0; i < n; i++) {
+    const s = document.createElement('span'); s.className = 'lucky-spark'; s.style.background = col; s.style.boxShadow = '0 0 12px ' + col; el.inner.appendChild(s);
+    const ang = Math.random() * Math.PI * 2, dist = 120 + Math.random() * 220;
+    try { s.animate([{ transform: 'translate(-50%,-50%) scale(1)', opacity: 1 }, { transform: 'translate(calc(-50% + ' + Math.cos(ang) * dist + 'px),calc(-50% + ' + Math.sin(ang) * dist + 'px)) scale(0)', opacity: 0 }], { duration: 520 + Math.random() * 260, easing: 'cubic-bezier(.2,.7,.3,1)' }); } catch (e) {}
+    setTimeout(() => s.remove(), 820);
+  }
+}
+// バシャーン(1段) = 上から走る稲妻 → 着弾で閃光+色フィル+シェイク。
+function luckyBashaanCut(colorKey, big) {
+  const el = luckyEls();
+  const isR = colorKey === 'rainbow';
+  el.ov.style.setProperty('--rankc', LUCKY_RANK_COLOR[colorKey] || '#fff');
+  el.ov.classList.remove('lucky-tame'); el.ov.classList.add('lucky-cutting'); el.ov.style.background = '#04060c';
+  luckyFireBolt(colorKey); luckyVibe(LUCKY_RANK_VIB[colorKey] || [0, 60]);
+  luckyAfter(200, () => {
+    el.cutWhite.className = 'lucky-cut-white'; try { el.cutWhite.animate([{ opacity: 0 }, { opacity: isR ? .24 : .6 }, { opacity: 0 }], { duration: isR ? 260 : 320, easing: 'ease' }); } catch (e) {}
+    el.cutFill.className = 'lucky-cut-fill' + (isR ? ' lucky-rainbow' : ''); try { el.cutFill.animate([{ opacity: 0 }, { opacity: isR ? .4 : .7 }, { opacity: 0 }], { duration: isR ? 620 : 560, easing: 'ease' }); } catch (e) {}
+    el.ov.classList.remove('lucky-shake'); void el.ov.offsetWidth; el.ov.classList.add('lucky-shake'); luckySpawnSparks(colorKey, big ? 24 : 14);
+  });
+}
+function luckyBlackout() { const el = luckyEls(); el.ov.className = 'lucky-overlay lucky-cutting'; el.ov.style.background = '#000'; }
+function luckyShowStage(bd, amt, win, sb, small) {
+  const el = luckyEls();
+  el.badge.textContent = bd || ''; el.amount.textContent = amt || ''; if (small) el.amount.classList.add('small');
+  el.winner.textContent = win ? (win + ' さん') : ''; el.winner.style.display = win ? '' : 'none'; el.sub.textContent = sb || '';
+}
+// r11: 読みやすさのために演出を消さない/画面を暗くしない。中央の主稲妻だけ止めて
+// サイドで演出を継続(luckyCelebrate)。金額ステージは全演出より前面+局所暗がり+
+// アウトラインで常に読める(CSS .lucky-stage参照)。
+function luckyReveal(theme, amt, bd, sb, winnerName, small, big, rankKey) {
+  const el = luckyEls();
+  el.ov.className = 'lucky-overlay lucky-reveal theme-' + theme; el.ov.style.background = '';
+  el.bolt.style.opacity = 0; el.bolt.setAttribute('class', 'lucky-bolt'); el.cutWhite.className = 'lucky-cut-white';
+  Array.prototype.forEach.call(document.querySelectorAll('.lucky-spark,.lucky-starspk'), (s) => s.remove());
+  luckyShowStage(bd, amt, winnerName, sb, small);
+  luckyConfetti(theme, small ? 150 : 110);
+  if (rankKey) luckyCelebrate(rankKey, 3800);
+}
+function luckySeqCuts(colors, theme, amt, bd, winnerName, sub) {
+  luckyStartHeart();
+  colors.forEach((c, i) => { const last = i === colors.length - 1; luckyAfter(LUCKY_SIL + i * LUCKY_STEP, () => luckyBashaanCut(c, last)); });
+  const rev = LUCKY_SIL + (colors.length - 1) * LUCKY_STEP + 780;
+  luckyAfter(rev - 170, luckyBlackout);
+  luckyAfter(rev, () => { luckyReveal(theme, amt, bd, sub, winnerName, false, theme === 'gold', theme); luckyVibe(theme === 'gold' ? [0, 90, 40, 90] : [0, 50]); });
+}
+function luckySeqRainbow(amt, winnerName, sub) {
+  luckyStartHeart();
+  ['blue', 'green', 'red', 'gold'].forEach((c, i) => luckyAfter(LUCKY_SIL + i * LUCKY_STEP, () => luckyBashaanCut(c, false)));
+  const hold = LUCKY_SIL + 4 * LUCKY_STEP;
+  luckyAfter(hold, () => { const el = luckyEls(); el.ov.classList.add('lucky-tame'); el.promptLine.style.display = ''; el.promptLine.textContent = '…まだ上がる…？'; });
+  const fifth = hold + 900;
+  luckyAfter(fifth, () => { luckyEls().promptLine.style.display = 'none'; luckyBashaanCut('rainbow', true); });
+  luckyAfter(fifth + 920 - 170, luckyBlackout);
+  luckyAfter(fifth + 920, () => luckyReveal('rainbow', amt, 'SPECIAL LUCKY', sub, winnerName, false, true, 'rainbow'));
+}
+function luckyGoldPoint(xvw, yvh) {
+  const el = luckyEls();
+  const s = document.createElement('span'); s.className = 'lucky-spark'; s.style.background = '#ffe9a8'; s.style.boxShadow = '0 0 16px #ffcf5c'; s.style.width = '9px'; s.style.height = '9px';
+  s.style.transform = 'translate(calc(-50% + ' + xvw + 'vw),calc(-50% + ' + yvh + 'vh)) scale(0)'; el.inner.appendChild(s);
+  try { s.animate([{ opacity: 0, transform: s.style.transform }, { opacity: 1, transform: 'translate(calc(-50% + ' + xvw + 'vw),calc(-50% + ' + yvh + 'vh)) scale(1.2)' }, { opacity: .85, transform: 'translate(calc(-50% + ' + xvw + 'vw),calc(-50% + ' + yvh + 'vh)) scale(1)' }], { duration: 700, fill: 'forwards' }); } catch (e) {}
+  setTimeout(() => { try { s.animate([{ opacity: .85 }, { opacity: 0 }], { duration: 1200, fill: 'forwards' }); } catch (e) {} setTimeout(() => s.remove(), 1300); }, 1600);
+}
+function luckySpawnStars(n) {
+  const el = luckyEls();
+  const chars = ['✦', '✧', '⋆', '✦', '✧'];
+  for (let i = 0; i < n; i++) {
+    setTimeout(() => {
+      const s = document.createElement('span'); s.className = 'lucky-starspk'; s.textContent = chars[i % chars.length];
+      s.style.fontSize = (14 + Math.random() * 22) + 'px'; el.inner.appendChild(s);
+      const ang = Math.random() * Math.PI * 2, dist = 120 + Math.random() * 240;
+      try { s.animate([{ transform: 'translate(-50%,-50%) scale(.3) rotate(0)', opacity: 0 }, { transform: 'translate(calc(-50% + ' + Math.cos(ang) * dist + 'px),calc(-50% + ' + Math.sin(ang) * dist + 'px)) scale(1.15) rotate(90deg)', opacity: 1 }, { transform: 'translate(calc(-50% + ' + Math.cos(ang) * dist * 1.3 + 'px),calc(-50% + ' + Math.sin(ang) * dist * 1.3 + 'px)) scale(.5) rotate(200deg)', opacity: 0 }], { duration: 1200 + Math.random() * 600, easing: 'cubic-bezier(.2,.7,.3,1)' }); } catch (e) {}
+      setTimeout(() => s.remove(), 1900);
+    }, i * 35);
+  }
+}
+// 扉開放後の祝福: 星型フレア + 光線 + 星型キラキラ飛散(金貨の円は使わず、既存の矩形紙吹雪へ統一)。
+function luckyGoldBlessing() {
+  const el = luckyEls();
+  el.ov.className = 'lucky-overlay lucky-hotelstage'; el.ov.style.background = 'radial-gradient(circle at 50% 45%,#42320f,#05070d 76%)';
+  luckyVibe([0, 240]);
+  el.rays.className = 'lucky-rays'; void el.rays.offsetWidth; el.rays.className = 'lucky-rays on';
+  el.starFlare.className = 'lucky-star-flare'; void el.starFlare.offsetWidth; el.starFlare.className = 'lucky-star-flare on';
+  el.cutWhite.className = 'lucky-cut-white'; void el.cutWhite.offsetWidth; el.cutWhite.className = 'lucky-cut-white on';
+  luckySpawnStars(20); luckyConfetti('hotel', 90);
+}
+// ===== ホテル(r6構成維持、r11踏襲): 稲妻→プシュン→暗転→金の点→扉→開放→★星型キラーン→JACKPOT =====
+function luckySeqHotel(winnerName, sub) {
+  const el = luckyEls();
+  luckyStartHeart();
+  ['blue', 'green', 'red', 'gold', 'rainbow'].forEach((c, i) => { const big = c === 'rainbow'; luckyAfter(LUCKY_SIL + i * LUCKY_STEP, () => luckyBashaanCut(c, big)); });
+  const rainbowT = LUCKY_SIL + 4 * LUCKY_STEP;
+  const die = rainbowT + 1500;
+  luckyAfter(die, () => {
+    luckyVibeStop();
+    el.ov.className = 'lucky-overlay lucky-hotelstage'; el.ov.style.background = '#000'; el.promptLine.style.display = 'none';
+    el.cutFill.className = 'lucky-cut-fill'; el.cutWhite.className = 'lucky-cut-white'; el.bolt.setAttribute('class', 'lucky-bolt'); el.bolt.style.opacity = 0; el.cutLabel.className = 'lucky-cut-label';
+    Array.prototype.forEach.call(document.querySelectorAll('.lucky-spark'), (s) => s.remove());
+  });
+  const p1 = die + 1800, p2 = p1 + 900, p3 = p2 + 800;
+  luckyAfter(p1, () => luckyGoldPoint(-30, -10));
+  luckyAfter(p2, () => luckyGoldPoint(24, 14));
+  luckyAfter(p3, () => luckyGoldPoint(-14, 26));
+  const gather = p3 + 700;
+  luckyAfter(gather, () => { for (let i = 0; i < 10; i++) { const k = i; luckyAfter(k * 140, () => luckyGoldPoint((Math.random() * 2 - 1) * 40, (Math.random() * 2 - 1) * 36)); } });
+  const doorAppear = gather + 1700;
+  luckyAfter(doorAppear, () => { el.ov.className = 'lucky-overlay lucky-hotelstage lucky-doors'; el.ov.style.background = '#000'; el.doors.className = 'lucky-door-wrap'; void el.doors.offsetWidth; el.doors.className = 'lucky-door-wrap lucky-appear'; });
+  const doorOpen = doorAppear + 1900;
+  luckyAfter(doorOpen, () => { el.doors.className = 'lucky-door-wrap lucky-appear lucky-open'; });
+  const burst = doorOpen + 2500;
+  luckyAfter(burst, () => { luckyGoldBlessing(); luckyVibe([0, 240, 80, 180]); });
+  luckyAfter(burst + 1000, () => {
+    el.ov.className = 'lucky-overlay lucky-reveal theme-hotel'; el.ov.style.background = '';
+    el.bolt.style.opacity = 0; el.starFlare.className = 'lucky-star-flare'; el.rays.className = 'lucky-rays';
+    Array.prototype.forEach.call(document.querySelectorAll('.lucky-spark,.lucky-starspk'), (s) => s.remove());
+    luckyShowStage('SPECIAL JACKPOT', '高級ホテル宿泊券', winnerName, sub || '当選！ おめでとうございます 🎉', true);
+    luckyConfetti('hotel', 90); luckyCelebrate('gold', 3800);
+  });
+}
+// 演出本体: opts = { theme, prizeLabel, winnerName, sub }(呼び出し側は変更しない)。
+// blue/green/red/gold は段階的な稲妻の積み上げ、rainbow は10,000円専用の「まだ上がる」タメを挟んだ
+// 5段目、hotel は上記の扉演出。
+function playLuckyAnimation(opts) {
+  wireLucky(); // 閉じるボタン等を必ず配線(ホーム自動表示でも動くように)
+  const el = luckyEls();
+  luckyReset();
+  el.ov.style.display = 'flex';
+  const winnerName = opts.winnerName || null;
+  const sub = opts.sub || '';
+  if (opts.theme === 'hotel') {
+    luckySeqHotel(winnerName, sub);
+  } else if (opts.theme === 'rainbow') {
+    luckySeqRainbow(opts.prizeLabel, winnerName, sub);
+  } else {
+    const order = ['blue', 'green', 'red', 'gold'];
+    const idx = order.indexOf(opts.theme);
+    const colors = idx >= 0 ? order.slice(0, idx + 1) : ['blue'];
+    const badge = opts.theme === 'gold' ? 'BIG LUCKY!' : 'LUCKY!';
+    luckySeqCuts(colors, opts.theme, opts.prizeLabel, badge, winnerName, sub);
+  }
+}
+function closeLuckyOverlay() {
+  luckyClearTimers(); luckyVibeStop();
+  const el = luckyEls();
+  el.ov.style.display = 'none'; el.ov.className = 'lucky-overlay'; el.ov.style.background = '';
+  el.confetti.innerHTML = ''; el.doors.className = 'lucky-door-wrap'; el.rays.className = 'lucky-rays'; el.starFlare.className = 'lucky-star-flare';
+  el.boltL.setAttribute('class', 'lucky-bolt-side'); el.boltL.style.opacity = 0; el.boltR.setAttribute('class', 'lucky-bolt-side'); el.boltR.style.opacity = 0;
+  Array.prototype.forEach.call(document.querySelectorAll('.lucky-spark,.lucky-starspk'), (s) => s.remove());
+}
 
 async function loadHomeLucky() {
   const session = getSession();
@@ -8494,7 +9228,9 @@ function wireLucky() {
   document.querySelectorAll('.lucky-preview-btn').forEach((btn) => btn.addEventListener('click', () => {
     const [type, amt] = btn.dataset.prize.split(':');
     const amount = Number(amt);
-    const theme = type === 'hotel' ? 'hotel' : (amount >= 10000 ? 'rainbow' : amount >= 5000 ? 'red' : amount >= 3000 ? 'green' : amount >= 2000 ? 'gold' : 'blue');
+    // 色↔金額対応(2026-09-05確定・database/supabase/202609051521_lucky-prize.sqlのlucky_theme_forと同じ):
+    // 2000=緑/3000=赤/5000=金/10000=虹。
+    const theme = type === 'hotel' ? 'hotel' : (amount >= 10000 ? 'rainbow' : amount >= 5000 ? 'gold' : amount >= 3000 ? 'red' : amount >= 2000 ? 'green' : 'blue');
     const label = type === 'hotel' ? '高級ホテル宿泊券' : amount.toLocaleString('ja-JP') + '円';
     playLuckyAnimation({ theme, prizeLabel: label, winnerName: 'テスト 太郎', sub: '演出プレビュー' });
   }));
@@ -8845,6 +9581,16 @@ async function doSaveVehicle() {
 
 let healthAdminFilter = '';
 
+// 2026-09-05: 健診の絞り込みは「変数」と「チップの見た目」がバラバラに更新されていて、
+// 別画面から来たときに前回の絞り込みが残る(=カード件数と一覧件数がずれる)ことがあった。
+// 遷移元がどこであれ、絞り込みの設定はこの1関数を通す(state と表示を必ず同時に合わせる)。
+function setHealthAdminFilter(filter) {
+  healthAdminFilter = filter || '';
+  document.querySelectorAll('#screen-health-admin .filter-chip').forEach((chip) => {
+    chip.classList.toggle('active', (chip.dataset.healthFilter || '') === healthAdminFilter);
+  });
+}
+
 async function loadHealthAdminList() {
   const session = getSession();
   const listEl = document.getElementById('health-admin-warning-list');
@@ -8891,7 +9637,7 @@ async function doSaveAdminHealthRecord() {
       p_needs_retest: document.getElementById('health-admin-retest').checked,
       p_note: document.getElementById('health-admin-note').value.trim() || null,
     });
-    showScreen('employee-detail');
+    navReturn('employee-detail');
     await loadEmployeeDetailQual();
   } catch (e) {
     showError('health-admin-error', e.message || '保存に失敗しました。');
@@ -9368,7 +10114,8 @@ async function resetDailyReportForm() {
   // 日報履歴の詳細画面から「この日の内容を修正する」で来た場合は、今日ではなくその日を開く
   // (resetDailyReportFormは画面遷移のたびに自動で走るため、ここで両方が競合してentryが
   // 二重に読み込まれる不具合を避けるため、ここで一本化する)。
-  const target = dailyReportPrefillDate || todayJST();
+  const navSel = navCurrent() && navCurrent().screen === 'daily-report' ? navCurrent().selectedDate : null;
+  const target = dailyReportPrefillDate || navSel || todayJST();
   dailyReportPrefillDate = null;
   dateInput.value = target;
   loadDailyReportForDate(target);
@@ -10128,12 +10875,39 @@ async function loadDailyReportAdminList() {
 
 // ---------- 日報の要確認一覧(管理者、同日同現場の整合性チェック結果) ----------
 
+// 遷移時に渡された対象期間。HOME「要確認の日報」カードの件数は
+// admin_home_today_tasks が daily_report_review_ids(v_today-6, v_today) = 直近7日で数えているため、
+// 一覧も同じ窓で開かないと「カード N件 → 一覧 M件」がずれる。null は全期間。
+let dailyReportNeedsReviewState = null;
+// nav = { date, days, origin, returnTo }。days を渡すと date を末日とする直近 days 日で絞る。
+function openDailyReportNeedsReview(nav) {
+  const o = nav || {};
+  const state = buildNavState(o);
+  let from = null;
+  if (Number(o.days) > 0) {
+    const m = state.date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    d.setDate(d.getDate() - (Number(o.days) - 1));
+    from = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  dailyReportNeedsReviewState = { dateFrom: from, dateTo: from ? state.date : null, origin: state.origin, returnTo: state.returnTo };
+  showScreen('daily-report-needs-review-admin');
+}
+
 async function loadDailyReportNeedsReviewAdmin() {
   const session = getSession();
   const list = document.getElementById('daily-report-needs-review-list');
   list.innerHTML = '<div class="hint">読み込み中...</div>';
+  const range = dailyReportNeedsReviewState || { dateFrom: null, dateTo: null };
+  // 「どの期間を見ているのか」を必ず画面に出す(HOMEカードの件数と一覧の件数が一致する根拠になる)。
+  const rangeEl = document.getElementById('drnr-range');
+  if (rangeEl) {
+    rangeEl.textContent = range.dateFrom
+      ? `対象期間: ${formatJpDateWithDow(range.dateFrom)} 〜 ${formatJpDateWithDow(range.dateTo)}`
+      : '対象期間: すべて';
+  }
   try {
-    const rows = await rpc('admin_list_needs_review_daily_reports', { p_admin_employee_code: session.employeeCode, p_date_from: null, p_date_to: null });
+    const rows = await rpc('admin_list_needs_review_daily_reports', { p_admin_employee_code: session.employeeCode, p_date_from: range.dateFrom, p_date_to: range.dateTo });
     if (!rows || rows.length === 0) { list.innerHTML = '<div class="empty-state">要確認の日報はありません</div>'; return; }
     // 比較しやすいよう、日付+現場でグループ化して表示する。
     const groups = new Map();
@@ -10473,7 +11247,7 @@ function renderRequestDetailActions(sourceType, r) {
       const session = getSession();
       try {
         await rpc('admin_decide_supply_request', { p_admin_employee_code: session.employeeCode, p_request_id: currentRequestDetail.sourceId, p_rejection_reason: reason });
-        showScreen('admin-all-requests');
+        navReturn('admin-all-requests');
       } catch (e) { showError('rdetail-error', e.message || '処理に失敗しました。'); }
     });
   } else if (sourceType === 'entertainment_preapproval') {
@@ -10497,7 +11271,7 @@ function renderRequestDetailActions(sourceType, r) {
       const reasonEl = document.getElementById('rdetail-ent-reason');
       try {
         await rpc('admin_decide_entertainment_preapproval', { p_admin_employee_code: session.employeeCode, p_id: currentRequestDetail.sourceId, p_action: 'approved', p_exception_reason: reasonEl ? reasonEl.value.trim() : null });
-        showScreen('admin-all-requests');
+        navReturn('admin-all-requests');
       } catch (e) { showError('rdetail-error', e.message || '処理に失敗しました。'); }
     });
     document.getElementById('rdetail-ent-reject').addEventListener('click', () => {
@@ -10508,7 +11282,7 @@ function renderRequestDetailActions(sourceType, r) {
       const reason = document.getElementById('rdetail-ent-reject-reason').value.trim();
       try {
         await rpc('admin_decide_entertainment_preapproval', { p_admin_employee_code: session.employeeCode, p_id: currentRequestDetail.sourceId, p_action: 'rejected', p_exception_reason: reason || null });
-        showScreen('admin-all-requests');
+        navReturn('admin-all-requests');
       } catch (e) { showError('rdetail-error', e.message || '処理に失敗しました。'); }
     });
   } else if (sourceType === 'qualification') {
@@ -10531,7 +11305,7 @@ function renderRequestDetailActions(sourceType, r) {
       try {
         if (sourceType === 'site_proposal') await rpc(rejectRpc, { p_admin_employee_code: session.employeeCode, p_site_id: currentRequestDetail.sourceId, p_action: action });
         else await rpc(rejectRpc, { p_admin_employee_code: session.employeeCode, p_request_id: currentRequestDetail.sourceId, p_action: action, p_note: reason || null });
-        showScreen('admin-all-requests');
+        navReturn('admin-all-requests');
       } catch (e) { showError('rdetail-error', e.message || '処理に失敗しました。'); }
     };
     document.getElementById('rdetail-approve').addEventListener('click', () => decide('approved', null));
@@ -10551,7 +11325,7 @@ async function doRequestDetailDecide(action, reason) {
   hideError('rdetail-error');
   try {
     await rpc('admin_decide_request', { p_admin_employee_code: session.employeeCode, p_request_id: currentRequestDetail.sourceId, p_action: action, p_rejection_reason: reason });
-    showScreen('admin-all-requests');
+    navReturn('admin-all-requests');
   } catch (e) {
     showError('rdetail-error', e.message || '処理に失敗しました。');
   }
@@ -10748,10 +11522,15 @@ function renderDrmDateNav() {
 
 // 選択日が今日なら「本日」、過去/未来日なら「9月1日」のように表示する接頭辞。
 // 過去日を見ているのに「本日の社員/本日の未提出」と表示される矛盾をなくす。
-function drmDayPrefix() {
-  if (drmSelectedDate === todayJST()) return '本日';
-  const d = new Date(drmSelectedDate + 'T00:00:00');
-  return `${d.getMonth() + 1}月${d.getDate()}日`;
+// 2026-09-05: 引数で日付を受け取れるようにした(未指定時のみ drmSelectedDate を見る)。
+// 以前は drmSelectedDate だけを見ていたため、日報管理画面を経由せずHOMEから直接
+// 対象者一覧へ来ると null → new Date('nullT00:00:00') = Invalid Date → 「NaN月NaN日」になった。
+// normalizeNavDate を通すので、以後どの経路から来ても NaN にはならない。
+function drmDayPrefix(dateStr) {
+  const date = normalizeNavDate(dateStr != null ? dateStr : drmSelectedDate);
+  if (date === todayJST()) return '本日';
+  const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return `${Number(m[2])}月${Number(m[3])}日`;
 }
 
 // 未提出バナー(選択日)。日付切替でも選択日で再取得する。
@@ -10922,8 +11701,8 @@ function drmLateTagHtml(rows) {
 async function loadDailyReportManagement() {
   const session = getSession();
   // 日報管理は「日付」を主軸に。既定は本日の1日だけを表示(過去・未来日は日付ナビで移動)。
-  const today = todayJST();
-  drmSelectedDate = drmSelectedDate || today;
+  // 未初期化(null)・壊れた値は必ず本日へ落とす(normalizeNavDate が唯一の関門)。
+  drmSelectedDate = normalizeNavDate(drmSelectedDate);
   drmFilters = { name: '', workerType: '', status: '', dateFrom: drmSelectedDate, dateTo: drmSelectedDate, site: null, companyId: '' };
   drmSelected.clear();
   document.getElementById('drm-search-name').value = '';
@@ -10982,7 +11761,8 @@ async function loadDrmBreakdown() {
         <div class="drm-bd-row drm-bd-sub"><span>　└ その他対象外</span>${num('other_exempt', b.exempt_other + '名')}</div>
       </div>`;
     el.querySelectorAll('.drm-bd-num').forEach((btn) => {
-      btn.addEventListener('click', () => openDailyReportPeople(btn.dataset.bucket));
+      // 内訳の件数は選択日(drmSelectedDate)で数えているので、一覧にも同じ日を明示的に渡す。
+      btn.addEventListener('click', () => openDailyReportPeople(btn.dataset.bucket, { date: drmSelectedDate, origin: 'daily-report-management' }));
     });
     return b;
   } catch (e) {
@@ -11036,16 +11816,27 @@ const DRP_TITLES = {
   anomaly: '要確認の日報', unconfirmed: '配置を未確認の社員',
 };
 let dailyReportPeopleState = null;
-function openDailyReportPeople(bucket, title) {
-  // 対象者一覧も選択日で取得する(本日固定にしない)。過去日なら見出しも「9月1日の…」にする。
-  const t = (title || DRP_TITLES[bucket] || '対象者一覧').replace('本日', drmDayPrefix());
-  dailyReportPeopleState = { bucket, title: t, date: drmSelectedDate };
-  showScreen('daily-report-people');
+// bucket と「遷移時に渡す状態」を受け取って対象者一覧を開く。
+// opts = { date, title, origin, returnTo }(省略時は日報管理の選択日 → さらに省略時は本日)。
+// 2026-09-05: 第2引数の title 文字列だけを受ける旧シグネチャも維持する(呼び出し側の互換)。
+function openDailyReportPeople(bucket, opts) {
+  const o = (typeof opts === 'string') ? { title: opts } : (opts || {});
+  // 日付は必ず navState 経由で明示的に決める(グローバル変数の未初期化 null を下流へ流さない)。
+  const nav = buildNavState({ date: o.date != null ? o.date : drmSelectedDate, origin: o.origin, returnTo: o.returnTo, filter: bucket });
+  // 過去日なら見出しも「9月1日の…」にする(本日なら「本日の…」)。
+  const t = (o.title || DRP_TITLES[bucket] || '対象者一覧').replace('本日', drmDayPrefix(nav.date));
+  dailyReportPeopleState = { bucket, title: t, date: nav.date, origin: nav.origin, returnTo: nav.returnTo };
+  // 「日報管理に戻る」で開く画面が別の日を表示しないよう、選択日も同じ日に揃える。
+  drmSelectedDate = nav.date;
+  // 共通 Navigation(C): 日付・filter・戻り先を nav 状態として運ぶ(入った場所へ戻る)。
+  showScreen('daily-report-people', { nav: { selectedDate: nav.date, filter: bucket, returnTo: nav.returnTo } });
 }
 async function loadDailyReportPeople() {
   if (!dailyReportPeopleState) return;
   const session = getSession();
-  const { bucket, title, date } = dailyReportPeopleState;
+  const { bucket, title } = dailyReportPeopleState;
+  // 表示直前にも正規化する(state が古い/壊れていても NaN・NULL日付でRPCを呼ばない)。
+  const date = normalizeNavDate(dailyReportPeopleState.date);
   document.getElementById('drp-title').textContent = title;
   const listEl = document.getElementById('drp-list');
   const subEl = document.getElementById('drp-sub');
@@ -11054,7 +11845,8 @@ async function loadDailyReportPeople() {
   try {
     const rows = await rpc('admin_list_daily_report_people', { p_admin_employee_code: session.employeeCode, p_date: date, p_bucket: bucket });
     // §4: 取得成功して初めて件数を出す。0件は「対象者はいません」と明示(取得失敗と混同しない)。
-    subEl.textContent = `${(rows || []).length}名`;
+    // 対象日を必ず画面に出す(HOMEから直行したとき「どの日の一覧か」が画面上に無かった)。
+    subEl.textContent = `${formatJpDateWithDow(date)}・${(rows || []).length}名`;
     if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">対象者はいません。</div>'; return; }
     listEl.innerHTML = rows.map((r) => `
       <div class="history-item">
@@ -11082,9 +11874,11 @@ const DRM_CARD_TO_STATUS = {
 };
 function applyDrmCardFilter(cardKey) {
   // 未提出/対象外は選択日の対象者一覧へ。要確認は例外一覧へ。いずれも selectedDate 連動。
-  if (cardKey === 'employee_missing') { openDailyReportPeople('missing'); return; }
-  if (cardKey === 'employee_excluded') { openDailyReportPeople('exempt'); return; }
-  if (cardKey === 'needs_review_count') { showScreen('daily-report-needs-review-admin'); return; }
+  if (cardKey === 'employee_missing') { openDailyReportPeople('missing', { date: drmSelectedDate, origin: 'daily-report-management' }); return; }
+  if (cardKey === 'employee_excluded') { openDailyReportPeople('exempt', { date: drmSelectedDate, origin: 'daily-report-management' }); return; }
+  // 要確認カードの件数は admin_daily_report_day_summary が選択日1日で数えている。
+  // 一覧も同じ1日窓で開く(以前は期間指定なし=全期間で開いていて件数がずれた)。
+  if (cardKey === 'needs_review_count') { openDailyReportNeedsReview({ date: drmSelectedDate, days: 1, origin: 'daily-report-management' }); return; }
   // 提出済み: 選択日の提出済み日報一覧へ(status='submitted' は提出済み+確定を含む単一state再query)。
   drmFilters.dateFrom = drmSelectedDate; drmFilters.dateTo = drmSelectedDate;
   document.getElementById('drm-date-from').value = drmSelectedDate;
@@ -12964,9 +13758,16 @@ function init() {
   document.getElementById('pin-register-submit').addEventListener('click', doRegisterPin);
   document.getElementById('pin-register-back').addEventListener('click', resetRegisterSteps);
   document.getElementById('pin-register-switch').addEventListener('click', switchEmployee);
+  onId('pin-register-use-pin', 'click', fallBackToPinEntry);
 
   document.getElementById('device-pending-retry').addEventListener('click', retryDevicePending);
   document.getElementById('device-pending-switch').addEventListener('click', switchEmployee);
+
+  // 通信不良画面 (2026-09-05追加)
+  onId('connection-retry-btn', 'click', retryConnection);
+  onId('connection-retry-pin', 'click', fallBackToPinEntry);
+  // LINEの中のブラウザで開かれた場合の案内(Safariへの切り替えリンクを組み立てる)
+  setupLineBrowserNotice();
 
   document.getElementById('logout-btn').addEventListener('click', switchEmployee);
   document.getElementById('logout-btn-2').addEventListener('click', switchEmployee);
@@ -13063,9 +13864,7 @@ function init() {
   });
   document.querySelectorAll('#screen-health-admin .filter-chip').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('#screen-health-admin .filter-chip').forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      healthAdminFilter = btn.dataset.healthFilter;
+      setHealthAdminFilter(btn.dataset.healthFilter || '');
       loadHealthAdminList();
     });
   });
@@ -13449,24 +14248,19 @@ function init() {
     el.addEventListener('click', () => {
       const target = el.getAttribute('data-nav');
       if (el.disabled) return;
+      // 2026-09-05: 件数カード経由(期間指定あり)で開いた後の絞り込みが、メニューの
+      // 「要確認一覧」ボタンから開き直したときに残らないようにする。メニューからの入口は
+      // 「すべての期間」が正しい意味。戻る操作では期間を保持する。
+      const isBackNav = el.classList.contains('back-link') || el.classList.contains('back-to-origin');
+      if (target === 'daily-report-needs-review-admin' && !isBackNav) dailyReportNeedsReviewState = null;
       // 完了画面(screen-done)からの遷移は、完了画面自体を履歴に残さず置き換える
       // (この後さらに「戻る」を押しても完了画面へ戻ってくる=無限ループに見える、を防ぐ)。
       const leavingDone = document.getElementById('screen-done').classList.contains('active');
-      // 管理者画面の「戻る」は論理的な親画面(PARENT_ROUTE)へ固定(2026-09-05)。履歴の遷移元やボタンの
-      // data-nav ではなく表を正とする(index.html 側の data-nav は表と一致させ、監査で検出する)。
+      // 「戻る」系のコントロール(back-link / back-to-origin)は、画面ごとの固定 data-nav ではなく
+      // 共通ナビゲーション状態(navStack)から戻り先を決める = 入った場所へ戻る(2026-09-05 改訂)。
+      // data-nav は入口が分からないときの最終フォールバックとしてだけ使う。
       const isBackControl = el.classList.contains('back-link') || el.classList.contains('back-to-origin');
-      if (isBackControl) {
-        const cur = currentScreenId();
-        if (cur && PARENT_ROUTE[cur]) {
-          // 「戻る」は履歴を積まない(replace)。push すると、戻るを押すたびに履歴が伸び、ブラウザの戻るで
-          // いま離れた画面へ再入場してしまう(レビュー指摘 2026-09-05)。従来の history.back() と同じく
-          // 履歴が伸びないことを nav-flow(history.length 前後比較)で検証する。
-          if (PARENT_ROUTE[cur] === 'menu') { enterMenu(true); return; }
-          showScreen(PARENT_ROUTE[cur], { replace: true });
-          return;
-        }
-      }
-      if (el.classList.contains('back-to-origin')) { goBackToOrigin(target); return; }
+      if (isBackControl) { goBack(target); return; }
       if (target === 'menu') { enterMenu(leavingDone); return; }
       if (target === 'expense') { showScreen('expense-select', { replace: leavingDone }); return; }
       if (target === 'expense-advance') { enterExpenseScreen('employee_advance'); return; }
@@ -13780,8 +14574,13 @@ function init() {
     jdsPartnerFilter = '';
     document.getElementById('jds-site-filter').value = '';
     document.getElementById('jds-company-filter').value = '';
-    document.getElementById('jds-partner-filter').value = '';
-    document.getElementById('jds-range-result').style.display = 'none';
+    // jds-partner-filter は index.html に存在しない(app.js 側にだけ残った参照)。
+    // 無条件に .value を書くと常用台帳集計を開くたびに TypeError で入場処理が途中終了し、
+    // 月表示と集計の読み込みが走らなくなる(2026-09-05、ナビ横断テスト中に検出)。
+    const jdsPartnerEl = document.getElementById('jds-partner-filter');
+    if (jdsPartnerEl) jdsPartnerEl.value = '';
+    const jdsRangeEl = document.getElementById('jds-range-result');
+    if (jdsRangeEl) jdsRangeEl.style.display = 'none';
     updateJdsMonthDisplay();
     loadJoyoDenpyoSummary();
   };

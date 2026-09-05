@@ -16,6 +16,18 @@
 </head>
 <body>
 <div id="staging-banner" class="staging-banner">先行更新版｜通常版と同じデータです｜新機能を先にお試しいただけます</div>
+<!-- LINEアプリの中で開いていると、次に開いたときにログイン情報が消えることがある。
+     強制はせず、SafariやChromeで開き直す方法とホーム画面への追加を案内する。 -->
+<div id="line-browser-notice" style="display:none;background:#fff6e0;border-bottom:1px solid #f0d9a0;color:#5a4412;padding:10px 14px;font-size:.86rem;line-height:1.6;">
+  <div style="font-weight:700;margin-bottom:4px;">LINEの中で開いています</div>
+  <div>このままでもお使いいただけますが、次に開いたときにログインし直しになることがあります。
+    下のボタンでブラウザで開き直すと、次回から暗証番号の入力も不要になります。</div>
+  <a id="line-open-external" href="#" style="display:inline-block;margin-top:8px;background:#12213f;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;font-weight:700;">ブラウザで開き直す</a>
+  <div style="margin-top:8px;font-size:.8rem;">
+    開いたあと、画面下の共有ボタン（<span style="font-weight:700;">⬆</span>）から「ホーム画面に追加」をしておくと、次からアプリのように開けます。
+  </div>
+  <button type="button" id="line-notice-close" style="margin-top:8px;background:none;border:none;color:#7a6a45;text-decoration:underline;padding:0;font-size:.8rem;width:auto;">閉じる</button>
+</div>
 <header class="app-header">
   <img src="brand/logo-gold.png" alt="迅翔興業" class="app-header-logo">
   <span class="app-header-title" id="app-header-title">外注ポータル</span>
@@ -30,6 +42,7 @@
       <div class="card">
         <div class="hint" style="margin-top:0;">外注作業員の方の入口です。所属会社を選んで登録を始めてください。会社からIDを受け取る必要はありません。</div>
         <button id="welcome-register-btn">はじめての方はこちら（外注登録）</button>
+        <button class="menu-btn secondary" id="welcome-recover-btn" style="margin-top:12px;">登録済みの方（暗証番号でログイン）</button>
         <button class="menu-btn secondary" id="welcome-first-login-btn" style="margin-top:12px;">会社で登録済みの方（登録コードではじめる）</button>
         <button class="menu-btn secondary" id="welcome-relink-btn" style="margin-top:12px;">機種変更・別の端末で登録済みの方</button>
       </div>
@@ -56,6 +69,30 @@
       <input type="password" id="reg-pin2" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
       <div class="error" id="register-error"></div>
       <button id="register-submit">登録してはじめる</button>
+    </div>
+  </section>
+
+  <!-- 登録済みの方の復帰: 作業員IDを知らなくても 会社+氏名+暗証番号 で戻れる入口。
+       端末のログイン情報が消えた利用者が行き止まりにならないための画面(2026-09-05)。 -->
+  <section id="screen-recover" class="screen">
+    <button class="back-btn" data-back="welcome">← もどる</button>
+    <div class="card">
+      <div class="section-title">登録済みの方のログイン</div>
+      <div class="hint" style="margin-top:0;">前に登録したことがある方はこちらです。作業員IDを覚えていなくても大丈夫です。</div>
+      <label for="rec-company" style="margin-top:10px">所属する外注会社<span style="color:#e23b3b">（必須）</span></label>
+      <select id="rec-company"></select>
+      <label for="rec-name" style="margin-top:10px">氏名<span style="color:#e23b3b">（必須）</span></label>
+      <input type="text" id="rec-name" autocomplete="off">
+      <label for="rec-pin" style="margin-top:10px">暗証番号<span style="color:#e23b3b">（必須）</span></label>
+      <input type="password" id="rec-pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+      <div id="rec-phone-wrap" style="display:none">
+        <label for="rec-phone" style="margin-top:10px">電話番号</label>
+        <input type="tel" id="rec-phone" inputmode="tel" autocomplete="off">
+        <div class="hint">同じ氏名の方が複数いるため、電話番号でご本人を確認します。ハイフンはあってもなくても大丈夫です。</div>
+      </div>
+      <div class="error" id="recover-error"></div>
+      <button id="recover-submit">ログイン</button>
+      <button class="link" id="recover-to-register" style="margin-top:10px;">はじめての方はこちら（外注登録）</button>
     </div>
   </section>
 
@@ -278,6 +315,24 @@
     <div class="card" id="att-existing-wrap" style="display:none">
       <div class="section-title">本日 登録済みの内容</div>
       <div id="att-existing-list"></div>
+    </div>
+  </section>
+
+  <!-- 登録完了。登録できたことをはっきり伝え、自分の作業員IDを一度見せる。
+       これが無いと、登録は成功しているのに「登録できなかった」と受け取られる(2026-09-05)。 -->
+  <section id="screen-registered" class="screen">
+    <div class="card done-card">
+      <div class="done-check">✓</div>
+      <div class="done-title">登録が完了しました</div>
+      <div class="done-sub" id="registered-name"></div>
+      <div style="margin-top:16px;background:#f4f7fc;border:1px solid #dbe4f2;border-radius:10px;padding:14px;">
+        <div style="font-size:.82rem;color:#5b6b8a;">あなたの作業員ID</div>
+        <div id="registered-login-code" style="font-size:1.5rem;font-weight:800;letter-spacing:.06em;color:#12213f;margin-top:4px;">-</div>
+        <div class="hint" style="margin-top:8px;">この端末が覚えているので、次回からIDの入力は不要です。念のため控えておくと安心です。</div>
+      </div>
+      <div class="hint" style="margin-top:12px;text-align:left;">もしこの端末のログイン情報が消えてしまっても、最初の画面の「登録済みの方（暗証番号でログイン）」から、会社・氏名・暗証番号だけで戻れます。</div>
+      <button id="registered-continue-btn" style="margin-top:16px;">つづける（出勤報告へ）</button>
+      <button class="menu-btn secondary" id="registered-profile-btn" style="margin-top:10px;">個人情報・資格・健康診断を登録する</button>
     </div>
   </section>
 

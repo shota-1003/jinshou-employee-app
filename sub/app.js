@@ -14,11 +14,64 @@ let loginCode = null;
 let deviceToken = null;
 let currentWorker = null; // {name, company}
 
-function loadAuth() {
-  try { const a = JSON.parse(localStorage.getItem(SUB_AUTH_KEY) || 'null'); if (a && a.loginCode) { loginCode = a.loginCode; deviceToken = a.token || null; } } catch (e) {}
+// ログイン情報の保存先を localStorage だけに頼らない(2026-09-05)。
+// 外注端末の大半はLINEアプリ内ブラウザで、localStorageが次回起動時に残らないことがある。
+// localStorage / cookie / sessionStorage の3か所へ書き、読むときはこの順で最初に見つかった
+// ものを使う。cookieはHTTPS前提でSameSite=Laxを付ける(同一サイト遷移では送られる)。
+const AUTH_MAX_AGE_DAYS = 180;
+
+function readCookieAuth() {
+  try {
+    const m = (document.cookie || '').match(new RegExp('(?:^|; )' + SUB_AUTH_KEY + '=([^;]*)'));
+    return m ? JSON.parse(decodeURIComponent(m[1])) : null;
+  } catch (e) { return null; }
 }
-function saveAuth() { try { localStorage.setItem(SUB_AUTH_KEY, JSON.stringify({ loginCode, token: deviceToken })); } catch (e) {} }
-function clearAuth() { try { localStorage.removeItem(SUB_AUTH_KEY); } catch (e) {} loginCode = null; deviceToken = null; currentWorker = null; }
+function writeCookieAuth(value) {
+  try {
+    const v = encodeURIComponent(JSON.stringify(value));
+    const maxAge = AUTH_MAX_AGE_DAYS * 24 * 60 * 60;
+    const secure = location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = `${SUB_AUTH_KEY}=${v}; Max-Age=${maxAge}; Path=/; SameSite=Lax${secure}`;
+  } catch (e) {}
+}
+function deleteCookieAuth() {
+  try { document.cookie = `${SUB_AUTH_KEY}=; Max-Age=0; Path=/; SameSite=Lax`; } catch (e) {}
+}
+
+function loadAuth() {
+  const sources = [
+    () => JSON.parse(localStorage.getItem(SUB_AUTH_KEY) || 'null'),
+    () => readCookieAuth(),
+    () => JSON.parse(sessionStorage.getItem(SUB_AUTH_KEY) || 'null'),
+  ];
+  for (const read of sources) {
+    let a = null;
+    try { a = read(); } catch (e) { a = null; }
+    if (a && a.loginCode) {
+      loginCode = a.loginCode;
+      deviceToken = a.token || null;
+      saveAuth(); // 見つかった値を他の保存先へも書き戻して冗長性を回復する
+      return;
+    }
+  }
+}
+function saveAuth() {
+  const value = { loginCode, token: deviceToken };
+  try { localStorage.setItem(SUB_AUTH_KEY, JSON.stringify(value)); } catch (e) {}
+  try { sessionStorage.setItem(SUB_AUTH_KEY, JSON.stringify(value)); } catch (e) {}
+  writeCookieAuth(value);
+}
+function clearAuth() {
+  try { localStorage.removeItem(SUB_AUTH_KEY); } catch (e) {}
+  try { sessionStorage.removeItem(SUB_AUTH_KEY); } catch (e) {}
+  deleteCookieAuth();
+  loginCode = null; deviceToken = null; currentWorker = null;
+}
+
+// LINEアプリ内ブラウザ判定。UA末尾に " Line/26.13.0" のように付く。
+function isLineInAppBrowser() {
+  try { return / Line\//i.test(navigator.userAgent || ''); } catch (e) { return false; }
+}
 
 async function rpc(name, params) {
   const headers = { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' };
@@ -48,9 +101,40 @@ function todayJST() {
 }
 
 // ---- 起動 ----
+// LINEアプリ内ブラウザ向けの案内(強制はしない)。?openExternalBrowser=1 を付けたリンクを
+// LINE内で開くと、LINEが外部ブラウザ(Safari/Chrome)へ渡してくれる。
+function setupLineBrowserNotice() {
+  if (!isLineInAppBrowser()) return;
+  const box = $('line-browser-notice');
+  if (!box) return;
+  const link = $('line-open-external');
+  if (link) {
+    const url = new URL(location.href);
+    url.searchParams.set('openExternalBrowser', '1');
+    link.setAttribute('href', url.toString());
+  }
+  const close = $('line-notice-close');
+  if (close) close.addEventListener('click', () => { box.style.display = 'none'; });
+  box.style.display = 'block';
+}
+
 async function boot() {
+  // 失敗を errors テーブルへ残す。これが無かったため、外注側で何が起きているかを
+  // 誰も観測できない状態が続いていた(2026-09-05)。
+  try {
+    if (window.ClientErrorReporter && window.ClientErrorReporter.init) {
+      window.ClientErrorReporter.init({
+        supabaseUrl: SUPABASE_URL,
+        supabaseAnonKey: SUPABASE_ANON_KEY,
+        agentName: 'jinshou-subcontractor-app',
+        getEmployeeCode: () => loginCode || null,
+      });
+    }
+  } catch (e) { /* 監視の初期化失敗で本体を止めない */ }
+
   loadAuth();
   if (IS_STAGING) { const b = $('staging-banner'); if (b) b.style.display = 'block'; }
+  setupLineBrowserNotice();
   bindEvents();
   if (loginCode && deviceToken) {
     // 端末トークンでセッション再開(IDは端末が保持・入力不要)
@@ -76,11 +160,16 @@ async function boot() {
 function bindEvents() {
   // 入口: 外注登録(自己登録) / 機種変更(本人再確認)
   $('welcome-register-btn').addEventListener('click', openRegister);
+  $('welcome-recover-btn').addEventListener('click', () => openRecover());
   $('welcome-first-login-btn').addEventListener('click', () => openFirstLogin());
   $('welcome-relink-btn').addEventListener('click', openRelink);
   $('register-submit').addEventListener('click', doSelfRegister);
   $('first-login-submit').addEventListener('click', doFirstLogin);
   $('relink-submit').addEventListener('click', doRelink);
+  $('recover-submit').addEventListener('click', doRecover);
+  $('recover-to-register').addEventListener('click', openRegister);
+  $('registered-continue-btn').addEventListener('click', () => { enterHome(); openAttendance(); });
+  $('registered-profile-btn').addEventListener('click', () => { enterHome(); openProfile(); });
 
   // 暗証番号ログイン(2回目以降・IDは端末が記憶)
   $('pin-entry-submit').addEventListener('click', doPinLogin);
@@ -159,18 +248,84 @@ async function doSelfRegister() {
   if (!phone) { setErr('register-error', '電話番号を入力してください。'); return; }
   if (!pin || pin.length < 4) { setErr('register-error', '暗証番号は4〜6桁で決めてください。'); return; }
   if (pin !== pin2) { setErr('register-error', '暗証番号(確認)が一致しません。'); return; }
+  // 登録そのもの(通信・RPC)の成否と、登録後の画面遷移の成否を必ず分ける。
+  // 以前は enterHome()/openProfile() まで同じ try に入っていたため、登録が成功した後に
+  // 画面側で例外が起きると「登録に失敗しました」と表示され、実際にはDBに登録済みという
+  // 食い違いが起きうる状態だった(2026-09-05)。
+  let row = null;
   try {
     const r = await rpc('subcontractor_self_register', { p_company_id: Number(companyId), p_worker_name: name, p_pin: pin, p_furigana: $('reg-furigana').value.trim() || null, p_phone: phone });
+    row = Array.isArray(r) ? r[0] : r;
+    if (!row || !row.out_device_token) throw new Error('登録に失敗しました。もう一度お試しください。');
+  } catch (e) {
+    const msg = (e && e.message) ? String(e.message) : '';
+    // 既に登録済みの場合は行き止まりにせず、暗証番号でのログインへその場で誘導する。
+    if (/既に登録があります|already/i.test(msg)) {
+      openRecover({ companyId, name, notice: 'すでに登録があります。暗証番号でログインしてください。' });
+      return;
+    }
+    setErr('register-error', msg || '登録に失敗しました。');
+    return;
+  }
+
+  loginCode = row.out_login_code;
+  deviceToken = row.out_device_token;
+  currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+  saveAuth();
+  ['reg-name', 'reg-furigana', 'reg-phone', 'reg-pin', 'reg-pin2'].forEach((id) => { const el = $(id); if (el) el.value = ''; });
+
+  // 登録できたことをはっきり見せる。画面側で何かあっても登録の成功は取り消さない。
+  try {
+    $('registered-name').textContent = (currentWorker.name || '') + ' さん（' + (currentWorker.company || '') + '）';
+    $('registered-login-code').textContent = loginCode || '-';
+    showScreen('registered');
+  } catch (e) {
+    try { enterHome(); } catch (e2) { /* ホームも描けない場合でも登録済みの事実は保持する */ }
+  }
+}
+
+// 登録済みの方の復帰。作業員IDを知らなくても 会社+氏名+暗証番号 で戻れる。
+async function openRecover(prefill) {
+  setErr('recover-error', (prefill && prefill.notice) || '');
+  const phoneWrap = $('rec-phone-wrap');
+  if (phoneWrap) phoneWrap.style.display = 'none';
+  // 氏名は会社一覧の取得を待たずに先に入れる(利用者がすぐ操作を始めても消えないように)。
+  if (prefill && prefill.name) $('rec-name').value = prefill.name;
+  showScreen('recover');
+  await loadCompanyOptions('rec-company');
+  // 会社は選択肢が揃ってからでないと選べない。取得後に改めて選択する。
+  if (prefill && prefill.companyId) $('rec-company').value = String(prefill.companyId);
+}
+
+async function doRecover() {
+  const companyId = $('rec-company').value;
+  const name = $('rec-name').value.trim();
+  const pin = $('rec-pin').value.trim();
+  const phone = $('rec-phone').value.trim();
+  if (!companyId) { setErr('recover-error', '所属する外注会社を選んでください。'); return; }
+  if (!name) { setErr('recover-error', '氏名を入力してください。'); return; }
+  if (!pin) { setErr('recover-error', '暗証番号を入力してください。'); return; }
+  setErr('recover-error', '');
+  try {
+    const r = await rpc('subcontractor_recover_device', {
+      p_company_id: Number(companyId), p_worker_name: name, p_pin: pin, p_phone: phone || null,
+    });
     const row = Array.isArray(r) ? r[0] : r;
-    if (!row || !row.out_device_token) throw new Error('登録に失敗しました。');
+    if (!row || !row.out_device_token) throw new Error('ログインに失敗しました。');
     loginCode = row.out_login_code; deviceToken = row.out_device_token;
     currentWorker = { name: row.out_worker_name, company: row.out_company_name };
     saveAuth();
-    ['reg-name', 'reg-furigana', 'reg-phone', 'reg-pin', 'reg-pin2'].forEach((id) => { $(id).value = ''; });
-    // 登録後は資格・健診の登録へ誘導
+    ['rec-name', 'rec-pin', 'rec-phone'].forEach((id) => { const el = $(id); if (el) el.value = ''; });
     enterHome();
-    openProfile();
-  } catch (e) { setErr('register-error', e.message || '登録に失敗しました。'); }
+  } catch (e) {
+    const msg = (e && e.message) ? String(e.message) : '';
+    // 同姓同名が複数いる場合だけ電話番号を追加で尋ねる。
+    if (/電話番号も入力してください/.test(msg)) {
+      const wrap = $('rec-phone-wrap');
+      if (wrap) wrap.style.display = 'block';
+    }
+    setErr('recover-error', msg || 'ログインに失敗しました。');
+  }
 }
 
 // 機種変更/別端末: 会社+氏名+電話+暗証番号で本人再確認 → 既存IDへ端末再紐付け(新規作成しない)。

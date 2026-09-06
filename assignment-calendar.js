@@ -4817,7 +4817,7 @@
         function openVehicleMasterSheet() {
             sheet('車両マスター', async (box) => {
                 box.append(el('div', 'ac-schedmeta',
-                    '車両の登録・編集・使用停止は、社員ポータルの「管理 → 車両マスター管理」で行います。'
+                    '車両の登録・編集・使用停止は、社員ポータルの「日報管理 → トラックマスター」(管理者は「管理 → 車両マスター管理」でも可)で行います。'
                     + 'ここで見えているのは、そこに登録されている使用中の車両です。'));
                 const list = el('div', 'ac-list');
                 box.append(list);

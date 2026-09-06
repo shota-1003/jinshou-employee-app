@@ -1835,7 +1835,7 @@ async function renderHomeAdminBanner(session) {
         <span class="main-menu-card-icon">${icon('clipboard-list')}</span>
         <span style="text-align:left;">
           <span class="main-menu-label" style="display:block;">日報管理(日報担当)</span>
-          <span class="main-menu-desc">日報の確認・未提出者確認・外注代理入力</span>
+          <span class="main-menu-desc">日報の確認・未提出者確認・新規現場の承認・トラックマスター</span>
         </span>
         <span style="margin-left:auto; color:var(--text-faint);">${icon('chevron-right')}</span>
       </button>
@@ -4453,7 +4453,13 @@ async function isNippoAdmin() {
   const session = getSession();
   try {
     _nippoAdminCache = await rpc('check_nippo_admin', { p_employee_code: session.employeeCode });
-  } catch (e) { _nippoAdminCache = false; }
+  } catch (e) {
+    // 2026-09-07: 通信不良・混雑(statement_timeout)で確認できなかっただけなら「権限なし」として固定しない。
+    // 以前は false をタブ内キャッシュしていたため、一度失敗すると再読込まで 日報管理・トラックマスターの
+    // 入口が丸ごと消えた(日報管理権限者の実機で「表示されない」の一因になり得る)。次回の呼び出しで再確認する。
+    _nippoAdminCache = null;
+    return false;
+  }
   return _nippoAdminCache;
 }
 

@@ -932,6 +932,13 @@
       <div class="menu-item-body">新規現場の確認<span class="desc">日報・経費申請から入力された承認待ちの新規現場を承認/却下</span></div>
       <span class="icon-slot arrow" data-icon="chevron-right"></span>
     </button>
+    <!-- 2026-09-07: 日報管理権限者(nippo_admin)はトラックマスター(車両)を管理できる(既存の権限仕様の未反映修正)。
+         管理者ダッシュボードの車両マスター管理と同じ画面。実機で「見つからない」とならないよう、画面最上部(新規現場の確認の直下)に置く。 -->
+    <button type="button" class="menu-item" id="drm-vehicle-master-btn" data-nav="vehicle-admin" style="margin-bottom:12px;">
+      <span class="icon-slot" data-icon="package"></span>
+      <div class="menu-item-body">トラックマスター<span class="desc">車両の追加・編集・使用停止/再開(配置の運搬で選べる車両)</span></div>
+      <span class="icon-slot arrow" data-icon="chevron-right"></span>
+    </button>
 
     <!-- 日付主軸: 選択した1日だけを表示。前後移動・今日・その日の件数要約。 -->
     <div class="card" id="drm-date-nav" style="margin-bottom:10px;"></div>
@@ -953,8 +960,6 @@
     <button type="button" id="drm-notify-btn">未提出者へ「本日の日報が未提出です」を通知する</button>
     <button type="button" class="secondary" id="drm-autoconfirm-btn">本日分を自動確認ルールで一括確認する</button>
     <div class="hint-inline" id="drm-autoconfirm-result"></div>
-    <!-- 2026-09-07: 日報管理権限者はトラックマスター(車両)を管理できる(既存の権限仕様の未反映修正)。管理者ダッシュボードの車両マスター管理と同じ画面へ入る。 -->
-    <button type="button" class="secondary" id="drm-vehicle-master-btn" data-nav="vehicle-admin">🚚 トラックマスター(車両の追加・編集・使用停止/再開)</button>
 
     <div class="home-card-grid" style="margin:16px 0;">
       <button type="button" class="home-card" data-nav="daily-report-admin">

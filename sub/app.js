@@ -9,10 +9,20 @@ const SUPABASE_ANON_KEY = 'sb_publishable_UVAjFJSjIs7Sl2tMpLWRkQ_uyDw9eyW';
 // ↓ここはStaging/Productionのビルド差し替えマーカー(employee-appと同じ運用)。手で書き換えない。
 const IS_STAGING = false; // BUILD_FLAG_IS_STAGING
 
-const SUB_AUTH_KEY = 'jinshou_sub_auth'; // localStorage {loginCode, token}
+const SUB_AUTH_KEY = 'jinshou_sub_auth'; // localStorage {loginCode, token, companyId, companyName, workerName}
+// 社員ポータル(このサイトのルート)と共有する目印。同一オリジンなので、パスが /sub/ でも
+// localStorage と Path=/ のCookieはルート側から読める。ルート側はこの目印を見て、
+// 登録済みの外注さんを「社員の方/外注の方」の選択画面を通さずにここへ転送する
+// (2026-09-06 社長指摘への対応)。認証はあくまで端末トークンで行うため、
+// この目印が偽装されてもホームには入れず、外注のログイン画面が出るだけ。
+const PORTAL_PREF_KEY = 'jinshou_portal_pref';
+const PORTAL_PREF_VALUE = 'sub';
 let loginCode = null;
 let deviceToken = null;
 let currentWorker = null; // {name, company}
+// 端末が覚えている「前回ログインした人」の表示用情報(秘密情報ではない。暗証番号は保存しない)。
+// 社員ポータルが社員番号を覚えているのと同じ扱いで、入力の手間を減らすためだけに使う。
+let rememberedProfile = { companyId: null, companyName: null, workerName: null };
 
 // ログイン情報の保存先を localStorage だけに頼らない(2026-09-05)。
 // 外注端末の大半はLINEアプリ内ブラウザで、localStorageが次回起動時に残らないことがある。
@@ -38,6 +48,20 @@ function deleteCookieAuth() {
   try { document.cookie = `${SUB_AUTH_KEY}=; Max-Age=0; Path=/; SameSite=Lax`; } catch (e) {}
 }
 
+// 「この端末は外注ポータルで使われている」目印。ルート(社員ポータル)から読める場所へ書く。
+function writePortalPref() {
+  try { localStorage.setItem(PORTAL_PREF_KEY, PORTAL_PREF_VALUE); } catch (e) {}
+  try {
+    const maxAge = AUTH_MAX_AGE_DAYS * 24 * 60 * 60;
+    const secure = location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = `${PORTAL_PREF_KEY}=${PORTAL_PREF_VALUE}; Max-Age=${maxAge}; Path=/; SameSite=Lax${secure}`;
+  } catch (e) {}
+}
+function clearPortalPref() {
+  try { localStorage.removeItem(PORTAL_PREF_KEY); } catch (e) {}
+  try { document.cookie = `${PORTAL_PREF_KEY}=; Max-Age=0; Path=/; SameSite=Lax`; } catch (e) {}
+}
+
 function loadAuth() {
   const sources = [
     () => JSON.parse(localStorage.getItem(SUB_AUTH_KEY) || 'null'),
@@ -50,22 +74,82 @@ function loadAuth() {
     if (a && a.loginCode) {
       loginCode = a.loginCode;
       deviceToken = a.token || null;
+      rememberedProfile = {
+        companyId: a.companyId || null,
+        companyName: a.companyName || null,
+        workerName: a.workerName || null,
+      };
       saveAuth(); // 見つかった値を他の保存先へも書き戻して冗長性を回復する
       return;
     }
   }
 }
 function saveAuth() {
-  const value = { loginCode, token: deviceToken };
+  const value = {
+    loginCode,
+    token: deviceToken,
+    companyId: rememberedProfile.companyId || null,
+    companyName: rememberedProfile.companyName || null,
+    workerName: rememberedProfile.workerName || null,
+  };
   try { localStorage.setItem(SUB_AUTH_KEY, JSON.stringify(value)); } catch (e) {}
   try { sessionStorage.setItem(SUB_AUTH_KEY, JSON.stringify(value)); } catch (e) {}
   writeCookieAuth(value);
+  writePortalPref();
+}
+// ログイン・登録が成功したときに、次回の入力を減らすための情報を覚える(暗証番号は覚えない)。
+function rememberProfile(companyId, row) {
+  rememberedProfile = {
+    companyId: companyId != null ? Number(companyId) : (rememberedProfile.companyId || null),
+    companyName: (row && row.out_company_name) || rememberedProfile.companyName || null,
+    workerName: (row && row.out_worker_name) || rememberedProfile.workerName || null,
+  };
 }
 function clearAuth() {
   try { localStorage.removeItem(SUB_AUTH_KEY); } catch (e) {}
   try { sessionStorage.removeItem(SUB_AUTH_KEY); } catch (e) {}
   deleteCookieAuth();
+  clearPortalPref();
   loginCode = null; deviceToken = null; currentWorker = null;
+  rememberedProfile = { companyId: null, companyName: null, workerName: null };
+}
+
+// ---- 表記ゆれの吸収(入力側) ----------------------------------------------
+// 「名前の間のスペース有無でログインできない」を防ぐ。DB側(RPC)でも同じ正規化を行うが、
+// 端末側でも整えて送ることで、比較の対象になる文字列そのものを揃える。
+// 全角スペース・タブ・連続スペースを取り除き、全角英数字を半角へ寄せる。
+function toHalfWidthAlnum(s) {
+  return String(s || '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+}
+function normalizeNameInput(s) {
+  return toHalfWidthAlnum(String(s || '').replace(/[\s　]+/g, '')).trim();
+}
+// 会社名の表記ゆれ(株式会社/(株)/㈱、空白、全角半角)を吸収した比較用のキー。
+function normalizeCompanyKey(s) {
+  let v = toHalfWidthAlnum(String(s || ''));
+  v = v.replace(/[\s　]+/g, '');
+  v = v.replace(/株式会社|㈱|\(株\)|（株）|有限会社|㈲|\(有\)|（有）/g, '');
+  return v.toLowerCase();
+}
+// 電話番号は数字だけにして送る(DB側 normalize_phone_digits と同じ考え方)。
+function normalizePhoneInput(s) {
+  return toHalfWidthAlnum(String(s || '')).replace(/[^0-9]/g, '');
+}
+// 会社の選択肢から、覚えている会社を選び直す。IDが一致しなければ会社名で照合する
+// (会社マスタが作り直されてIDが変わっていても、名前で拾えるようにするため)。
+function selectRememberedCompany(selectId) {
+  const sel = $(selectId);
+  if (!sel) return false;
+  const id = rememberedProfile.companyId;
+  if (id != null) {
+    const byId = Array.from(sel.options).find((o) => String(o.value) === String(id));
+    if (byId) { sel.value = byId.value; return true; }
+  }
+  const key = normalizeCompanyKey(rememberedProfile.companyName);
+  if (!key) return false;
+  const byName = Array.from(sel.options).find((o) => o.value && normalizeCompanyKey(o.textContent) === key);
+  if (byName) { sel.value = byName.value; return true; }
+  return false;
 }
 
 // LINEアプリ内ブラウザ判定。UA末尾に " Line/26.13.0" のように付く。
@@ -141,10 +225,27 @@ async function boot() {
     try {
       const r = await rpc('subcontractor_resume_session', { p_login_code: loginCode });
       const row = Array.isArray(r) ? r[0] : r;
-      if (row && row.out_worker_id) { currentWorker = { name: row.out_worker_name, company: row.out_company_name }; enterHome(); return; }
+      if (row && row.out_worker_id) {
+        currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+        // 端末が「会社・氏名」をまだ覚えていない世代の端末でも、ここで覚え直す
+        // (次にトークンが切れたときに、暗証番号だけの画面で名前を出せるようにする)。
+        rememberProfile(rememberedProfile.companyId, row);
+        saveAuth();
+        enterHome();
+        return;
+      }
     } catch (e) { /* 期限切れ等 → 暗証番号ログインへ */ }
-    // トークンが無効: この端末は登録済みなので暗証番号だけで再ログイン
-    $('pin-entry-name').textContent = 'おかえりなさい';
+    // トークンが無効: この端末は登録済みなので暗証番号だけで再ログイン。
+    // 端末が覚えている氏名を出す(「会社名と暗証番号だけ入れたら名前が出る」への対応。
+    // 名前は端末の中だけの表示用で、サーバーへ問い合わせて出しているわけではない)。
+    $('pin-entry-name').textContent = rememberedProfile.workerName
+      ? `${rememberedProfile.workerName} さん、おかえりなさい`
+      : 'おかえりなさい';
+    const pinCompany = $('pin-entry-company');
+    if (pinCompany) {
+      pinCompany.textContent = rememberedProfile.companyName ? `所属: ${rememberedProfile.companyName}` : '';
+      pinCompany.style.display = rememberedProfile.companyName ? 'block' : 'none';
+    }
     showScreen('pin-entry');
     return;
   }
@@ -214,6 +315,7 @@ async function doPinLogin() {
     if (!row || !row.out_device_token) throw new Error('ログインに失敗しました。');
     deviceToken = row.out_device_token;
     currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+    rememberProfile(rememberedProfile.companyId, row);
     saveAuth();
     $('pin-entry-code').value = '';
     enterHome();
@@ -235,7 +337,9 @@ async function openRegister() {
 }
 async function openRelink() {
   setErr('relink-error', ''); showScreen('relink');
+  if (rememberedProfile.workerName && !$('relink-name').value) $('relink-name').value = rememberedProfile.workerName;
   await loadCompanyOptions('relink-company');
+  selectRememberedCompany('relink-company');
 }
 
 // 外注 自己登録(ID自動採番)。登録完了で loginCode/token を端末保持し、次回は暗証番号だけで再ログイン。
@@ -274,6 +378,7 @@ async function doSelfRegister() {
   loginCode = row.out_login_code;
   deviceToken = row.out_device_token;
   currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+  rememberProfile(companyId, row);
   saveAuth();
   ['reg-name', 'reg-furigana', 'reg-phone', 'reg-pin', 'reg-pin2'].forEach((id) => { const el = $(id); if (el) el.value = ''; });
 
@@ -293,18 +398,24 @@ async function openRecover(prefill) {
   const phoneWrap = $('rec-phone-wrap');
   if (phoneWrap) phoneWrap.style.display = 'none';
   // 氏名は会社一覧の取得を待たずに先に入れる(利用者がすぐ操作を始めても消えないように)。
-  if (prefill && prefill.name) $('rec-name').value = prefill.name;
+  // 前回この端末でログインした人の氏名を覚えていれば、それも初期値として入れる
+  // (「会社名と暗証番号だけで入れるようにしてほしい」への対応。暗証番号は覚えない)。
+  const presetName = (prefill && prefill.name) || rememberedProfile.workerName || '';
+  if (presetName) $('rec-name').value = presetName;
   showScreen('recover');
   await loadCompanyOptions('rec-company');
   // 会社は選択肢が揃ってからでないと選べない。取得後に改めて選択する。
   if (prefill && prefill.companyId) $('rec-company').value = String(prefill.companyId);
+  else selectRememberedCompany('rec-company');
 }
 
 async function doRecover() {
   const companyId = $('rec-company').value;
-  const name = $('rec-name').value.trim();
+  // 氏名の空白の入れ方(山田太郎 / 山田 太郎 / 山田　太郎)でログインできなくならないよう、
+  // 送る前に端末側でも空白を落として全角英数を半角へ寄せる(DB側も同じ正規化で照合する)。
+  const name = normalizeNameInput($('rec-name').value);
   const pin = $('rec-pin').value.trim();
-  const phone = $('rec-phone').value.trim();
+  const phone = normalizePhoneInput($('rec-phone').value);
   if (!companyId) { setErr('recover-error', '所属する外注会社を選んでください。'); return; }
   if (!name) { setErr('recover-error', '氏名を入力してください。'); return; }
   if (!pin) { setErr('recover-error', '暗証番号を入力してください。'); return; }
@@ -317,6 +428,7 @@ async function doRecover() {
     if (!row || !row.out_device_token) throw new Error('ログインに失敗しました。');
     loginCode = row.out_login_code; deviceToken = row.out_device_token;
     currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+    rememberProfile(companyId, row);
     saveAuth();
     ['rec-name', 'rec-pin', 'rec-phone'].forEach((id) => { const el = $(id); if (el) el.value = ''; });
     enterHome();
@@ -335,8 +447,8 @@ async function doRecover() {
 async function doRelink() {
   setErr('relink-error', '');
   const companyId = $('relink-company').value;
-  const name = $('relink-name').value.trim();
-  const phone = $('relink-phone').value.trim();
+  const name = normalizeNameInput($('relink-name').value);
+  const phone = normalizePhoneInput($('relink-phone').value);
   const pin = $('relink-pin').value.trim();
   if (!companyId || !name || !phone || !pin) { setErr('relink-error', '会社・氏名・電話番号・暗証番号をすべて入力してください。'); return; }
   try {
@@ -345,6 +457,7 @@ async function doRelink() {
     if (!row || !row.out_device_token) throw new Error('本人確認に失敗しました。');
     loginCode = row.out_login_code; deviceToken = row.out_device_token;
     currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+    rememberProfile(companyId, row);
     saveAuth();
     ['relink-name', 'relink-phone', 'relink-pin'].forEach((id) => { $(id).value = ''; });
     enterHome();
@@ -378,6 +491,7 @@ async function doFirstLogin() {
     if (!row || !row.out_device_token) throw new Error('初回登録に失敗しました。');
     loginCode = lc; deviceToken = row.out_device_token;
     currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+    rememberProfile(null, row);
     saveAuth();
     ['fl-login-code', 'fl-code', 'fl-pin', 'fl-pin2'].forEach((id) => { $(id).value = ''; });
     // QRのパラメータをURLから消す(戻る/再読込でコードが残らないように)。

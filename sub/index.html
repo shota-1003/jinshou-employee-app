@@ -46,6 +46,13 @@
         <button class="menu-btn secondary" id="welcome-first-login-btn" style="margin-top:12px;">会社で登録済みの方（登録コードではじめる）</button>
         <button class="menu-btn secondary" id="welcome-relink-btn" style="margin-top:12px;">機種変更・別の端末で登録済みの方</button>
       </div>
+      <!-- 登録済みの外注さんは社員ポータルの選択画面を通らずここへ来るため、社員の方が
+           間違って辿り着いたときの戻り道を必ず用意する(2026-09-06)。
+           ?portal=employee を付けて開くと、社員ポータル側は外注ポータルへ転送しない。 -->
+      <div class="card" style="margin-top:12px;">
+        <div class="hint" style="margin-top:0;">社員の方(社員番号をお持ちの方)はこちらです。</div>
+        <a class="menu-btn secondary" id="welcome-employee-link" href="../?portal=employee" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">社員ポータルへ</a>
+      </div>
     </div>
   </section>
 
@@ -139,6 +146,9 @@
     <div class="login-wrap">
       <img src="brand/logo-gold.png" alt="迅翔興業" class="login-logo">
       <div class="login-company" id="pin-entry-name">読み込み中...</div>
+      <!-- この端末が覚えている所属会社。名前と会社が出ることで「自分の入口で合っている」
+           と分かるようにする(2026-09-06 社長指摘への対応)。 -->
+      <div class="hint" id="pin-entry-company" style="display:none;margin-top:-6px;margin-bottom:10px;text-align:center;"></div>
       <div class="card">
         <label for="pin-entry-code">暗証番号を入力してください</label>
         <input type="password" id="pin-entry-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">

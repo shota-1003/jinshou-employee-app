@@ -2867,6 +2867,8 @@
         // 車両マスターは社員ポータルが持つ共通マスター(vehicles)。カレンダーは読むだけで、
         // 独自の車両情報を持たない。登録・編集は社員ポータルの「車両マスター管理」で行う。
         let vehicleCache = null;
+        // 2026-09-07: トラックマスターで追加・停止・再開した直後に、運搬の車両選択へ即反映する(画面を開き直さなくてよい)。
+        document.addEventListener('jinshou:vehicles-changed', () => { vehicleCache = null; });
         async function loadVehicles() {
             if (vehicleCache) return vehicleCache;
             vehicleCache = await rpc('portal_list_vehicles',

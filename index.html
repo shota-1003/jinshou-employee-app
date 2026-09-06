@@ -953,6 +953,8 @@
     <button type="button" id="drm-notify-btn">未提出者へ「本日の日報が未提出です」を通知する</button>
     <button type="button" class="secondary" id="drm-autoconfirm-btn">本日分を自動確認ルールで一括確認する</button>
     <div class="hint-inline" id="drm-autoconfirm-result"></div>
+    <!-- 2026-09-07: 日報管理権限者はトラックマスター(車両)を管理できる(既存の権限仕様の未反映修正)。管理者ダッシュボードの車両マスター管理と同じ画面へ入る。 -->
+    <button type="button" class="secondary" id="drm-vehicle-master-btn" data-nav="vehicle-admin">🚚 トラックマスター(車両の追加・編集・使用停止/再開)</button>
 
     <div class="home-card-grid" style="margin:16px 0;">
       <button type="button" class="home-card" data-nav="daily-report-admin">
@@ -2557,7 +2559,7 @@
        将来ここへ車検期限・自賠責/任意保険・点検・修理履歴・リース期限・必要免許を足していく。 -->
   <section id="screen-vehicle-admin" class="screen">
     <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
-    <div class="form-title">車両マスター管理</div>
+    <div class="form-title">トラックマスター(車両マスター管理)</div>
     <div class="hint" style="margin-bottom:12px;">会社の車両の名簿です。配置カレンダーの運搬で選べる車両は、ここに「使用中」で登録されているものです。使わなくなった車両は消さずに「使用停止」にしてください（過去の配置の記録が読めなくなるため）。</div>
     <div class="card">
       <div class="form-title" style="font-size:15px;">車両を追加</div>
@@ -2572,7 +2574,18 @@
         <option value="own">自社</option>
         <option value="lease">リース</option>
       </select>
-      <label for="vehicle-type">車種</label>
+      <label for="vehicle-type-code">車両種別</label>
+      <select id="vehicle-type-code"><option value="">(未設定)</option></select>
+      <div class="hint-inline">種別はマスター(キャブ / 2t / 3t / 4t / 10t …)から選びます。無い種別は下の「種別を追加」で追加できます(コードへ埋め込みません)。</div>
+      <details id="vehicle-type-add" style="margin:6px 0 10px;"><summary class="link">種別を追加</summary>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">
+          <input type="text" id="vehicle-type-new-code" placeholder="コード(例: 8t)" style="flex:1;min-width:90px;">
+          <input type="text" id="vehicle-type-new-label" placeholder="表示名(例: 8t)" style="flex:1;min-width:90px;">
+          <button type="button" class="secondary" id="vehicle-type-add-btn" style="flex:none;">追加</button>
+        </div>
+        <div class="error" id="vehicle-type-error"></div>
+      </details>
+      <label for="vehicle-type">車種メモ(任意)</label>
       <input type="text" id="vehicle-type" placeholder="例: ユニック / 平ボディ / ダンプ">
       <label for="vehicle-size">サイズ / 積載区分</label>
       <input type="text" id="vehicle-size" placeholder="例: 4t / 8t / 10t">

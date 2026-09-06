@@ -10799,12 +10799,39 @@ function resetVehicleForm() {
   hideError('vehicle-error');
 }
 
+// 車両種別マスター(vehicle_types)。コードへ埋め込まず、常にサーバーから読む。
+async function loadVehicleTypeOptions(selectedCode) {
+  const session = getSession();
+  const sel = document.getElementById('vehicle-type-code');
+  if (!sel) return [];
+  let types = [];
+  try { types = await rpc('portal_list_vehicle_types', { p_employee_code: session.employeeCode, p_include_inactive: false }) || []; } catch (e) { types = []; }
+  sel.innerHTML = '<option value="">(未設定)</option>' + types.map((t) => `<option value="${vehEsc(t.code)}">${vehEsc(t.label)}</option>`).join('');
+  if (selectedCode) sel.value = selectedCode;
+  return types;
+}
+async function doAddVehicleType() {
+  const session = getSession();
+  const code = (document.getElementById('vehicle-type-new-code').value || '').trim().toLowerCase();
+  const label = (document.getElementById('vehicle-type-new-label').value || '').trim() || code;
+  hideError('vehicle-type-error');
+  if (!code) { showError('vehicle-type-error', '種別のコード(例: 8t)を入力してください。'); return; }
+  try {
+    await rpc('portal_upsert_vehicle_type', { p_employee_code: session.employeeCode, p_code: code, p_label: label });
+    document.getElementById('vehicle-type-new-code').value = ''; document.getElementById('vehicle-type-new-label').value = '';
+    await loadVehicleTypeOptions(code);
+  } catch (e) { showError('vehicle-type-error', e.message || '種別を追加できませんでした。'); }
+}
+// 車両マスターが変わったことを、同じ画面内で動く配置カレンダー(assignment-calendar.js のキャッシュ)へ知らせる。
+function notifyVehiclesChanged() { try { document.dispatchEvent(new CustomEvent('jinshou:vehicles-changed')); } catch (e) { } }
+
 async function loadVehicleAdminList() {
   const session = getSession();
   const listEl = document.getElementById('vehicle-admin-list');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
   resetVehicleForm();
   try {
+    await loadVehicleTypeOptions('');
     const rows = await rpc('portal_list_vehicles', { p_employee_code: session.employeeCode, p_include_inactive: true });
     if (!rows.length) {
       listEl.innerHTML = '<div class="hint">まだ1台も登録されていません。</div>';
@@ -10813,7 +10840,7 @@ async function loadVehicleAdminList() {
     listEl.innerHTML = rows.map((v) => `
       <div class="supply-item" data-id="${v.id}" style="${v.is_active ? '' : 'opacity:.5;'}">
         <div class="row1"><span>${vehEsc(v.name)}</span><span>${v.is_active ? '使用中' : '使用停止'}</span></div>
-        <div class="row2">${v.ownership === 'lease' ? 'リース' : '自社'}${v.vehicle_type ? ' / ' + vehEsc(v.vehicle_type) : ''}${v.size_class ? ' / ' + vehEsc(v.size_class) : ''} / ${v.plate_number ? vehEsc(v.plate_number) : 'ナンバー未登録（使う日に入力）'}</div>
+        <div class="row2">${v.ownership === 'lease' ? 'リース' : '自社'}${v.vehicle_type_label ? ' / ' + vehEsc(v.vehicle_type_label) : ''}${v.vehicle_type ? ' / ' + vehEsc(v.vehicle_type) : ''}${v.size_class ? ' / ' + vehEsc(v.size_class) : ''} / ${v.plate_number ? vehEsc(v.plate_number) : 'ナンバー未登録（使う日に入力）'}</div>
         ${v.note ? `<div class="row2">${vehEsc(v.note)}</div>` : ''}
         <div class="qual-verify-btns">
           <button type="button" class="edit-vehicle-btn">編集</button>
@@ -10831,6 +10858,7 @@ async function loadVehicleAdminList() {
         document.getElementById('vehicle-plate').value = v.plate_number || '';
         document.getElementById('vehicle-ownership').value = v.ownership === 'lease' ? 'lease' : 'own';
         document.getElementById('vehicle-type').value = v.vehicle_type || '';
+        const tc = document.getElementById('vehicle-type-code'); if (tc) tc.value = v.vehicle_type_code || '';
         document.getElementById('vehicle-size').value = v.size_class || '';
         document.getElementById('vehicle-note').value = v.note || '';
         document.getElementById('vehicle-submit').textContent = 'この車両を更新する';
@@ -10846,6 +10874,7 @@ async function loadVehicleAdminList() {
             p_vehicle_id: Number(item.dataset.id),
             p_active: btn.dataset.active !== 'true',
           });
+          notifyVehiclesChanged();
         } catch (e) { showError('vehicle-error', e.message || '変更できませんでした。'); }
         loadVehicleAdminList();
       });
@@ -10874,7 +10903,9 @@ async function doSaveVehicle() {
       p_size_class: document.getElementById('vehicle-size').value.trim(),
       p_is_active: true,
       p_note: document.getElementById('vehicle-note').value.trim(),
+      p_vehicle_type_code: (document.getElementById('vehicle-type-code') || {}).value || null,
     });
+    notifyVehiclesChanged();
     await loadVehicleAdminList();
   } catch (e) {
     showError('vehicle-error', e.message || '保存に失敗しました。');
@@ -16286,8 +16317,11 @@ function init() {
     loadLicenseTypeAdminList();
   };
   document.getElementById('vehicle-submit').addEventListener('click', doSaveVehicle);
-  SCREEN_ENTER_HOOKS['vehicle-admin'] = () => {
-    if (!isAdmin()) { enterMenu(); return; }
+  const vtAdd = document.getElementById('vehicle-type-add-btn'); if (vtAdd) vtAdd.addEventListener('click', doAddVehicleType);
+  // 2026-09-07: トラックマスターは 管理者 or 日報管理権限(nippo_admin)が管理できる(DB の require_vehicle_admin と同じ判定)。
+  // 以前は isAdmin()(executive のみ)で、DB/RPC は通るのに画面に入れない未反映状態だった。
+  SCREEN_ENTER_HOOKS['vehicle-admin'] = async () => {
+    if (!(await isNippoAdmin())) { enterMenu(); return; }
     loadVehicleAdminList();
   };
   SCREEN_ENTER_HOOKS['health-admin'] = () => {

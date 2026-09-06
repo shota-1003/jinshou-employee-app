@@ -92,7 +92,15 @@ async function rpc(name, params, opts) {
     // SupabaseのRPCエラー(RAISE EXCEPTIONのメッセージ)はJSONで返るため、
     // 表示用に読みやすいメッセージだけを取り出す(生JSONをそのまま見せない)。
     let message = `通信エラー(${res.status})`;
-    try { const parsed = JSON.parse(text); if (parsed && parsed.message) message = parsed.message; } catch { /* JSONでなければそのまま */ }
+    let parsedErr = null;
+    try { parsedErr = JSON.parse(text); if (parsedErr && parsedErr.message) message = parsedErr.message; } catch { /* JSONでなければそのまま */ }
+    // 2026-09-07 本番実測: 混雑時に get_admin_dashboard が anon の statement_timeout(3 秒)で 1 回だけ 500(57014)になった。
+    // タイムアウトで取り消された文はコミットされていない(PostgREST は 1 呼び出し 1 トランザクション)ため、1 回だけ自動で再試行しても
+    // 二重登録にはならない。2 回目も失敗したら従来どおりエラーを表示する。
+    if (res.status >= 500 && parsedErr && parsedErr.code === '57014' && !opts._retriedTimeout) {
+      await new Promise((r) => setTimeout(r, 700));
+      return rpc(name, params, Object.assign({}, opts, { _retriedTimeout: true }));
+    }
     // 端末が無効化された/退職・利用停止になった等でセッションが失効した場合は、
     // その場のエラー表示だけで終わらせず、ログイン画面へ強制的に戻す。
     // 想定内の認証拒否(auth rejection)は「Productionエラー」ではなく通常フロー。

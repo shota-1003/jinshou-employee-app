@@ -13321,8 +13321,10 @@ function applyDrmCardFilter(cardKey) {
   drmFilters.dateFrom = drmSelectedDate; drmFilters.dateTo = drmSelectedDate;
   document.getElementById('drm-date-from').value = drmSelectedDate;
   document.getElementById('drm-date-to').value = drmSelectedDate;
-  drmFilters.workerType = '';
-  document.querySelectorAll('#drm-worker-type-filter .filter-chip').forEach((b, i) => b.classList.toggle('active', i === 0));
+  // 2026-09-07: 提出済みカードは社員の人数(admin_daily_report_day_summary.employee_submitted)なので、一覧も社員だけに絞る。
+  // 以前は社員・外注を混ぜた一覧を開いていたため「提出済み 0 → 一覧 2 件」の食い違いが出た(外注は下の外注未提出バナーで別管理)。
+  drmFilters.workerType = 'employee';
+  document.querySelectorAll('#drm-worker-type-filter .filter-chip').forEach((b) => b.classList.toggle('active', (b.dataset.workerType || b.dataset.type || '') === 'employee'));
   drmFilters.status = 'submitted';
   document.querySelectorAll('#drm-status-filter .filter-chip').forEach((b) => {
     b.classList.toggle('active', (b.dataset.status || '') === 'submitted');

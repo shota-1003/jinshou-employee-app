@@ -10721,6 +10721,13 @@ async function loadLoanAdminList() {
           <button type="button" class="reject-btn loan-decide" data-act="reject">却下</button>
         </div>` : ''}
         ${r.status === 'approved' ? loanBuildPaymentSectionHtml(r) : ''}
+        <div class="settlement-sheet-wrap" style="margin-top:8px;">
+          <div class="settlement-sheet-head">
+            <span>借入申請書（税理士提出用）</span>
+            <button type="button" class="secondary loan-sheet-toggle">閉じる</button>
+          </div>
+          <div class="settlement-sheet-scroll loan-sheet-box">${loanRenderRequestSheetHtml(r)}</div>
+        </div>
       </div>`).join('');
     listEl.querySelectorAll('.loan-decide').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -10736,8 +10743,72 @@ async function loadLoanAdminList() {
         } catch (e) { btn.disabled = false; alert(e.message || '処理に失敗しました。'); }
       });
     });
+    listEl.querySelectorAll('.loan-sheet-toggle').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const box = btn.closest('.settlement-sheet-wrap').querySelector('.loan-sheet-box');
+        const hidden = box.style.display === 'none';
+        box.style.display = hidden ? '' : 'none';
+        btn.textContent = hidden ? '閉じる' : '開く';
+      });
+    });
     wireLoanPaymentSection(listEl, session);
   } catch (e) { listEl.innerHTML = '<div class="hint">この画面には経理承認権限が必要です。</div>'; }
+}
+
+// 借入申請1件を「紙」として表示する(経費立替の経費精算書〔renderSettlementSheet〕と同じ様式。
+// 2026-09-10 Shota指摘「経費みたいな感じにしてってお願いしたじゃん、あの紙はどうやって出てくるの」
+// への対応。まとめ月次一覧〔screen-loan-monthly-ledger〕とは別に、1件ずつもこの画面その場で
+// 見えるようにする)。
+function loanRenderRequestSheetHtml(r) {
+  const esc = (v) => String(v === null || v === undefined ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const yenFmt = (n) => (n === null || n === undefined || n === '' ? '' : `${Number(n).toLocaleString('ja-JP')}円`);
+  const ymd = (d) => {
+    if (!d) return '';
+    const dt = new Date(d);
+    return Number.isNaN(dt.getTime()) ? String(d) : `${dt.getFullYear()}年${dt.getMonth() + 1}月${dt.getDate()}日`;
+  };
+  const breakdown = Array.isArray(r.breakdown) ? r.breakdown : [];
+  const MIN_ROWS = 6;
+  const blanks = Math.max(0, MIN_ROWS - breakdown.length);
+  const payLabel = r.payment_status === 'paid' ? (LOAN_RECEIPT_LABEL[r.payment_method] || '振込み')
+    : '現金　・　振込み';
+  const approvalNote = r.status === 'approved' ? `承認済み${r.decided_by ? `(${esc(r.decided_by)})` : ''}`
+    : r.status === 'rejected' ? `却下${r.decided_by ? `(${esc(r.decided_by)})` : ''}`
+      : r.status === 'returned' ? '差し戻し' : '未承認（承認するとここに承認者名が入ります）';
+  return `
+    <div class="settlement-sheet">
+      <div class="ss-title">借 入 申 請 書</div>
+      <div class="ss-meta">
+        申請日：<b>${ymd(r.request_date)}</b><br>
+        氏　名：<b>${esc(r.employee_name)}</b><br>
+        必要日：<b>${ymd(r.needed_by_date)}</b>
+      </div>
+      <table>
+        <tr><th style="width:56%;">使 用 目 的</th><th>金 額</th></tr>
+        ${breakdown.map((b) => `<tr><td class="small">${esc(b.purpose)}</td><td class="num">${yenFmt(b.amount)}</td></tr>`).join('')}
+        ${Array.from({ length: blanks }).map(() => '<tr><td></td><td></td></tr>').join('')}
+        <tr><th>理由</th><td class="small" colspan="1">${esc(r.reason)}</td></tr>
+      </table>
+      <div class="ss-bottom">
+        <div class="ss-admin">
+          <div style="font-size:10.5px;margin-bottom:2px;">［管理欄］</div>
+          <table>
+            <tr><th style="width:80px;">支 払 日</th><td>${r.scheduled_payment_date ? `${ymd(r.scheduled_payment_date)}${r.payment_status === 'paid' ? '' : '（予定）'}` : '　年　　月　　日'}</td></tr>
+            <tr><th>支払方法</th><td>${payLabel}</td></tr>
+            <tr><th>承認状況</th><td style="font-size:10.5px;">${approvalNote}</td></tr>
+          </table>
+        </div>
+        <div class="ss-total">
+          <table>
+            <tr><th style="width:100px;">借入希望額</th><td class="num">${yenFmt(r.amount)}</td></tr>
+          </table>
+          <div class="ss-note">受取方法　${esc(LOAN_RECEIPT_LABEL[r.receipt_method] || '')}</div>
+        </div>
+      </div>
+      <div class="ss-company">株式会社　迅翔興業</div>
+    </div>`;
 }
 
 // 承認済みの借入申請に「支払(承認とは別の状態)」欄を出す。経費立替(exdBuildPaymentSectionHtml)と

@@ -5327,6 +5327,7 @@ async function loadAnnouncements(includeArchived) {
 const DASH_CARDS = [
   { key: 'pending_expense_approvals', filter: 'expense', label: '経費立替 承認待ち', icon: 'receipt', status: 'pending' },
   { key: 'pending_leave_approvals', filter: 'leave', label: '有給申請 承認待ち', icon: 'calendar', status: 'pending' },
+  { key: 'pending_loan_requests', filter: null, label: '借入申請 承認待ち', icon: 'banknote', nav: 'loan-admin', status: 'pending' },
   { key: 'pending_meeting_approvals', filter: 'meeting', label: '会議申請 承認待ち', icon: 'users-round', status: 'pending' },
   { key: 'pending_supply_requests', filter: 'supply', label: '支給品申請 確認待ち', icon: 'package', status: 'pending' },
   { key: 'needs_correction_count', filter: 'needs_correction', label: '確認・修正が必要な申請', icon: 'edit', status: 'pending' },
@@ -10739,34 +10740,49 @@ async function loadLoanAdminList() {
   } catch (e) { listEl.innerHTML = '<div class="hint">この画面には経理承認権限が必要です。</div>'; }
 }
 
-// 承認済みの借入申請に「支払予定日」「支払を記録する」欄を出す(経費立替の支払管理と同じ考え方、
-// 2026-09-10 Shota指示「経費と一緒でいつ払うとかまで登録できるようにしとかんと」)。
+// 承認済みの借入申請に「支払(承認とは別の状態)」欄を出す。経費立替(exdBuildPaymentSectionHtml)と
+// 同じ構成にする(2026-09-10 Shota指摘「経費みたいに出るんかなと思ったら全然でんかった」
+// 「ボタン押したらもう勝手に支払い済みまで行った」= 現在の状態がひと目で分からないまま
+// 記録ボタンだけがあったため、常に現在の支払状態を先に見せる構成へ作り直した)。
 function loanBuildPaymentSectionHtml(r) {
   const paid = r.payment_status === 'paid';
   const dOnly = (v) => (v ? String(v).slice(0, 10) : '');
-  return `
-    <div class="card" style="margin-top:8px;padding:8px;background:var(--panel-2,#f7f7f7);">
-      <div class="row2" style="font-weight:700;">支払状況: ${LOAN_PAYMENT_STATUS_LABEL[r.payment_status] || r.payment_status}
-        ${r.scheduled_payment_date ? `　支払予定日: ${formatJpDate(dOnly(r.scheduled_payment_date))}` : ''}
-        ${paid ? `　支払日: ${formatJpDate(dOnly(r.paid_at))}` : ''}
-      </div>
-      ${!paid ? `
-      <div class="field-row" style="margin-top:6px;">
-        <label>支払予定日</label>
-        <input type="date" class="loan-schedule-date" value="${dOnly(r.scheduled_payment_date)}" style="width:160px;">
-        <button type="button" class="secondary loan-schedule-save" style="width:auto;padding:6px 10px;">支払予定日を記録する</button>
-      </div>
-      <div class="field-row" style="margin-top:6px;">
-        <label>支払日</label>
-        <input type="date" class="loan-paid-date" value="${dOnly(r.scheduled_payment_date) || todayJST()}" style="width:160px;">
-        <select class="loan-paid-method" style="width:120px;">
-          <option value="bank_transfer">振込み</option>
-          <option value="cash">現金</option>
-        </select>
-        <button type="button" class="loan-paid-save" style="width:auto;padding:6px 10px;">支払を記録する</button>
-      </div>
-      <div class="error loan-payment-error"></div>` : ''}
+  const dJp = (v) => (v ? formatJpDate(dOnly(v)) : '未実施');
+  let html = `<div class="card" style="margin-top:8px;padding:10px;">
+    <div class="form-title" style="font-size:14px;margin-top:0;">支払(承認とは別の状態です)</div>
+    <div class="field-group">
+      ${exdRowText('支払の状態', LOAN_PAYMENT_STATUS_LABEL[r.payment_status] || r.payment_status)}
+      ${exdRow('支払予定日', dJp(r.scheduled_payment_date))}
+      ${exdRowText('支払予定を入れた人', r.scheduled_payment_by)}
+      ${exdRow('支払日(実際に払った日)', dJp(r.paid_at))}
+      ${exdRowText('支払方法', LOAN_RECEIPT_LABEL[r.payment_method] || r.payment_method)}
+      ${exdRowText('支払処理をした人', r.paid_by)}
     </div>`;
+  if (!paid) {
+    html += `<div class="exd-pay-form">
+      <label>支払予定日</label>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <input type="date" class="loan-schedule-date" style="width:160px;" value="${exdEsc(dOnly(r.scheduled_payment_date))}">
+        <button type="button" class="secondary loan-schedule-save">支払予定日を記録する</button>
+      </div>
+      <label>支払日<span class="required-mark">(必須)</span></label>
+      <div class="hint-inline">銀行振込の予約など、これから振り込む日(未来の日付)も入れられます。</div>
+      <input type="date" class="loan-paid-date" value="${exdEsc(dOnly(r.scheduled_payment_date) || todayJST())}">
+      <label>支払方法</label>
+      <select class="loan-paid-method">
+        <option value="">選択してください</option>
+        <option value="bank_transfer">銀行振込</option>
+        <option value="cash">現金</option>
+      </select>
+      <label>備考</label>
+      <input type="text" class="loan-paid-note" placeholder="例: 9月分まとめて振込">
+      <div class="hint-inline">支払処理をした人として、いまログインしている管理者の名前が記録されます。</div>
+      <div class="error loan-payment-error"></div>
+      <button type="button" class="loan-paid-save">支払を記録する</button>
+    </div>`;
+  }
+  html += '</div>';
+  return html;
 }
 
 // 借入台帳(月次): その月に申請された借入を1枚の紙にまとめる(2026-09-10 Shota指示)。
@@ -10875,12 +10891,13 @@ function wireLoanPaymentSection(listEl, session) {
       const errEl = item.querySelector('.loan-payment-error');
       const v = item.querySelector('.loan-paid-date').value;
       const method = item.querySelector('.loan-paid-method').value;
+      const note = item.querySelector('.loan-paid-note').value;
       if (errEl) errEl.textContent = '';
       if (!v) { if (errEl) errEl.textContent = '支払日を入力してください。'; return; }
       if (!confirm('支払を記録します。よろしいですか?')) return;
       btn.disabled = true;
       try {
-        await rpc('admin_record_loan_payment', { p_admin_employee_code: session.employeeCode, p_id: id, p_paid_at: v, p_payment_method: method });
+        await rpc('admin_record_loan_payment', { p_admin_employee_code: session.employeeCode, p_id: id, p_paid_at: v, p_payment_method: method || null, p_note: note || null });
         loadLoanAdminList();
       } catch (e) { btn.disabled = false; if (errEl) errEl.textContent = e.message || '記録できませんでした。'; }
     });

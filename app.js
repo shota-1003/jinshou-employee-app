@@ -10755,8 +10755,20 @@ async function loadLoanAdminDetail() {
     const rows = await rpc('admin_list_loan_requests', { p_admin_employee_code: session.employeeCode, p_status: null });
     const r = (rows || []).find((x) => Number(x.id) === Number(loanAdminDetailId));
     if (!r) { body.innerHTML = '<div class="hint">対象の借入申請が見つかりません。</div>'; return; }
+    // 2026-09-10 Shota指摘(強め)「こういうふうにしないと見えないって言ってんじゃん」。
+    // .card の中に紙(settlement-sheet-wrap)をネストすると幅が潰れて小さくなる
+    // (経費の画面〔screen-bulk-expense-detail〕では settlement-sheet-wrap は .card の外、
+    // 画面直下の独立した要素になっている)。紙は必ず.cardの外・画面の一番上に置き、
+    // 経費とまったく同じ構造にする。
     body.innerHTML = `
-      <div class="card" data-id="${r.id}">
+      <div class="settlement-sheet-wrap">
+        <div class="settlement-sheet-head">
+          <span>借入申請書（税理士提出用）</span>
+          <button type="button" class="secondary loan-sheet-toggle">閉じる</button>
+        </div>
+        <div class="settlement-sheet-scroll loan-sheet-box">${loanRenderRequestSheetHtml(r)}</div>
+      </div>
+      <div class="card" data-id="${r.id}" style="margin-top:14px;">
         <div class="row1"><span style="font-weight:700;font-size:16px;">${(r.employee_name || '').replace(/</g, '&lt;')}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${LOAN_STATUS_LABEL[r.status] || r.status}</span></div>
         <div class="field-group" style="margin-top:8px;">
           ${exdRowText('申請日', r.request_date)}
@@ -10775,15 +10787,8 @@ async function loadLoanAdminDetail() {
           <button type="button" class="reject-btn loan-decide" data-act="return">差し戻し</button>
           <button type="button" class="reject-btn loan-decide" data-act="reject">却下</button>
         </div>` : ''}
-        ${r.status === 'approved' ? loanBuildPaymentSectionHtml(r) : ''}
-        <div class="settlement-sheet-wrap" style="margin-top:10px;">
-          <div class="settlement-sheet-head">
-            <span>借入申請書（税理士提出用）</span>
-            <button type="button" class="secondary loan-sheet-toggle">閉じる</button>
-          </div>
-          <div class="settlement-sheet-scroll loan-sheet-box">${loanRenderRequestSheetHtml(r)}</div>
-        </div>
-      </div>`;
+      </div>
+      ${r.status === 'approved' ? loanBuildPaymentSectionHtml(r) : ''}`;
     body.querySelectorAll('.loan-decide').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const comment = (document.getElementById('loan-admin-detail-comment') || {}).value || '';
@@ -10872,7 +10877,7 @@ function loanBuildPaymentSectionHtml(r) {
   const paid = r.payment_status === 'paid';
   const dOnly = (v) => (v ? String(v).slice(0, 10) : '');
   const dJp = (v) => (v ? formatJpDate(dOnly(v)) : '未実施');
-  let html = `<div class="card" style="margin-top:8px;padding:10px;">
+  let html = `<div class="card" data-id="${r.id}" style="margin-top:10px;">
     <div class="form-title" style="font-size:14px;margin-top:0;">支払(承認とは別の状態です)</div>
     <div class="field-group">
       ${exdRowText('支払の状態', LOAN_PAYMENT_STATUS_LABEL[r.payment_status] || r.payment_status)}

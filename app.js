@@ -481,7 +481,7 @@ const BOTTOM_NAV_MAP = {
   announcements: 'announcements',
   history: 'history', 'my-expense-ledger': 'history',
   myinfo: 'myinfo', 'leave-history': 'myinfo', 'my-supply': 'myinfo', 'my-qual': 'myinfo', 'my-health': 'myinfo',
-  'my-change-requests': 'myinfo', 'profile-edit': 'myinfo', 'pin-change': 'myinfo', 'anon-consult': 'myinfo', 'anon-submit': 'myinfo',
+  'my-change-requests': 'myinfo', 'profile-edit': 'myinfo', 'pin-change': 'myinfo', 'widget-setup': 'myinfo', 'anon-consult': 'myinfo', 'anon-submit': 'myinfo',
   'anon-done': 'myinfo', 'anon-thread': 'myinfo', 'my-entertainment': 'myinfo', 'my-daily-reports': 'myinfo',
   'entertainment-update': 'myinfo', 'entertainment-late-submit': 'myinfo',
 };
@@ -6635,6 +6635,73 @@ function exdSettlementSheetHtml(full) {
   </div>`;
 }
 
+// 「支払(承認とは別の状態)」節の中身(タイトル・現在の支払状態・支払の記録・支払記録フォーム)。
+// renderExpenseRequestDetailHtmlから、通常位置(明細の下)と画面上部の強調表示の両方で
+// 同じidのフォームを二重に出さないよう、1回だけ組み立てて呼び出し側が配置場所を決める。
+function exdBuildPaymentSectionHtml(full, opts) {
+  const isAdmin = !!(opts && opts.isAdmin);
+  const a = full.amounts || {}; const pay = full.payment || {}; const payable = full.payable || {};
+  const yen = (n) => (n == null || n === '' ? '-' : `${Number(n).toLocaleString('ja-JP')}円`);
+  const dOnly = (v) => (v ? (/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? new Date(`${v}T00:00:00`).toLocaleDateString('ja-JP') : new Date(v).toLocaleDateString('ja-JP')) : '未実施');
+  let html = `<div class="form-title" style="font-size:15px;">支払(承認とは別の状態です)</div>
+    <div class="field-group">
+      ${exdRowText('支払の状態', EXD_PAYMENT_STATUS_LABEL[pay.status] || pay.status)}
+      ${exdRow('支払予定日', dOnly(pay.scheduled_payment_date))}
+      ${exdRowText('支払予定を入れた人', pay.scheduled_payment_by)}
+      ${exdRow('支払日(実際に払った日)', dOnly(pay.paid_at))}
+      ${exdRow('支払済み金額', yen(pay.paid_amount))}
+      ${exdRowText('支払方法', pay.payment_method)}
+      ${exdRowText('支払処理をした人', pay.paid_by_name)}
+      ${exdRow('未払い残額', yen(a.remaining))}
+    </div>`;
+  const payments = Array.isArray(pay.payments) ? pay.payments : [];
+  html += `<div class="hint-inline"><strong>支払の記録</strong>(取消した支払も履歴として残ります)</div>`;
+  // 2026-09-06追加: 取消(voided)と反対仕訳(赤伝 reversal)を区別して出す。
+  // 金額の訂正は「取消 → 正しい金額で再登録」の2手順。元の行は消さない(監査のため)。
+  html += payments.length === 0
+    ? '<div class="hint-inline">支払の記録はまだありません。</div>'
+    : payments.map((p) => {
+      const tag = p.is_reversal ? '<span class="mini-tag warn">取消(赤伝)</span>'
+        : (p.is_voided ? '<span class="mini-tag warn">取消済み</span>' : '');
+      const voidLine = p.is_voided
+        ? `<div class="row2">取消: ${exdText(p.voided_by)}・理由: ${exdEsc(p.void_reason || '')}</div>` : '';
+      const btn = (isAdmin && p.can_void)
+        ? `<button type="button" class="secondary danger exd-void-pay-btn" data-payment-id="${exdEsc(p.payment_id)}" style="margin-top:6px;">この支払を取り消す</button>` : '';
+      return `<div class="change-request-item"><div class="row1"><span>${dOnly(p.paid_at)}　${yen(p.paid_amount)}${tag}</span><span>${exdText(p.payment_method)}</span></div><div class="row2">処理者: ${exdText(p.processed_by)}${p.note ? `・備考: ${exdEsc(p.note)}` : ''}</div>${voidLine}${btn}</div>`;
+    }).join('');
+  if (isAdmin) {
+    const ok = payable.ok === true;
+    html += `<div class="exd-pay-form">
+      ${ok ? '' : `<div class="hint-inline exd-payable-missing"><span class="mini-tag warn">支払を記録できません</span> 不足: ${(payable.missing || []).map((m) => exdEsc(m)).join(' / ') || '(理由不明)'}</div>`}
+      ${(payable.warnings || []).length ? `<div class="hint-inline">注意: ${(payable.warnings || []).map((m) => exdEsc(m)).join(' / ')}</div>` : ''}
+      <label for="exd-schedule-date">支払予定日</label>
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <input type="date" id="exd-schedule-date" style="width:160px;" value="${exdEsc(pay.scheduled_payment_date ? String(pay.scheduled_payment_date).slice(0, 10) : '')}">
+        <button type="button" class="secondary" id="exd-schedule-save">支払予定日を記録する</button>
+      </div>
+      <label for="exd-paid-date">支払日<span class="required-mark">(必須)</span></label>
+      <div class="hint-inline">銀行振込の予約など、これから振り込む日(未来の日付)も入れられます。</div>
+      <input type="date" id="exd-paid-date" value="${exdEsc(pay.scheduled_payment_date
+    ? String(pay.scheduled_payment_date).slice(0, 10)
+    : (typeof todayJST === 'function' ? todayJST() : ''))}">
+      <label for="exd-paid-amount">支払金額<span class="required-mark">(必須)</span></label>
+      <div class="hint-inline">申請額 ${yen(a.requested)} ／ 承認額 ${yen(a.approved)} ／ <strong>未払い残額 ${yen(a.remaining)}</strong>（この欄には未払い残額を最初から入れています。減らす場合だけ書き換えてください）</div>
+      <input type="number" id="exd-paid-amount" min="1" step="1" value="${Number(a.remaining) > 0 ? Number(a.remaining) : ''}">
+      <label for="exd-paid-method">支払方法</label>
+      <select id="exd-paid-method">
+        <option value="">選択してください</option><option value="現金">現金</option>
+        <option value="銀行振込">銀行振込</option><option value="その他">その他</option>
+      </select>
+      <label for="exd-paid-note">備考</label>
+      <input type="text" id="exd-paid-note" placeholder="例: 8月分まとめて振込">
+      <div class="hint-inline">支払処理をした人として、いまログインしている管理者の名前が記録されます。</div>
+      <div class="error" id="exd-pay-error"></div>
+      <button type="button" id="exd-pay-submit"${ok ? '' : ' disabled'}>支払を記録する</button>
+    </div>`;
+  }
+  return html;
+}
+
 function renderExpenseRequestDetailHtml(full, opts) {
   const isAdmin = ((opts && opts.mode) || 'admin') === 'admin';
   // 明細は利用日順に並べる。申請された順のままだと日付が前後して確認しづらい
@@ -6658,8 +6725,32 @@ function renderExpenseRequestDetailHtml(full, opts) {
     ? (d.usage_date_last && d.usage_date_last !== d.usage_date ? `${dOnly(d.usage_date)} 〜 ${dOnly(d.usage_date_last)}` : dOnly(d.usage_date))
     : '未実施';
 
+  // 2026-09-10 Shota指摘(原文)「支払うボタンなくないえどう対応するの…支払うボタンなかったら
+  // これもう解消できんやん」への対応。支払ボタン自体(#exd-pay-submit)は実在・有効だったが、
+  // 明細9件を含む15,000px超の画面の一番下に埋もれていて実質発見できなかった
+  // (scripts/tmp-probe-payment-screen.jsでの実機確認で判明)。承認済みで未払いの間は、
+  // 支払の節(元は7番目)を経費精算書より前、画面のいちばん上に差し込んで表示する
+  // (経費精算書は承認前の確認用の参考資料であり、承認済みで未払いのものを開いたときに
+  // 今すぐ必要な操作より先に出す理由がない)。支払済みになった後・社員本人の閲覧では、
+  // 従来どおり元の位置(下の方、経費精算書・明細等の後)に表示する
+  // (支払済みの申請まで毎回一番上に出して画面を乱すことはしない)。
+  const paymentSectionHtml = exdBuildPaymentSectionHtml(full, { isAdmin });
+  const payUnpaidAmount = Number(a.remaining) > 0;
+  const payTodayStr = typeof todayJST === 'function' ? todayJST() : new Date().toISOString().slice(0, 10);
+  const payIsOverdue = payUnpaidAmount && !!pay.scheduled_payment_date
+    && String(pay.scheduled_payment_date).slice(0, 10) < payTodayStr;
+  const payShowAtTop = isAdmin && payUnpaidAmount;
+
   // 0. 税理士へ提出する用紙。承認する人はまずこれを見て、その下の領収書・申請内容で裏を取る。
-  let html = exdSettlementSheetHtml(full);
+  let html = payShowAtTop
+    ? `<div class="card exd-card exd-pay-top-alert${payIsOverdue ? ' overdue' : ''}">
+      <div class="hint-inline" style="font-weight:800; margin-bottom:4px;">${payIsOverdue
+      ? '支払予定日を過ぎています。まだ支払が記録されていません。'
+      : 'この申請はまだ支払が記録されていません。'}</div>
+      ${paymentSectionHtml}
+    </div>`
+    : '';
+  html += exdSettlementSheetHtml(full);
 
   // 1. だれの・どの申請か
   html += `<div class="card exd-card"><div class="form-title" style="font-size:15px;">この経費申請の全体</div>
@@ -6784,64 +6875,13 @@ function renderExpenseRequestDetailHtml(full, opts) {
     ? `<img class="secure-proxy-thumb exd-cover-thumb" data-secure-kind="expense_cover_sheet" data-secure-id="${exdEsc(h.employee_request_id)}" alt="経費精算書" loading="lazy">`
     : '<div class="hint-inline">この申請に経費精算書は添付されていません。</div>'}</div></div>`;
 
-  // 7. 支払(承認とは別の状態)
-  html += `<div class="card exd-card"><div class="form-title" style="font-size:15px;">支払(承認とは別の状態です)</div>
-    <div class="field-group">
-      ${exdRowText('支払の状態', EXD_PAYMENT_STATUS_LABEL[pay.status] || pay.status)}
-      ${exdRow('支払予定日', dOnly(pay.scheduled_payment_date))}
-      ${exdRowText('支払予定を入れた人', pay.scheduled_payment_by)}
-      ${exdRow('支払日(実際に払った日)', dOnly(pay.paid_at))}
-      ${exdRow('支払済み金額', yen(pay.paid_amount))}
-      ${exdRowText('支払方法', pay.payment_method)}
-      ${exdRowText('支払処理をした人', pay.paid_by_name)}
-      ${exdRow('未払い残額', yen(a.remaining))}
-    </div>`;
-  const payments = Array.isArray(pay.payments) ? pay.payments : [];
-  html += `<div class="hint-inline"><strong>支払の記録</strong>(取消した支払も履歴として残ります)</div>`;
-  // 2026-09-06追加: 取消(voided)と反対仕訳(赤伝 reversal)を区別して出す。
-  // 金額の訂正は「取消 → 正しい金額で再登録」の2手順。元の行は消さない(監査のため)。
-  html += payments.length === 0
-    ? '<div class="hint-inline">支払の記録はまだありません。</div>'
-    : payments.map((p) => {
-      const tag = p.is_reversal ? '<span class="mini-tag warn">取消(赤伝)</span>'
-        : (p.is_voided ? '<span class="mini-tag warn">取消済み</span>' : '');
-      const voidLine = p.is_voided
-        ? `<div class="row2">取消: ${exdText(p.voided_by)}・理由: ${exdEsc(p.void_reason || '')}</div>` : '';
-      const btn = (isAdmin && p.can_void)
-        ? `<button type="button" class="secondary danger exd-void-pay-btn" data-payment-id="${exdEsc(p.payment_id)}" style="margin-top:6px;">この支払を取り消す</button>` : '';
-      return `<div class="change-request-item"><div class="row1"><span>${dOnly(p.paid_at)}　${yen(p.paid_amount)}${tag}</span><span>${exdText(p.payment_method)}</span></div><div class="row2">処理者: ${exdText(p.processed_by)}${p.note ? `・備考: ${exdEsc(p.note)}` : ''}</div>${voidLine}${btn}</div>`;
-    }).join('');
-  if (isAdmin) {
-    const ok = payable.ok === true;
-    html += `<div class="exd-pay-form">
-      ${ok ? '' : `<div class="hint-inline exd-payable-missing"><span class="mini-tag warn">支払を記録できません</span> 不足: ${(payable.missing || []).map((m) => exdEsc(m)).join(' / ') || '(理由不明)'}</div>`}
-      ${(payable.warnings || []).length ? `<div class="hint-inline">注意: ${(payable.warnings || []).map((m) => exdEsc(m)).join(' / ')}</div>` : ''}
-      <label for="exd-schedule-date">支払予定日</label>
-      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-        <input type="date" id="exd-schedule-date" style="width:160px;" value="${exdEsc(pay.scheduled_payment_date ? String(pay.scheduled_payment_date).slice(0, 10) : '')}">
-        <button type="button" class="secondary" id="exd-schedule-save">支払予定日を記録する</button>
-      </div>
-      <label for="exd-paid-date">支払日<span class="required-mark">(必須)</span></label>
-      <div class="hint-inline">銀行振込の予約など、これから振り込む日(未来の日付)も入れられます。</div>
-      <input type="date" id="exd-paid-date" value="${exdEsc(pay.scheduled_payment_date
-    ? String(pay.scheduled_payment_date).slice(0, 10)
-    : (typeof todayJST === 'function' ? todayJST() : ''))}">
-      <label for="exd-paid-amount">支払金額<span class="required-mark">(必須)</span></label>
-      <div class="hint-inline">申請額 ${yen(a.requested)} ／ 承認額 ${yen(a.approved)} ／ <strong>未払い残額 ${yen(a.remaining)}</strong>（この欄には未払い残額を最初から入れています。減らす場合だけ書き換えてください）</div>
-      <input type="number" id="exd-paid-amount" min="1" step="1" value="${Number(a.remaining) > 0 ? Number(a.remaining) : ''}">
-      <label for="exd-paid-method">支払方法</label>
-      <select id="exd-paid-method">
-        <option value="">選択してください</option><option value="現金">現金</option>
-        <option value="銀行振込">銀行振込</option><option value="その他">その他</option>
-      </select>
-      <label for="exd-paid-note">備考</label>
-      <input type="text" id="exd-paid-note" placeholder="例: 8月分まとめて振込">
-      <div class="hint-inline">支払処理をした人として、いまログインしている管理者の名前が記録されます。</div>
-      <div class="error" id="exd-pay-error"></div>
-      <button type="button" id="exd-pay-submit"${ok ? '' : ' disabled'}>支払を記録する</button>
-    </div>`;
+  // 7. 支払(承認とは別の状態)。承認済みでまだ未払いの間は、この節を画面の一番上(概要の直後)へ
+  // 移動して表示済み(payShowAtTop、上記2.の直前を参照)。ここで重複させるとid="exd-pay-submit"等が
+  // ページ内に2つできてwireExpenseRequestDetailの配線が壊れるため、その場合はここでは出さない。
+  // 支払済み、または社員本人の閲覧(mode !== 'admin')のときだけ、従来どおりここに表示する。
+  if (!payShowAtTop) {
+    html += `<div class="card exd-card">${paymentSectionHtml}</div>`;
   }
-  html += '</div>';
 
   // 8. 経理・税理士への提出
   // 2026-09-06 独立レビュー指摘(重大5): 契約RPCの category.status は confirmed_by_accounting / confirmed_by_ai_high /
@@ -7404,6 +7444,189 @@ async function doSubmitPinChange() {
     btn.disabled = false;
   }
 }
+
+
+// ---------------------------------------------------------------------------
+// ホーム画面ウィジェットの設定(本人が自分で取り付け用コードを作る)
+//
+// 2026-09-08 Shota 指摘:「コードこっちで作って渡すのはめんどくさい」。
+// それまでは担当者が scripts/build-widget-install-page.js で1人ずつ発行し、
+// 個別に渡していたため全社員へ配れなかった。発行RPC(issue_widget_token)は
+// 以前から「ポータルにログイン中の本人」しか呼べない作りなので、ここでは
+// 画面を足しただけで権限の範囲は一切変えていない。
+//
+// 本体(500行超)は貼らせない。実機で1文字欠けて動かなかったことがあるため、
+// 社員が貼るのは「設定+読み込み」だけの短いコードにして、本体は同じ配信元の
+// widget/jinshou-home-core.js から取らせる。配信元を document.baseURI から
+// 作るので、更新先行版で開けば更新先行版の本体を、本番で開けば本番の本体を読む。
+// ---------------------------------------------------------------------------
+
+function widgetCoreUrl() {
+  return new URL('widget/jinshou-home-core.js', document.baseURI).href;
+}
+
+function widgetLoaderScript(token) {
+  const session = getSession();
+  const cfg = {
+    url: SUPABASE_URL,
+    anon: SUPABASE_ANON_KEY,
+    code: session.employeeCode,
+    token,
+    portal: new URL('.', document.baseURI).href,
+  };
+  return [
+    '// 迅翔興業 社員ホームウィジェット / 読み込み用',
+    '// 本体はネット上にあります。ここが持つのは設定と読み込みだけです。',
+    '// 直したいところが出ても、あなたはこれを貼り直さなくて大丈夫です。',
+    '',
+    'const CONFIG = {',
+    '  url: "' + cfg.url + '",',
+    '  anon: "' + cfg.anon + '",',
+    '  code: "' + cfg.code + '",',
+    '  token: "' + cfg.token + '",',
+    '  portal: "' + cfg.portal + '"',
+    '};',
+    '',
+    '// 貼り付けの途中で文字が欠けていないかを、ここで気づけるようにする',
+    'if (CONFIG.anon.length !== ' + cfg.anon.length + ' || CONFIG.token.length !== ' + cfg.token.length + ') {',
+    '  throw new Error("設定が途中で欠けています。もう一度コピーして貼り直してください。");',
+    '}',
+    '',
+    'const CORE_URL = "' + widgetCoreUrl() + '";',
+    '',
+    'async function start() {',
+    '  const fm = FileManager.local();',
+    '  const dest = fm.joinPath(fm.documentsDirectory(), "jinshou-home-core.js");',
+    '  try {',
+    '    const req = new Request(CORE_URL);',
+    '    req.timeoutInterval = 20;',
+    '    const code = await req.loadString();',
+    '    if (code && code.indexOf("module.exports") > 0) {',
+    '      fm.writeString(dest, code);',
+    '    }',
+    '  } catch (err) {',
+    '    console.log("本体を取り直せませんでした: " + err.message);',
+    '  }',
+    '  if (!fm.fileExists(dest)) {',
+    '    throw new Error("本体を取得できませんでした。通信できる場所でもう一度お試しください。");',
+    '  }',
+    '  const core = importModule(dest);',
+    '  await core.run(CONFIG);',
+    '}',
+    '',
+    'start()',
+    '  .catch(function (e) { console.error(String(e && e.message ? e.message : e)); })',
+    '  .then(function () { Script.complete(); });',
+    '',
+  ].join('\n');
+}
+
+function resetWidgetSetupScreen() {
+  hideError('widget-setup-error');
+  document.getElementById('widget-setup-result').style.display = 'none';
+  document.getElementById('widget-setup-code').value = '';
+  document.getElementById('widget-setup-copy-status').textContent = '';
+  document.getElementById('widget-setup-expires').textContent = '';
+  loadMyWidgetTokens();
+}
+
+async function doIssueWidgetToken() {
+  const session = getSession();
+  const btn = document.getElementById('widget-setup-issue-btn');
+  hideError('widget-setup-error');
+  btn.disabled = true;
+  try {
+    const r = await rpc('issue_widget_token', { p_employee_code: session.employeeCode, p_label: 'ホームウィジェット' });
+    const info = Array.isArray(r) ? r[0] : r;
+    if (!info || !info.token) throw new Error('コードを作れませんでした。もう一度お試しください。');
+    document.getElementById('widget-setup-code').value = widgetLoaderScript(info.token);
+    document.getElementById('widget-setup-expires').textContent = 'このコードは ' + info.expires_at + ' まで使えます。期限が近づいたら、この画面でもう一度作ってください。';
+    document.getElementById('widget-setup-result').style.display = '';
+    document.getElementById('widget-setup-copy-status').textContent = '';
+    document.getElementById('widget-setup-result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    await loadMyWidgetTokens();
+  } catch (e) {
+    showError('widget-setup-error', e.message || 'コードを作れませんでした。');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function doCopyWidgetLoader() {
+  const ta = document.getElementById('widget-setup-code');
+  const statusEl = document.getElementById('widget-setup-copy-status');
+  if (!ta.value) return;
+  try {
+    await navigator.clipboard.writeText(ta.value);
+    statusEl.textContent = 'コピーしました。Scriptable を開いて貼り付けてください。';
+  } catch (e) {
+    // クリップボードが使えない端末では、選択状態にして手でコピーしてもらう
+    ta.focus();
+    ta.select();
+    statusEl.textContent = '自動でコピーできませんでした。選択されている文字をそのままコピーしてください。';
+  }
+}
+
+function widgetTokenDateLabel(value) {
+  if (!value) return '-';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '-';
+  return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate();
+}
+
+async function loadMyWidgetTokens() {
+  const session = getSession();
+  const listEl = document.getElementById('widget-setup-list');
+  listEl.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('list_my_widget_tokens', { p_employee_code: session.employeeCode });
+    const active = (rows || []).filter((r) => r.is_active);
+    if (!active.length) {
+      listEl.innerHTML = '<div class="hint">まだ取り付けていません。上の「取り付け用のコードを作る」から始めてください。</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    for (const row of active) {
+      const item = document.createElement('div');
+      item.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #e5e5e5;';
+      const body = document.createElement('div');
+      body.style.flex = '1';
+      const title = document.createElement('div');
+      title.textContent = row.device_label || 'ホームウィジェット';
+      const sub = document.createElement('div');
+      sub.className = 'hint';
+      sub.textContent = widgetTokenDateLabel(row.created_at) + ' に作成　／　最後に表示 '
+        + widgetTokenDateLabel(row.last_seen_at) + '　／　' + widgetTokenDateLabel(row.expires_at) + ' まで';
+      body.appendChild(title);
+      body.appendChild(sub);
+      const stop = document.createElement('button');
+      stop.type = 'button';
+      stop.className = 'secondary';
+      stop.style.cssText = 'width:auto;padding:6px 12px;margin:0;';
+      stop.textContent = '止める';
+      stop.addEventListener('click', () => doRevokeWidgetToken(row.device_id, stop));
+      item.appendChild(body);
+      item.appendChild(stop);
+      listEl.appendChild(item);
+    }
+  } catch (e) {
+    listEl.innerHTML = '<div class="hint">読み込めませんでした。通信できる場所でもう一度お試しください。</div>';
+  }
+}
+
+async function doRevokeWidgetToken(deviceId, btn) {
+  if (!confirm('このウィジェットを止めますか?その端末のホーム画面では表示されなくなります。')) return;
+  const session = getSession();
+  btn.disabled = true;
+  try {
+    await rpc('revoke_widget_token', { p_employee_code: session.employeeCode, p_device_id: deviceId });
+    await loadMyWidgetTokens();
+  } catch (e) {
+    alert(e.message || '止められませんでした。');
+    btn.disabled = false;
+  }
+}
+
 
 const CHANGE_STATUS_LABEL = { pending: '確認待ち', approved: '承認済み', rejected: '却下' };
 
@@ -16122,6 +16345,9 @@ function init() {
   document.getElementById('profile-edit-submit').addEventListener('click', doSubmitProfileEdit);
   document.getElementById('pin-change-submit').addEventListener('click', doSubmitPinChange);
   SCREEN_ENTER_HOOKS['pin-change'] = resetPinChangeForm;
+  document.getElementById('widget-setup-issue-btn').addEventListener('click', doIssueWidgetToken);
+  document.getElementById('widget-setup-copy-btn').addEventListener('click', doCopyWidgetLoader);
+  SCREEN_ENTER_HOOKS['widget-setup'] = resetWidgetSetupScreen;
   document.getElementById('info-change-filter').addEventListener('change', loadInfoChangeAdmin);
   document.getElementById('supply-master-submit').addEventListener('click', doSaveSupplyMasterItem);
   document.getElementById('employee-detail-edit-basic-btn').addEventListener('click', openEmployeeEditBasic);

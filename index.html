@@ -1721,6 +1721,11 @@
         <span class="unread-badge" id="home-anon-badge" style="display:none;"></span>
         <span class="icon-slot arrow" data-icon="chevron-right"></span>
       </button>
+      <button type="button" class="menu-item" data-nav="widget-setup">
+        <span class="icon-slot" data-icon="phone"></span>
+        <div class="menu-item-body">ホーム画面ウィジェット<span class="desc">iPhoneのホーム画面に自分の配置を出す</span></div>
+        <span class="icon-slot arrow" data-icon="chevron-right"></span>
+      </button>
       <button type="button" class="menu-item" data-nav="pin-change">
         <span class="icon-slot" data-icon="lock"></span>
         <div class="menu-item-body">暗証番号を変更<span class="desc">ログイン用の暗証番号を変更する</span></div>
@@ -1774,6 +1779,56 @@
     </div>
   </section>
 
+  <!-- ホーム画面ウィジェットの設定(本人が自分で取り付け用コードを作る)。
+       2026-09-08: それまでは担当者が1人ずつ発行して個別に渡す運用だったため、
+       全社員へ配れなかった。発行RPC(issue_widget_token)は以前から本人しか
+       呼べない作りになっており、ここでは画面を足しただけで権限は変えていない。 -->
+  <section id="screen-widget-setup" class="screen">
+    <button type="button" class="back-link back-to-origin" data-nav="myinfo">自分の情報に戻る</button>
+    <div class="form-title">ホーム画面ウィジェット</div>
+    <div class="hint" style="margin-bottom:12px;">iPhoneのホーム画面に、その日の現場・集合時間・一緒に行く人・日報の提出状況を出せます。アプリを開かなくてもホーム画面で分かります。取り付けは5分ほど、お金はかかりません。Androidでは使えません。</div>
+
+    <div class="card">
+      <div class="form-title">手順1　Scriptable を入れる</div>
+      <div class="hint" style="margin-bottom:10px;">App Store で「Scriptable」という無料アプリを入れてください。作者は <b>Simon B. Støvring</b> です。似た名前のアプリがあるので作者名を確かめてください。</div>
+      <a class="link" id="widget-setup-store-link" href="https://apps.apple.com/jp/app/scriptable/id1405459188" target="_blank" rel="noopener">App Store で Scriptable を開く</a>
+    </div>
+
+    <div class="card">
+      <div class="form-title">手順2　取り付け用のコードを作る</div>
+      <div class="hint" style="margin-bottom:10px;">下のボタンを押すと、あなたの配置を読み込むためのコードができます。作り直しても前のウィジェットは動いたままです。</div>
+      <button id="widget-setup-issue-btn">取り付け用のコードを作る</button>
+      <div class="error" id="widget-setup-error"></div>
+    </div>
+
+    <div class="card" id="widget-setup-result" style="display:none;">
+      <div class="form-title">手順3　コードをコピーする</div>
+      <div class="hint" style="margin-bottom:10px;">下のボタンで全部コピーされます。途中で切れると動かないので、手で選ばずにボタンを使ってください。</div>
+      <button id="widget-setup-copy-btn">コードをすべてコピーする</button>
+      <div class="hint-inline" id="widget-setup-copy-status" style="margin-top:6px;"></div>
+      <textarea id="widget-setup-code" readonly rows="8" style="width:100%;margin-top:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;"></textarea>
+      <div class="hint" id="widget-setup-expires" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="card">
+      <div class="form-title">手順4　iPhone に貼り付ける</div>
+      <ol class="hint" style="margin:0;padding-left:1.2em;line-height:2;">
+        <li>Scriptable を開いて、右上の <b>＋</b> を押す</li>
+        <li>黒い画面を長押しして <b>ペースト</b>(貼り付け)</li>
+        <li>上の <b>Untitled Script</b> を押して、名前を <b>迅翔ホーム</b> に変える</li>
+        <li>右上の <b>Done</b> を押す</li>
+        <li>ホーム画面を長押し →左上の <b>＋</b> →<b>Scriptable</b> を選ぶ</li>
+        <li>大きさは <b>中(横長)</b> がおすすめ。<b>ウィジェットを追加</b> を押す</li>
+        <li>置いたウィジェットを長押し →<b>ウィジェットを編集</b> →Script に <b>迅翔ホーム</b> を選ぶ</li>
+      </ol>
+    </div>
+
+    <div class="section-title">取り付けたウィジェット</div>
+    <div class="card">
+      <div id="widget-setup-list"></div>
+      <div class="hint" style="margin-top:10px;">機種変更などで使わなくなったものは「止める」を押してください。押したウィジェットはその端末で表示されなくなります。</div>
+    </div>
+  </section>
   <!-- 自分の変更申請の状況 -->
   <section id="screen-my-change-requests" class="screen">
     <button type="button" class="back-link back-to-origin" data-nav="myinfo">自分の情報に戻る</button>

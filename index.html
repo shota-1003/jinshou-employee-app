@@ -447,7 +447,18 @@
     <button type="button" class="back-link back-to-origin" data-nav="admin-dashboard">ダッシュボードに戻る</button>
     <div class="form-title">借入申請の管理</div>
     <button type="button" class="link" data-nav="loan-monthly-ledger" style="margin-bottom:10px;">月ごとにまとめた紙（税理士提出用）を見る ›</button>
+    <div class="filter-row" id="loan-admin-status-filter">
+      <button type="button" class="filter-chip active" data-status="applied">承認待ち</button>
+      <button type="button" class="filter-chip" data-status="">履歴(承認済み・却下・差し戻し)</button>
+    </div>
     <div id="loan-admin-list"><div class="hint">読み込み中...</div></div>
+  </section>
+
+  <!-- 借入申請 詳細(管理者、タップで開く1件表示。支払欄・紙もここに大きく表示) -->
+  <section id="screen-loan-admin-detail" class="screen">
+    <button type="button" class="back-link back-to-origin" data-nav="loan-admin">借入申請の管理に戻る</button>
+    <div class="form-title">借入申請の詳細</div>
+    <div id="loan-admin-detail-body"><div class="hint">読み込み中...</div></div>
   </section>
 
   <template id="loan-item-template">

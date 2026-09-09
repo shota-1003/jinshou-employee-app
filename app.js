@@ -554,7 +554,7 @@ const PARENT_ROUTE = Object.freeze({
   // 人員・台帳管理(名簿・資格・健診・常用伝票・支給品・初回コード・外注マスタ)
   'qual-admin': 'personnel-ledger-hub', 'employee-directory': 'personnel-ledger-hub', 'health-admin': 'personnel-ledger-hub',
   'joyo-denpyo-admin': 'personnel-ledger-hub', 'joyo-denpyo-summary': 'personnel-ledger-hub', 'supply-holdings-admin': 'personnel-ledger-hub',
-  'loan-monthly-ledger': 'personnel-ledger-hub',
+  'loan-monthly-ledger': 'personnel-ledger-hub', 'loan-admin-detail': 'loan-admin',
   'first-login-codes-admin': 'personnel-ledger-hub', 'subcontractor-company-admin': 'personnel-ledger-hub', 'subcontractor-worker-admin': 'personnel-ledger-hub',
   // 社員名簿の下
   'employee-create': 'employee-directory', 'employee-detail': 'employee-directory',
@@ -10698,52 +10698,105 @@ async function openLoanDetail(id) {
     document.getElementById('loan-detail-edit').style.display = (d.status === 'applied') ? 'block' : 'none';
   } catch (e) { body.innerHTML = '<div class="hint">読み込みに失敗しました。</div>'; }
 }
+// 2026-09-10 Shota実機報告(要旨)「一つ一つがちっちゃすぎてクリックしても大きく見えない」
+// 「承認してるのに承認待ちの欄に残ってるのはおかしい」。すべての申請の決定ボタン・支払欄・
+// 紙を1つの平たいリストへ詰め込んでいたため、件数が増えるほど読みづらく、承認待ちと
+// 履歴も混ざっていた。一覧は小さい行(タップで詳細画面)だけにし、承認待ち/履歴を
+// フィルタチップで分け、決定・支払・紙は専用の詳細画面(screen-loan-admin-detail)で
+// 大きく表示するよう分離した(経費の一覧→詳細と同じ構成)。
+let loanAdminStatusFilter = 'applied';
+let loanAdminDetailId = null;
+
+function wireLoanAdminStatusFilter() {
+  const row = document.getElementById('loan-admin-status-filter');
+  if (!row || row.dataset.wired) return;
+  row.dataset.wired = '1';
+  row.querySelectorAll('.filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      row.querySelectorAll('.filter-chip').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      loanAdminStatusFilter = btn.dataset.status;
+      loadLoanAdminList();
+    });
+  });
+}
+
 async function loadLoanAdminList() {
+  wireLoanAdminStatusFilter();
   const session = getSession();
   const listEl = document.getElementById('loan-admin-list');
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
     const rows = await rpc('admin_list_loan_requests', { p_admin_employee_code: session.employeeCode, p_status: null });
-    if (!rows || !rows.length) { listEl.innerHTML = '<div class="hint">借入申請はありません。</div>'; return; }
-    listEl.innerHTML = rows.map((r) => `
-      <div class="supply-item" data-id="${r.id}">
-        <div class="row1"><span style="font-weight:700;">${r.employee_name}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${LOAN_STATUS_LABEL[r.status] || r.status}</span></div>
-        <div class="row2">申請日 ${r.request_date}　希望 ${yen(r.amount)}　先月給与(総支給額) ${yen(r.last_month_gross_salary)}</div>
-        <div class="row2">必要日 ${r.needed_by_date}　${LOAN_RECEIPT_LABEL[r.receipt_method] || ''}</div>
-        <div class="row2">理由: ${(r.reason || '').replace(/</g, '&lt;')}</div>
-        <div class="row2">内訳: ${(r.breakdown || []).map((x) => `${(x.purpose || '')} ${yen(x.amount)}`).join(' / ')}</div>
-        ${r.admin_comment ? `<div class="row2">コメント: ${r.admin_comment.replace(/</g, '&lt;')}</div>` : ''}
+    const filtered = (rows || []).filter((r) => (loanAdminStatusFilter === 'applied' ? r.status === 'applied' : r.status !== 'applied'));
+    if (!filtered.length) { listEl.innerHTML = `<div class="hint">${loanAdminStatusFilter === 'applied' ? '承認待ちの借入申請はありません。' : '履歴はありません。'}</div>`; return; }
+    listEl.innerHTML = filtered.map((r) => `
+      <div class="history-item" data-id="${r.id}" style="cursor:pointer;">
+        <div class="row1"><span style="font-weight:700;">${(r.employee_name || '').replace(/</g, '&lt;')}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${LOAN_STATUS_LABEL[r.status] || r.status}</span></div>
+        <div class="row2">申請日 ${r.request_date}　希望 ${yen(r.amount)}　必要日 ${r.needed_by_date}</div>
+        ${r.status === 'approved' ? `<div class="row2">支払状況: ${LOAN_PAYMENT_STATUS_LABEL[r.payment_status] || r.payment_status}</div>` : ''}
+      </div>`).join('');
+    listEl.querySelectorAll('.history-item').forEach((el) => {
+      el.addEventListener('click', () => openLoanAdminDetail(Number(el.dataset.id)));
+    });
+  } catch (e) { listEl.innerHTML = '<div class="hint">この画面には経理承認権限が必要です。</div>'; }
+}
+
+function openLoanAdminDetail(id) {
+  loanAdminDetailId = id;
+  showScreen('loan-admin-detail');
+}
+
+async function loadLoanAdminDetail() {
+  const session = getSession();
+  const body = document.getElementById('loan-admin-detail-body');
+  body.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_list_loan_requests', { p_admin_employee_code: session.employeeCode, p_status: null });
+    const r = (rows || []).find((x) => Number(x.id) === Number(loanAdminDetailId));
+    if (!r) { body.innerHTML = '<div class="hint">対象の借入申請が見つかりません。</div>'; return; }
+    body.innerHTML = `
+      <div class="card" data-id="${r.id}">
+        <div class="row1"><span style="font-weight:700;font-size:16px;">${(r.employee_name || '').replace(/</g, '&lt;')}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${LOAN_STATUS_LABEL[r.status] || r.status}</span></div>
+        <div class="field-group" style="margin-top:8px;">
+          ${exdRowText('申請日', r.request_date)}
+          ${exdRowText('借入希望金額', yen(r.amount))}
+          ${exdRowText('先月給与(総支給額)', yen(r.last_month_gross_salary))}
+          ${exdRowText('必要日', r.needed_by_date)}
+          ${exdRowText('受取方法', LOAN_RECEIPT_LABEL[r.receipt_method] || r.receipt_method)}
+          ${exdRowText('理由', r.reason)}
+          ${exdRowText('内訳', (r.breakdown || []).map((x) => `${x.purpose || ''} ${yen(x.amount)}`).join(' / '))}
+          ${r.admin_comment ? exdRowText('管理者コメント', r.admin_comment) : ''}
+        </div>
         ${r.status === 'applied' ? `
-        <input type="text" class="loan-admin-comment" placeholder="管理者コメント(任意)" style="margin-top:6px;">
+        <input type="text" id="loan-admin-detail-comment" placeholder="管理者コメント(任意)" style="margin-top:10px;">
         <div class="qual-verify-btns">
           <button type="button" class="approve-btn loan-decide" data-act="approve">承認</button>
           <button type="button" class="reject-btn loan-decide" data-act="return">差し戻し</button>
           <button type="button" class="reject-btn loan-decide" data-act="reject">却下</button>
         </div>` : ''}
         ${r.status === 'approved' ? loanBuildPaymentSectionHtml(r) : ''}
-        <div class="settlement-sheet-wrap" style="margin-top:8px;">
+        <div class="settlement-sheet-wrap" style="margin-top:10px;">
           <div class="settlement-sheet-head">
             <span>借入申請書（税理士提出用）</span>
             <button type="button" class="secondary loan-sheet-toggle">閉じる</button>
           </div>
           <div class="settlement-sheet-scroll loan-sheet-box">${loanRenderRequestSheetHtml(r)}</div>
         </div>
-      </div>`).join('');
-    listEl.querySelectorAll('.loan-decide').forEach((btn) => {
+      </div>`;
+    body.querySelectorAll('.loan-decide').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        const item = btn.closest('.supply-item');
-        const id = Number(item.dataset.id);
-        const comment = (item.querySelector('.loan-admin-comment') || {}).value || '';
+        const comment = (document.getElementById('loan-admin-detail-comment') || {}).value || '';
         const act = btn.dataset.act;
         if (act === 'reject' && !confirm('この借入申請を却下しますか?')) return;
         btn.disabled = true;
         try {
-          await rpc('admin_decide_loan_request', { p_admin_employee_code: session.employeeCode, p_id: id, p_action: act, p_comment: comment || null });
-          loadLoanAdminList();
+          await rpc('admin_decide_loan_request', { p_admin_employee_code: session.employeeCode, p_id: r.id, p_action: act, p_comment: comment || null });
+          showScreen('loan-admin');
         } catch (e) { btn.disabled = false; alert(e.message || '処理に失敗しました。'); }
       });
     });
-    listEl.querySelectorAll('.loan-sheet-toggle').forEach((btn) => {
+    body.querySelectorAll('.loan-sheet-toggle').forEach((btn) => {
       btn.addEventListener('click', () => {
         const box = btn.closest('.settlement-sheet-wrap').querySelector('.loan-sheet-box');
         const hidden = box.style.display === 'none';
@@ -10751,8 +10804,8 @@ async function loadLoanAdminList() {
         btn.textContent = hidden ? '閉じる' : '開く';
       });
     });
-    wireLoanPaymentSection(listEl, session);
-  } catch (e) { listEl.innerHTML = '<div class="hint">この画面には経理承認権限が必要です。</div>'; }
+    wireLoanPaymentSection(body, session, () => loadLoanAdminDetail());
+  } catch (e) { body.innerHTML = '<div class="hint">読み込みに失敗しました。</div>'; }
 }
 
 // 借入申請1件を「紙」として表示する(経費立替の経費精算書〔renderSettlementSheet〕と同じ様式。
@@ -10939,10 +10992,11 @@ function renderLoanMonthlySheet(year, month, rows) {
     </div>`;
 }
 
-function wireLoanPaymentSection(listEl, session) {
-  listEl.querySelectorAll('.loan-schedule-save').forEach((btn) => {
+function wireLoanPaymentSection(containerEl, session, onDone) {
+  const reload = onDone || loadLoanAdminList;
+  containerEl.querySelectorAll('.loan-schedule-save').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const item = btn.closest('.supply-item');
+      const item = btn.closest('.card');
       const id = Number(item.dataset.id);
       const errEl = item.querySelector('.loan-payment-error');
       const v = item.querySelector('.loan-schedule-date').value;
@@ -10951,13 +11005,13 @@ function wireLoanPaymentSection(listEl, session) {
       btn.disabled = true;
       try {
         await rpc('admin_set_loan_payment_schedule', { p_admin_employee_code: session.employeeCode, p_id: id, p_scheduled_payment_date: v });
-        loadLoanAdminList();
+        reload();
       } catch (e) { btn.disabled = false; if (errEl) errEl.textContent = e.message || '記録できませんでした。'; }
     });
   });
-  listEl.querySelectorAll('.loan-paid-save').forEach((btn) => {
+  containerEl.querySelectorAll('.loan-paid-save').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const item = btn.closest('.supply-item');
+      const item = btn.closest('.card');
       const id = Number(item.dataset.id);
       const errEl = item.querySelector('.loan-payment-error');
       const v = item.querySelector('.loan-paid-date').value;
@@ -10969,7 +11023,7 @@ function wireLoanPaymentSection(listEl, session) {
       btn.disabled = true;
       try {
         await rpc('admin_record_loan_payment', { p_admin_employee_code: session.employeeCode, p_id: id, p_paid_at: v, p_payment_method: method || null, p_note: note || null });
-        loadLoanAdminList();
+        reload();
       } catch (e) { btn.disabled = false; if (errEl) errEl.textContent = e.message || '記録できませんでした。'; }
     });
   });
@@ -16891,6 +16945,7 @@ function init() {
   SCREEN_ENTER_HOOKS['loan-request'] = initLoanRequestForm;
   SCREEN_ENTER_HOOKS['loan-history'] = loadLoanHistory;
   SCREEN_ENTER_HOOKS['loan-admin'] = loadLoanAdminList;
+  SCREEN_ENTER_HOOKS['loan-admin-detail'] = loadLoanAdminDetail;
   SCREEN_ENTER_HOOKS['loan-monthly-ledger'] = initLoanMonthlyLedger;
   SCREEN_ENTER_HOOKS['lucky-month'] = () => { wireLucky(); const now = todayJST(); luckyYM = { y: Number(now.slice(0, 4)), m: Number(now.slice(5, 7)) }; loadLuckyMonth(); };
   // 本番(IS_STAGING=false)ではラッキー賞管理を開かせない(直リンク・履歴復元でも RPC を呼ばずホームへ戻す)。

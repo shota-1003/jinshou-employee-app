@@ -3537,9 +3537,14 @@ async function loadBulkExpenseDetail() {
   const session = getSession();
   const yen = (n) => `${Number(n).toLocaleString('ja-JP')}円`;
   try {
+    // ヘッダはこの画面が開いている1件をIDで直接取得する(2026-09-10修正)。
+    // 以前は「まとめ精算(submission_mode='bulk')」だけを対象にした一覧を取り、そこから
+    // .find() で探していたため、1件ずつ出された申請(まとめ精算以外)を開くと一覧に
+    // 出てこず head が null になり、承認額等が全部「-」・支払を記録する欄も消えていた
+    // (Shota報告「支払うボタンがない」「これ一生払えん」)。
     const [items, list] = await Promise.all([
       rpc('admin_get_bulk_expense_request_items', { p_admin_employee_code: session.employeeCode, p_employee_request_id: Number(bulkExpenseDetailRequestId) }),
-      rpc('admin_get_bulk_expense_requests', { p_admin_employee_code: session.employeeCode, p_status_group: null }),
+      rpc('admin_get_bulk_expense_requests', { p_admin_employee_code: session.employeeCode, p_status_group: null, p_employee_request_id: Number(bulkExpenseDetailRequestId) }),
     ]);
     const head = (list || []).find((r) => String(r.employee_request_id) === String(bulkExpenseDetailRequestId));
     if (head) {

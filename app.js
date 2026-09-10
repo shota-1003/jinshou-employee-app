@@ -7204,9 +7204,10 @@ async function doConfirmCategory(documentId, category) {
 
 // 会社管理項目(社員番号・入社日等)は鍵アイコンつきで編集不可を明示。住所・電話番号等は
 // 「変更申請」ボタンを付け、タップすると本人が変更申請を出せる(即時反映はしない)。
-function fieldRow(label, value, editField) {
+function fieldRow(label, value, editField, editValue) {
   const displayValue = value ? String(value) : '未登録';
-  const editBtn = editField ? `<button type="button" class="field-edit-btn" data-edit-field="${editField}" data-current="${(value || '').replace(/"/g, '&quot;')}">変更申請</button>` : '';
+  const rawForEdit = editValue !== undefined ? editValue : value;
+  const editBtn = editField ? `<button type="button" class="field-edit-btn" data-edit-field="${editField}" data-current="${(rawForEdit || '').replace(/"/g, '&quot;')}">変更申請</button>` : '';
   return `
     <div class="field-row">
       <span class="field-label">${label}</span>
@@ -7231,6 +7232,7 @@ function lockedFieldRow(label, value) {
 const CHANGE_FIELD_LABEL = {
   phone: '電話番号', postal_code: '郵便番号', address: '住所', email: 'メールアドレス',
   emergency_contact_name: '緊急連絡先(氏名)', emergency_contact_relation: '緊急連絡先(続柄)', emergency_contact_phone: '緊急連絡先(電話番号)',
+  birth_date: '生年月日',
 };
 
 function renderAvatar(elId, name, photoUrl) {
@@ -7347,7 +7349,7 @@ async function loadMyInfo() {
       lockedFieldRow('社員番号', p.employee_code) +
       lockedFieldRow('氏名', p.employee_name) +
       lockedFieldRow('フリガナ', p.furigana) +
-      lockedFieldRow('生年月日', p.birth_date ? new Date(p.birth_date).toLocaleDateString('ja-JP') : null) +
+      fieldRow('生年月日', p.birth_date ? new Date(p.birth_date).toLocaleDateString('ja-JP') : null, 'birth_date', p.birth_date) +
       lockedFieldRow('入社日', p.hire_date ? new Date(p.hire_date).toLocaleDateString('ja-JP') : null) +
       lockedFieldRow('所属/役割', p.department);
     document.getElementById('myinfo-contact-fields').innerHTML =
@@ -7397,6 +7399,7 @@ function openProfileEdit(field, currentValue) {
   document.getElementById('profile-edit-title').textContent = `${CHANGE_FIELD_LABEL[field] || field}の変更申請`;
   document.getElementById('profile-edit-label').textContent = `新しい${CHANGE_FIELD_LABEL[field] || ''}`;
   const input = document.getElementById('profile-edit-value');
+  input.type = field === 'birth_date' ? 'date' : 'text';
   input.value = currentValue || '';
   hideError('profile-edit-error');
   showScreen('profile-edit');

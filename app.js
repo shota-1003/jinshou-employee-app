@@ -11164,7 +11164,7 @@ function loanLedgerRenderSheetHtml(employeeName, entries) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   const yenFmt = (n) => (n === null || n === undefined || n === '' ? '' : `${Number(n).toLocaleString('ja-JP')}円`);
   const rows = entries || [];
-  const MIN_ROWS = 10;
+  const MIN_ROWS = 25;
   const blanks = Math.max(0, MIN_ROWS - rows.length);
   return `
     <div class="settlement-sheet ll-sheet">

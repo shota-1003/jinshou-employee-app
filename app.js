@@ -11219,7 +11219,7 @@ function loanLedgerRenderSheetHtml(employeeName, entries, page) {
       <div class="ss-title">貸 付 金 台 帳</div>
       <div class="ss-meta">氏　名：<b>${esc(employeeName)}</b>${totalPages > 1 ? `　　${currentPage} / ${totalPages}ページ` : ''}</div>
       <table>
-        <tr><th style="width:60px;">日付</th><th style="width:110px;">貸付</th><th style="width:110px;">返済</th><th style="width:120px;">合計</th><th>備考</th></tr>
+        <tr><th style="width:14%;">日付</th><th style="width:21%;">貸付</th><th style="width:21%;">返済</th><th style="width:24%;">合計</th><th style="width:20%;">備考</th></tr>
         ${pageRows.map((e) => {
           const isRepay = Number(e.amount) < 0;
           const remarkType = LOAN_ENTRY_TYPE_LABEL[e.entry_type] || e.entry_type;

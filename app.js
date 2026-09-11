@@ -1876,10 +1876,10 @@ async function loadHomeAnnouncePreview() {
     const TAG_LABEL = { critical: '最重要', important: '重要' };
     area.innerHTML = top.map((a) => `
       <div class="home-announce-item" data-id="${a.id}">
-        <span class="home-announce-dot ${a.importance !== 'normal' ? 'important' : (!a.is_read ? 'unread normal-imp' : '')}"></span>
+        <span class="home-announce-dot ${a.importance !== 'normal' ? a.importance : (!a.is_read ? 'unread normal-imp' : '')}"></span>
         <div class="home-announce-body2">
           <div class="home-announce-title-row">
-            ${TAG_LABEL[a.importance] ? `<span class="home-announce-tag important">${TAG_LABEL[a.importance]}</span>` : '<span class="home-announce-tag normal">お知らせ</span>'}
+            ${TAG_LABEL[a.importance] ? `<span class="home-announce-tag ${a.importance}">${TAG_LABEL[a.importance]}</span>` : '<span class="home-announce-tag normal">お知らせ</span>'}
             <span class="home-announce-title">${a.title}</span>
           </div>
           <div class="home-announce-date">${new Date(a.created_at).toLocaleDateString('ja-JP')}</div>
@@ -5132,7 +5132,7 @@ async function loadAnnounceBanner() {
     const shown = importantOnes.slice(0, HOME_BANNER_LIMIT);
     const restCount = importantOnes.length - shown.length;
     area.innerHTML = shown.map((important) => `
-      <button type="button" class="announce-banner home-announce-banner-item" data-id="${important.id}">
+      <button type="button" class="announce-banner home-announce-banner-item ${important.importance}" data-id="${important.id}">
         <div class="announce-banner-label">📢 ${important.importance === 'critical' ? '最重要のお知らせ' : '重要なお知らせ'}</div>
         <div class="announce-banner-title">${important.title}</div>
       </button>

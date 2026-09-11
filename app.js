@@ -524,6 +524,9 @@ const ADMIN_SCREENS = new Set([
   'first-login-codes-admin', 'pin-reset-admin', 'loan-admin', 'loan-ledger-admin', 'lucky-admin', 'lucky-preview',
   'vehicle-admin', 'expense-ledger-admin',
 ]);
+// 2026-09-12: admin-action-item-create/list/detail は専務・社長限定を撤廃し全社員が使う画面に
+// なったため、ADMIN_SCREENSから外す(在籍中の社員なら誰でも管理者用ボトムナビへ切り替わらずに
+// 使える。実際の権限判定はRPC側〔created_by=自分 or 承認担当〕で行う、こちらはUIの見た目だけ)。
 let inAdminMode = false;
 
 // 管理者画面の論理的な親画面(PARENT_ROUTE)。
@@ -555,6 +558,8 @@ const PARENT_ROUTE = Object.freeze({
   'qual-admin': 'personnel-ledger-hub', 'employee-directory': 'personnel-ledger-hub', 'health-admin': 'personnel-ledger-hub',
   'joyo-denpyo-admin': 'personnel-ledger-hub', 'joyo-denpyo-summary': 'personnel-ledger-hub', 'supply-holdings-admin': 'personnel-ledger-hub',
   'loan-monthly-ledger': 'personnel-ledger-hub', 'loan-admin-detail': 'loan-admin', 'loan-ledger-detail': 'loan-ledger-admin',
+  'admin-action-item-create': 'my-action-items', 'admin-action-item-list': 'my-action-items',
+  'admin-action-item-detail': 'admin-action-item-list',
   'first-login-codes-admin': 'personnel-ledger-hub', 'subcontractor-company-admin': 'personnel-ledger-hub', 'subcontractor-worker-admin': 'personnel-ledger-hub',
   // 社員名簿の下
   'employee-create': 'employee-directory', 'employee-detail': 'employee-directory',
@@ -5177,6 +5182,20 @@ async function announceDeepLink(announcementId) {
   }
   if (t.related_type === 'employee_requests' && t.target_id) {
     openMyRequestDetail(t.target_id, 'announcements');
+    return;
+  }
+  // 依頼の確認要請/完了/差し戻し通知(related_id=employee_action_item_recipients.id)。
+  // 2026-09-12: 専務・社長限定を撤廃したため、タップした人が「管理者かどうか」では遷移先を
+  // 判定できなくなった(一般社員も依頼を出す・承認担当になる側になり得る)。本人が受信者
+  // (get_my_action_item_detailが成功する)なら本人側詳細へ、そうでなければ発行側の
+  // 一覧へ(発行側は複数の受信者を含みうるため、対象を特定できる一覧から開き直してもらう)。
+  if (t.related_type === 'employee_tasks' && t.target_id) {
+    try {
+      await rpc('get_my_action_item_detail', { p_employee_code: session.employeeCode, p_recipient_id: Number(t.target_id) });
+      openMyActionItemDetail(Number(t.target_id));
+    } catch (e) {
+      showScreen('admin-action-item-list');
+    }
     return;
   }
   // 暗証番号再設定依頼(related_type='employees')は、支給品と完全に分離した「暗証番号のリセット」専用画面へ
@@ -10147,34 +10166,106 @@ async function loadStatusBoardGeneral() {
 
 // ---------- Action Center(2026-08-28、管理者から社員個人/複数社員への指示) ----------
 
+const ACTION_ITEM_STATUS_LABEL = {
+  assigned: '未対応', confirmation_requested: '確認要請中', approved: '完了', returned: '修正依頼あり',
+};
+const ACTION_ITEM_STATUS_BADGE_CLASS = {
+  assigned: '', confirmation_requested: 'warn', approved: 'done', returned: 'rejected',
+};
+
 async function loadMyActionItems() {
   const session = getSession();
   const list = document.getElementById('my-action-items-list');
   list.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
     const rows = await rpc('get_my_action_items', { p_employee_code: session.employeeCode });
-    if (!rows || rows.length === 0) { list.innerHTML = '<div class="hint">現在、対応が必要な指示はありません。</div>'; return; }
+    if (!rows || rows.length === 0) { list.innerHTML = '<div class="hint">現在、対応が必要な依頼はありません。</div>'; return; }
     list.innerHTML = rows.map((r) => `
-      <div class="card" data-id="${r.id}" style="margin-bottom:10px;">
-        <div style="font-weight:700;">${r.is_overdue ? '<span class="tag danger">期限超過</span> ' : ''}${r.title}</div>
-        ${r.body ? `<div class="hint-inline" style="white-space:pre-wrap;margin-top:4px;">${r.body}</div>` : ''}
-        <div class="hint-inline" style="margin-top:6px;">${r.due_date ? `期限: ${r.due_date}・` : ''}発行: ${r.created_by_name}</div>
-        <button type="button" class="secondary action-item-done-btn" style="margin-top:8px;">完了にする</button>
+      <div class="card" data-recipient-id="${r.recipient_id}" style="margin-bottom:10px;cursor:pointer;">
+        <div style="font-weight:700;">${r.is_overdue ? '<span class="tag danger">期限超過</span> ' : ''}${exdEsc(r.title)}</div>
+        ${r.body ? `<div class="hint-inline" style="white-space:pre-wrap;margin-top:4px;">${exdEsc(r.body)}</div>` : ''}
+        <div class="hint-inline" style="margin-top:6px;">${r.due_date ? `期限: ${r.due_date}・` : ''}発行: ${exdEsc(r.created_by_name)}</div>
+        <span class="status-badge ${ACTION_ITEM_STATUS_BADGE_CLASS[r.recipient_status] || ''}">${ACTION_ITEM_STATUS_LABEL[r.recipient_status] || r.recipient_status}</span>
+        ${r.recipient_status === 'returned' && r.return_note ? `<div class="hint-inline" style="margin-top:6px;color:var(--danger);">修正依頼: ${exdEsc(r.return_note)}</div>` : ''}
       </div>
     `).join('');
-    list.querySelectorAll('.action-item-done-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const card = btn.closest('[data-id]');
-        btn.disabled = true;
-        try {
-          await rpc('mark_action_item_done', { p_employee_code: session.employeeCode, p_action_item_id: Number(card.dataset.id) });
-          await loadMyActionItems();
-        } catch (e) { btn.disabled = false; window.alert(e.message || '操作に失敗しました。'); }
-      });
+    list.querySelectorAll('[data-recipient-id]').forEach((card) => {
+      card.addEventListener('click', () => openMyActionItemDetail(Number(card.dataset.recipientId)));
     });
   } catch (e) {
     list.innerHTML = `<div class="error show">${e.message || '読み込みに失敗しました。'}</div>`;
   }
+}
+
+let currentMyActionItemRecipientId = null;
+
+function openMyActionItemDetail(recipientId) {
+  currentMyActionItemRecipientId = recipientId;
+  showScreen('my-action-item-detail');
+}
+
+async function loadMyActionItemDetail() {
+  const session = getSession();
+  const body = document.getElementById('my-action-item-detail-body');
+  if (!currentMyActionItemRecipientId) { body.innerHTML = '<div class="hint">対象が見つかりません。</div>'; return; }
+  body.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('get_my_action_item_detail', { p_employee_code: session.employeeCode, p_recipient_id: currentMyActionItemRecipientId });
+    const r = rows && rows[0];
+    if (!r) { body.innerHTML = '<div class="hint">対象が見つかりません。</div>'; return; }
+    const thread = await rpc('get_action_item_thread', { p_employee_code: session.employeeCode, p_recipient_id: currentMyActionItemRecipientId }).catch(() => []);
+    const canRequest = r.recipient_status === 'assigned' || r.recipient_status === 'returned';
+    body.innerHTML = `
+      <div class="card">
+        <div style="font-weight:700;font-size:16px;">${exdEsc(r.title)}</div>
+        ${r.body ? `<div class="hint-inline" style="white-space:pre-wrap;margin-top:6px;">${exdEsc(r.body)}</div>` : ''}
+        <div class="hint-inline" style="margin-top:8px;">${r.due_date ? `期限: ${r.due_date}・` : ''}発行: ${exdEsc(r.created_by_name)}</div>
+        <span class="status-badge ${ACTION_ITEM_STATUS_BADGE_CLASS[r.recipient_status] || ''}">${ACTION_ITEM_STATUS_LABEL[r.recipient_status] || r.recipient_status}</span>
+      </div>
+      <div class="section-title" style="margin-top:16px;">履歴</div>
+      <div class="chat-thread" id="mai-thread">${renderActionItemThread(thread, 'assignee')}</div>
+      ${canRequest ? `
+      <div class="card" style="margin-top:12px;">
+        <div class="form-title" style="font-size:14px;margin-top:0;">${r.recipient_status === 'returned' ? '修正して再提出する' : '確認要請'}</div>
+        <label>備考(任意)</label>
+        <textarea id="mai-note" rows="3" placeholder="対応した内容など"></textarea>
+        <div class="error" id="mai-error"></div>
+        <button type="button" id="mai-request-btn">${r.recipient_status === 'returned' ? '再提出する' : '確認要請する'}</button>
+      </div>` : `<div class="hint" style="margin-top:12px;">${r.recipient_status === 'confirmation_requested' ? '確認要請済みです。承認をお待ちください。' : '承認済みです。'}</div>`}
+    `;
+    const reqBtn = document.getElementById('mai-request-btn');
+    if (reqBtn) {
+      reqBtn.addEventListener('click', async () => {
+        hideError('mai-error');
+        const note = document.getElementById('mai-note').value.trim();
+        reqBtn.disabled = true;
+        try {
+          await rpc('request_action_item_confirmation', { p_employee_code: session.employeeCode, p_recipient_id: currentMyActionItemRecipientId, p_note: note || null });
+          await loadMyActionItemDetail();
+        } catch (e) { reqBtn.disabled = false; showError('mai-error', e.message || '送信に失敗しました。'); }
+      });
+    }
+  } catch (e) {
+    body.innerHTML = `<div class="error show">${e.message || '読み込みに失敗しました。'}</div>`;
+  }
+}
+
+// 履歴/チャットスレッドの共通レンダリング(本人側・専務側どちらの画面からも呼ぶ)。
+// viewerRole('assignee'|'assigner')に応じて、自分の発言を右側(from-employee)、
+// 相手の発言を左側(from-admin)にする(既存の.chat-bubble CSSを転用、
+// 匿名相談スレッドと同じ見た目)。
+const ACTION_ITEM_MSG_TYPE_LABEL = { completion_report: '完了報告', return_reason: '修正依頼', system: '', comment: '' };
+function renderActionItemThread(rows, viewerRole) {
+  if (!rows || rows.length === 0) return '<div class="hint">履歴はまだありません。</div>';
+  return rows.map((m) => {
+    const isMe = m.sender_role === viewerRole;
+    const typeLabel = ACTION_ITEM_MSG_TYPE_LABEL[m.message_type];
+    return `<div class="chat-bubble ${isMe ? 'from-employee' : 'from-admin'}">
+      ${typeLabel ? `<div style="font-weight:700;font-size:11px;margin-bottom:2px;">${typeLabel}</div>` : ''}
+      ${exdEsc(m.message)}
+      <div class="meta">${exdEsc(m.sender_name)} ・ ${new Date(m.created_at).toLocaleString('ja-JP')}</div>
+    </div>`;
+  }).join('');
 }
 
 let actionItemEmployeeSelect = null;
@@ -10183,7 +10274,6 @@ function resetActionItemCreateForm() {
   ['action-item-title', 'action-item-body', 'action-item-due-date'].forEach((id) => { document.getElementById(id).value = ''; });
   hideError('action-item-error');
   actionItemEmployeeSelect = createEmployeeCardPicker(document.getElementById('action-item-employee-picker'));
-  loadAdminActionItemsList();
 }
 
 async function doCreateActionItem() {
@@ -10203,29 +10293,176 @@ async function doCreateActionItem() {
       p_admin_employee_code: session.employeeCode, p_title: title, p_body: body || null,
       p_due_date: dueDate, p_employee_codes: codes, p_department: null,
     });
-    showDone('指示を発行しました。', 'admin-dashboard');
+    showDone('依頼しました。', 'admin-action-item-list');
   } catch (e) {
-    showError('action-item-error', e.message || '発行に失敗しました。');
+    showError('action-item-error', e.message || '依頼に失敗しました。');
   } finally {
     btn.disabled = false;
   }
 }
 
-async function loadAdminActionItemsList() {
+async function loadAdminActionItemList() {
   const session = getSession();
-  const list = document.getElementById('admin-action-items-list');
-  list.innerHTML = '<div class="hint">読み込み中...</div>';
+  const body = document.getElementById('admin-action-item-list-body');
+  body.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
     const rows = await rpc('admin_list_action_items', { p_admin_employee_code: session.employeeCode });
-    if (!rows || rows.length === 0) { list.innerHTML = '<div class="hint">まだ指示を発行していません。</div>'; return; }
-    list.innerHTML = rows.map((r) => `
-      <div class="plain-list-row">
-        <div><b>${r.title}</b></div>
+    if (!rows || rows.length === 0) { body.innerHTML = '<div class="hint">まだ依頼を出していません。</div>'; return; }
+    body.innerHTML = rows.map((r) => `
+      <div class="plain-list-row" data-id="${r.id}" style="cursor:pointer;">
+        <div><b>${exdEsc(r.title)}</b></div>
         <div class="hint-inline">${r.due_date ? `期限: ${r.due_date}・` : ''}完了 ${r.completed_count}/${r.recipient_count}</div>
+        ${Number(r.pending_review_count) > 0 ? `<span class="status-badge warn">確認要請中 ${r.pending_review_count}件</span>` : ''}
+        ${Number(r.returned_count) > 0 ? `<span class="status-badge rejected">差し戻し中 ${r.returned_count}件</span>` : ''}
       </div>
     `).join('');
+    body.querySelectorAll('[data-id]').forEach((el) => {
+      el.addEventListener('click', () => openAdminActionItemDetail(Number(el.dataset.id)));
+    });
   } catch (e) {
-    list.innerHTML = '';
+    body.innerHTML = `<div class="error show">${e.message || '読み込みに失敗しました。'}</div>`;
+  }
+}
+
+let currentAdminActionItemId = null;
+
+function openAdminActionItemDetail(actionItemId) {
+  currentAdminActionItemId = actionItemId;
+  showScreen('admin-action-item-detail');
+}
+
+async function loadAdminActionItemDetail() {
+  const session = getSession();
+  const body = document.getElementById('admin-action-item-detail-body');
+  if (!currentAdminActionItemId) { body.innerHTML = '<div class="hint">対象が見つかりません。</div>'; return; }
+  body.innerHTML = '<div class="hint">読み込み中...</div>';
+  try {
+    const rows = await rpc('admin_get_action_item_detail', { p_admin_employee_code: session.employeeCode, p_action_item_id: currentAdminActionItemId });
+    if (!rows || rows.length === 0) { body.innerHTML = '<div class="hint">対象が見つかりません。</div>'; return; }
+    const head = rows[0];
+    const threads = await Promise.all(rows.map((r) =>
+      rpc('get_action_item_thread', { p_employee_code: session.employeeCode, p_recipient_id: r.recipient_id }).catch(() => [])));
+    body.innerHTML = `
+      <div class="card">
+        <div style="font-weight:700;font-size:16px;">${exdEsc(head.title)}</div>
+        ${head.body ? `<div class="hint-inline" style="white-space:pre-wrap;margin-top:6px;">${exdEsc(head.body)}</div>` : ''}
+        <div class="hint-inline" style="margin-top:8px;">${head.due_date ? `期限: ${head.due_date}` : '期限なし'}</div>
+      </div>
+      ${head.is_original_assigner ? `
+      <div class="card" style="margin-top:12px;" id="aai-approver-card">
+        <div class="form-title" style="font-size:14px;margin-top:0;">承認できる人を追加</div>
+        <div class="hint" style="margin-bottom:8px;">追加した人も、この依頼の完了認証・再提出を判断できるようになります(担当が変わった時などに)。</div>
+        <div id="aai-approver-list" class="hint">読み込み中...</div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <select id="aai-approver-select" style="flex:1;"><option value="">(社員を選択)</option></select>
+          <button type="button" id="aai-approver-add-btn">追加</button>
+        </div>
+        <div class="error" id="aai-approver-error"></div>
+      </div>` : ''}
+      ${rows.map((r, i) => `
+        <div class="card" style="margin-top:12px;" data-recipient-id="${r.recipient_id}">
+          <div class="row1" style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:700;">${exdEsc(r.employee_name)}</span>
+            <span class="status-badge ${ACTION_ITEM_STATUS_BADGE_CLASS[r.recipient_status] || ''}">${ACTION_ITEM_STATUS_LABEL[r.recipient_status] || r.recipient_status}</span>
+          </div>
+          ${r.resubmit_count > 0 ? `<div class="hint-inline" style="margin-top:4px;">再提出 ${r.resubmit_count}回</div>` : ''}
+          <div class="section-title" style="margin-top:10px;font-size:13px;">履歴</div>
+          <div class="chat-thread">${renderActionItemThread(threads[i], 'assigner')}</div>
+          ${r.recipient_status === 'confirmation_requested' ? `
+          <div class="exd-pay-form" style="margin-top:10px;">
+            <button type="button" class="aai-approve-btn">完了認証する</button>
+            <label style="margin-top:10px;">再提出させる場合の理由(必須)</label>
+            <textarea class="aai-return-note" rows="2" placeholder="直してほしい点を具体的に"></textarea>
+            <div class="error aai-error"></div>
+            <button type="button" class="secondary aai-return-btn">再提出させる</button>
+          </div>` : ''}
+        </div>
+      `).join('')}
+    `;
+    body.querySelectorAll('[data-recipient-id]').forEach((card) => {
+      const recipientId = Number(card.dataset.recipientId);
+      const approveBtn = card.querySelector('.aai-approve-btn');
+      const returnBtn = card.querySelector('.aai-return-btn');
+      const errEl = card.querySelector('.aai-error');
+      if (approveBtn) {
+        approveBtn.addEventListener('click', async () => {
+          if (!confirm('この依頼を完了として承認します。よろしいですか?')) return;
+          approveBtn.disabled = true;
+          try {
+            await rpc('admin_approve_action_item', { p_admin_employee_code: session.employeeCode, p_recipient_id: recipientId });
+            await loadAdminActionItemDetail();
+          } catch (e) { approveBtn.disabled = false; if (errEl) errEl.textContent = e.message || '承認できませんでした。'; }
+        });
+      }
+      if (returnBtn) {
+        returnBtn.addEventListener('click', async () => {
+          const note = card.querySelector('.aai-return-note').value.trim();
+          if (errEl) errEl.textContent = '';
+          if (!note) { if (errEl) errEl.textContent = '再提出の理由を入力してください。'; return; }
+          if (!confirm('修正のお願いを送り、再提出を求めます。よろしいですか?')) return;
+          returnBtn.disabled = true;
+          try {
+            await rpc('admin_return_action_item', { p_admin_employee_code: session.employeeCode, p_recipient_id: recipientId, p_return_note: note });
+            await loadAdminActionItemDetail();
+          } catch (e) { returnBtn.disabled = false; if (errEl) errEl.textContent = e.message || '再提出を求められませんでした。'; }
+        });
+      }
+    });
+    if (head.is_original_assigner) {
+      await wireActionItemApproverCard(currentAdminActionItemId, session);
+    }
+  } catch (e) {
+    body.innerHTML = `<div class="error show">${e.message || '読み込みに失敗しました。'}</div>`;
+  }
+}
+
+// 「承認できる人を追加」欄(依頼を出した本人だけに表示)。現在の承認担当一覧を表示し、
+// 在籍社員から1人選んで追加・既存の担当を削除できる。既存のlist_employees_for_participant_select
+// (社員選択UI共通、氏名・社員番号だけを返す)をそのまま再利用する。
+async function wireActionItemApproverCard(actionItemId, session) {
+  const listEl = document.getElementById('aai-approver-list');
+  const selectEl = document.getElementById('aai-approver-select');
+  const addBtn = document.getElementById('aai-approver-add-btn');
+  const errEl = document.getElementById('aai-approver-error');
+  if (!listEl || !selectEl || !addBtn) return;
+  try {
+    const [approvers, employees] = await Promise.all([
+      rpc('get_action_item_approvers', { p_employee_code: session.employeeCode, p_action_item_id: actionItemId }),
+      rpc('list_employees_for_participant_select', { p_employee_code: session.employeeCode }).catch(() => []),
+    ]);
+    listEl.innerHTML = (!approvers || approvers.length === 0)
+      ? '現在、追加されている人はいません。'
+      : approvers.map((a) => `
+        <div class="plain-list-row" data-code="${a.employee_code}" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>${exdEsc(a.employee_name)}</span>
+          <button type="button" class="secondary aai-approver-remove-btn" data-code="${a.employee_code}" style="padding:4px 10px;">削除</button>
+        </div>
+      `).join('');
+    listEl.querySelectorAll('.aai-approver-remove-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await rpc('admin_remove_action_item_approver', { p_employee_code: session.employeeCode, p_action_item_id: actionItemId, p_approver_employee_code: btn.dataset.code });
+          await loadAdminActionItemDetail();
+        } catch (e) { btn.disabled = false; if (errEl) errEl.textContent = e.message || '削除できませんでした。'; }
+      });
+    });
+    const existingCodes = new Set((approvers || []).map((a) => a.employee_code));
+    const selectable = (employees || []).filter((e) => e.employee_code !== session.employeeCode && !existingCodes.has(e.employee_code));
+    selectEl.innerHTML = '<option value="">(社員を選択)</option>' + selectable.map((e) => `<option value="${e.employee_code}">${exdEsc(e.employee_name)}</option>`).join('');
+    addBtn.addEventListener('click', async () => {
+      if (errEl) errEl.textContent = '';
+      const code = selectEl.value;
+      if (!code) { if (errEl) errEl.textContent = '追加する社員を選択してください。'; return; }
+      addBtn.disabled = true;
+      try {
+        await rpc('admin_add_action_item_approver', { p_employee_code: session.employeeCode, p_action_item_id: actionItemId, p_new_approver_employee_code: code });
+        await loadAdminActionItemDetail();
+      } catch (e) { addBtn.disabled = false; if (errEl) errEl.textContent = e.message || '追加できませんでした。'; }
+    });
+  } catch (e) {
+    listEl.innerHTML = '';
+    if (errEl) errEl.textContent = e.message || '読み込みに失敗しました。';
   }
 }
 
@@ -17432,7 +17669,10 @@ function init() {
   SCREEN_ENTER_HOOKS['status-submit'] = loadStatusSubmitScreen;
   SCREEN_ENTER_HOOKS['admin-status-board'] = loadAdminStatusBoard;
   SCREEN_ENTER_HOOKS['my-action-items'] = loadMyActionItems;
+  SCREEN_ENTER_HOOKS['my-action-item-detail'] = loadMyActionItemDetail;
   SCREEN_ENTER_HOOKS['admin-action-item-create'] = resetActionItemCreateForm;
+  SCREEN_ENTER_HOOKS['admin-action-item-list'] = loadAdminActionItemList;
+  SCREEN_ENTER_HOOKS['admin-action-item-detail'] = loadAdminActionItemDetail;
   SCREEN_ENTER_HOOKS['propose-site'] = resetProposeSiteForm;
   SCREEN_ENTER_HOOKS['loan-request'] = initLoanRequestForm;
   SCREEN_ENTER_HOOKS['loan-history'] = loadLoanHistory;

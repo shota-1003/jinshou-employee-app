@@ -305,6 +305,11 @@
         <span class="home-card-label">接待・会食</span>
         <span class="home-card-desc">事前申請(接待前に)</span>
       </button>
+      <button type="button" class="home-card" data-nav="my-action-items">
+        <span class="icon-slot" data-icon="clipboard-list"></span>
+        <span class="home-card-label">仕事の依頼</span>
+        <span class="home-card-desc">頼む・頼まれる・進み具合の確認</span>
+      </button>
     </div>
 
     <div id="home-events-area"></div>
@@ -2165,6 +2170,11 @@
         <span class="home-card-label">指示を発行</span>
         <span class="home-card-desc">個人/複数社員へ期限付きの指示</span>
       </button>
+      <button type="button" class="home-card" data-nav="admin-action-item-list">
+        <span class="icon-slot" data-icon="clipboard-check"></span>
+        <span class="home-card-label">指示の確認・管理</span>
+        <span class="home-card-desc">確認要請の承認/再提出、履歴</span>
+      </button>
     </div>
 
     <div class="dash-card-grid" id="admin-dashboard-grid"></div>
@@ -3776,31 +3786,60 @@
     <div id="announce-status-list"></div>
   </section>
 
-  <!-- 2026-08-28: Action Center(管理者からの指示、社員本人向け) -->
+  <!-- 2026-08-28: Action Center(依頼された仕事、本人向け)。2026-09-12: 専務・社長限定を撤廃し、
+       全社員が使う機能になったため、発行側の画面(自分が出した依頼・新しく依頼する)への
+       導線もここへ集約する。 -->
   <section id="screen-my-action-items" class="screen">
     <button type="button" class="back-link back-to-origin" data-nav="menu">ホームに戻る</button>
-    <div class="form-title">管理者からの指示</div>
-    <div class="hint" style="margin-bottom:12px;">対応が終わったら「完了にする」を押してください。期限を過ぎても自動的には消えません。</div>
+    <div class="form-title">仕事の依頼</div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <button type="button" class="secondary" data-nav="admin-action-item-create" style="flex:1;">新しく依頼する</button>
+      <button type="button" class="secondary" data-nav="admin-action-item-list" style="flex:1;">自分が出した依頼</button>
+    </div>
+    <div class="section-title">頼まれている仕事</div>
+    <div class="hint" style="margin-bottom:12px;">対応が終わったら開いて「確認要請」を押してください。期限を過ぎても自動的には消えません。</div>
     <div id="my-action-items-list"></div>
   </section>
 
-  <!-- 2026-08-28: Action Center(管理者が個人/複数社員/部署へ指示を発行) -->
+  <!-- 2026-09-11: 指示の詳細(本人側)。確認要請ボタン・履歴/やり取りのスレッド。 -->
+  <section id="screen-my-action-item-detail" class="screen">
+    <button type="button" class="back-link" data-nav="my-action-items">一覧に戻る</button>
+    <div id="my-action-item-detail-body"></div>
+  </section>
+
+  <!-- 2026-08-28: Action Center(仕事の依頼を発行)。2026-09-12: 専務・社長限定を撤廃し、
+       在籍中の社員なら誰でも誰にでも依頼できるようにした(ユーザー指示)。 -->
   <section id="screen-admin-action-item-create" class="screen">
-    <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
-    <div class="form-title">指示を発行</div>
+    <button type="button" class="back-link" data-nav="my-action-items">依頼一覧に戻る</button>
+    <div class="form-title">仕事を依頼する</div>
     <label for="action-item-title">タイトル</label>
     <input type="text" id="action-item-title" placeholder="例: 安全書類の再提出">
     <label for="action-item-body">内容</label>
     <textarea id="action-item-body" rows="4" placeholder="具体的に何をしてほしいか"></textarea>
     <label for="action-item-due-date">期限(任意)</label>
     <input type="date" id="action-item-due-date">
-    <label>対象社員</label>
+    <label>依頼する相手</label>
     <div class="hint">選択した社員全員の「今日やること」に表示されます。</div>
     <div id="action-item-employee-picker"></div>
     <div class="error" id="action-item-error"></div>
-    <button type="button" id="action-item-submit">発行する</button>
-    <div class="section-title" style="margin-top:20px;">発行済みの指示</div>
-    <div id="admin-action-items-list"></div>
+    <button type="button" id="action-item-submit">依頼する</button>
+    <button type="button" class="secondary" data-nav="admin-action-item-list" style="margin-top:12px;">自分が出した依頼を確認する</button>
+  </section>
+
+  <!-- 2026-09-11: 自分が出した依頼 一覧。確認要請中の件数を目立たせる。2026-09-12: 専務・社長
+       限定を撤廃したため、全社員が「自分が出した依頼」だけを見る一覧になっている(サーバー側で
+       created_by=自分、または承認担当に追加された依頼だけに絞り込み済み)。 -->
+  <section id="screen-admin-action-item-list" class="screen">
+    <button type="button" class="back-link" data-nav="my-action-items">依頼一覧に戻る</button>
+    <div class="form-title">自分が出した依頼</div>
+    <button type="button" class="secondary" data-nav="admin-action-item-create" style="margin-bottom:14px;">新しく依頼する</button>
+    <div id="admin-action-item-list-body"></div>
+  </section>
+
+  <!-- 2026-09-11: 指示の詳細(専務・社長側)。受信者ごとの状態、完了認証/再提出、履歴/スレッド。 -->
+  <section id="screen-admin-action-item-detail" class="screen">
+    <button type="button" class="back-link" data-nav="admin-action-item-list">一覧に戻る</button>
+    <div id="admin-action-item-detail-body"></div>
   </section>
 
   <!-- 匿名相談トップ(送る/自分の相談一覧) -->

@@ -6674,7 +6674,9 @@ function exdBuildPaymentSectionHtml(full, opts) {
         ? `<div class="row2">取消: ${exdText(p.voided_by)}・理由: ${exdEsc(p.void_reason || '')}</div>` : '';
       const btn = (isAdmin && p.can_void)
         ? `<button type="button" class="secondary danger exd-void-pay-btn" data-payment-id="${exdEsc(p.payment_id)}" style="margin-top:6px;">この支払を取り消す</button>` : '';
-      return `<div class="change-request-item"><div class="row1"><span>${dOnly(p.paid_at)}　${yen(p.paid_amount)}${tag}</span><span>${exdText(p.payment_method)}</span></div><div class="row2">処理者: ${exdText(p.processed_by)}${p.note ? `・備考: ${exdEsc(p.note)}` : ''}</div>${voidLine}${btn}</div>`;
+      const feeLine = (p.transfer_fee != null && Number(p.transfer_fee) > 0)
+        ? `<div class="row2">振込手数料: ${yen(p.transfer_fee)}差引き・実際の振込額: ${yen(p.net_amount)}</div>` : '';
+      return `<div class="change-request-item"><div class="row1"><span>${dOnly(p.paid_at)}　${yen(p.paid_amount)}${tag}</span><span>${exdText(p.payment_method)}</span></div><div class="row2">処理者: ${exdText(p.processed_by)}${p.note ? `・備考: ${exdEsc(p.note)}` : ''}</div>${feeLine}${voidLine}${btn}</div>`;
     }).join('');
   if (isAdmin) {
     const ok = payable.ok === true;
@@ -6699,6 +6701,11 @@ function exdBuildPaymentSectionHtml(full, opts) {
         <option value="">選択してください</option><option value="現金">現金</option>
         <option value="銀行振込">銀行振込</option><option value="その他">その他</option>
       </select>
+      <div class="exd-paid-fee-block" style="display:none;">
+        <label for="exd-paid-fee">振込手数料</label>
+        <div class="hint-inline">銀行振込の場合、振込手数料は社員の受取金額から差し引きます(支払金額〔${yen(a.remaining)}〕はそのまま記録し、実際に口座へ振り込む金額だけが手数料分少なくなります)。</div>
+        <input type="number" id="exd-paid-fee" min="0" step="1" value="0">
+      </div>
       <label for="exd-paid-note">備考</label>
       <input type="text" id="exd-paid-note" placeholder="例: 8月分まとめて振込">
       <div class="hint-inline">支払処理をした人として、いまログインしている管理者の名前が記録されます。</div>
@@ -7096,6 +7103,17 @@ function wireExpenseRequestDetail(el, full, ctx) {
     });
   });
 
+  // 振込手数料は銀行振込のときだけ意味を持つ(現金・その他に手数料は無い)。2026-09-11
+  // Shota指示「立替のお金を振り込む時も手数料は引く」を受けて、方法を選ぶまでは手数料欄を隠し、
+  // 銀行振込を選んだときだけ出す(貸付金台帳の.loan-paid-fee-blockと同じ考え方)。
+  const exdPaidMethodSel = el.querySelector('#exd-paid-method');
+  const exdFeeBlock = el.querySelector('.exd-paid-fee-block');
+  if (exdPaidMethodSel && exdFeeBlock) {
+    const syncExdFeeBlock = () => { exdFeeBlock.style.display = exdPaidMethodSel.value === '銀行振込' ? '' : 'none'; };
+    syncExdFeeBlock();
+    exdPaidMethodSel.addEventListener('change', syncExdFeeBlock);
+  }
+
   // 支払予定日を入れたら、支払日の欄も同じ日付に合わせる(二度入力させない。
   // 2026-09-07ユーザー指摘「支払予定日8、支払日8、これ合わせてくれな。勝手に合うようにしといて欲しい」)。
   const schedInput = el.querySelector('#exd-schedule-date');
@@ -7115,8 +7133,12 @@ function wireExpenseRequestDetail(el, full, ctx) {
       const date = el.querySelector('#exd-paid-date').value;
       const method = el.querySelector('#exd-paid-method').value || null;
       const note = el.querySelector('#exd-paid-note').value.trim() || null;
+      const feeInput = el.querySelector('#exd-paid-fee');
+      const feeVisible = feeInput && feeInput.closest('.exd-paid-fee-block').style.display !== 'none';
+      const fee = feeVisible && feeInput.value !== '' ? Number(feeInput.value) : null;
       if (!amount || amount <= 0) { showError('exd-pay-error', '支払金額を入力してください。'); return; }
       if (!date) { showError('exd-pay-error', '支払日を入力してください。'); return; }
+      if (fee !== null && (fee < 0 || fee >= amount)) { showError('exd-pay-error', '振込手数料は0円以上、支払金額未満で入力してください。'); return; }
       payBtn.disabled = true;
       try {
         if (expenseRecordPaymentRpcAvailable !== false) {
@@ -7124,6 +7146,7 @@ function wireExpenseRequestDetail(el, full, ctx) {
             const payRes = await rpc('admin_record_expense_payment', {
               p_admin_employee_code: session.employeeCode, p_employee_request_id: requestId,
               p_paid_at: date, p_paid_amount: amount, p_payment_method: method, p_note: note,
+              p_transfer_fee: fee,
             });
             expenseRecordPaymentRpcAvailable = true;
             // 2026-09-06 独立レビュー指摘(中1): DB が支払不可(不足項目あり / 承認額超過)を返した場合は握りつぶさず表示する。
@@ -10952,13 +10975,15 @@ function loanBuildPaymentSectionHtml(r) {
         <option value="bank_transfer">銀行振込</option>
         <option value="cash">現金</option>
       </select>
-      <label>振込手数料(任意)</label>
-      <div class="hint-inline">貸付金台帳(残高・履歴)にも記録されます。手数料を残高に加算するかは下のチェックで選べます。</div>
-      <input type="number" class="loan-paid-fee" min="0" step="1" value="0">
-      <label style="display:flex;align-items:center;gap:6px;">
-        <input type="checkbox" class="loan-paid-fee-counts" checked style="width:auto;margin:0;">
-        <span>手数料を貸付残高に加算する</span>
-      </label>
+      <div class="loan-paid-fee-block" style="display:none;">
+        <label>振込手数料</label>
+        <div class="hint-inline">銀行振込は振込手数料を本人負担にする決まりのため、貸付金台帳(残高・履歴)へ足して記録します。手数料を残高に加算するかは下のチェックで選べます。</div>
+        <input type="number" class="loan-paid-fee" min="0" step="1" value="0">
+        <label style="display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" class="loan-paid-fee-counts" checked style="width:auto;margin:0;">
+          <span>手数料を貸付残高に加算する</span>
+        </label>
+      </div>
       <label>備考</label>
       <input type="text" class="loan-paid-note" placeholder="例: 9月分まとめて振込">
       <div class="hint-inline">支払処理をした人として、いまログインしている管理者の名前が記録されます。この操作で貸付金台帳(残高・履歴)へも記録されます。</div>
@@ -11055,6 +11080,17 @@ function renderLoanMonthlySheet(year, month, rows) {
 
 function wireLoanPaymentSection(containerEl, session, onDone) {
   const reload = onDone || loadLoanAdminList;
+  // 振込手数料は銀行振込のときだけ意味を持つ(現金に手数料は無い)。2026-09-11 Shota指示
+  // 「借入の時に銀行振り込みの場合は振込手数料も足す形にする」を受けて、方法を選ぶまでは
+  // 手数料欄を隠し、銀行振込を選んだときだけ出す(振込手数料は申請者負担という既存の方針、
+  // index.htmlの借入申請フォームの説明文と同じ)。
+  containerEl.querySelectorAll('.loan-paid-method').forEach((sel) => {
+    const block = sel.closest('.exd-pay-form').querySelector('.loan-paid-fee-block');
+    if (block) block.style.display = sel.value === 'bank_transfer' ? '' : 'none';
+    sel.addEventListener('change', () => {
+      if (block) block.style.display = sel.value === 'bank_transfer' ? '' : 'none';
+    });
+  });
   containerEl.querySelectorAll('.loan-schedule-save').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const item = btn.closest('.card');

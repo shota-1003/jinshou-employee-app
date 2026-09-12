@@ -13056,7 +13056,7 @@ async function fetchDailyReportForTarget(dateStr) {
     p_subcontractor_company_id: null, p_report_status: null,
   });
   const filtered = dailyReportTarget.type === 'subcontractor'
-    ? rows.filter((r) => r.subcontractor_worker_name === dailyReportTarget.workerName)
+    ? rows.filter((r) => r.subcontractor_worker_id === dailyReportTarget.subcontractorWorkerId)
     : rows;
   return filtered.map((r) => ({
     site_id: r.site_id, work_type: r.work_type, headcount: r.headcount, reflected: !!r.reflected_to_sheet_at,

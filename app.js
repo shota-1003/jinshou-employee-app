@@ -7336,7 +7336,7 @@ function lockedFieldRow(label, value) {
 const CHANGE_FIELD_LABEL = {
   phone: '電話番号', postal_code: '郵便番号', address: '住所', email: 'メールアドレス',
   emergency_contact_name: '緊急連絡先(氏名)', emergency_contact_relation: '緊急連絡先(続柄)', emergency_contact_phone: '緊急連絡先(電話番号)',
-  birth_date: '生年月日',
+  birth_date: '生年月日', dependents_count: '扶養人数',
 };
 
 function renderAvatar(elId, name, photoUrl) {
@@ -7454,6 +7454,7 @@ async function loadMyInfo() {
       lockedFieldRow('氏名', p.employee_name) +
       lockedFieldRow('フリガナ', p.furigana) +
       fieldRow('生年月日', p.birth_date ? new Date(p.birth_date).toLocaleDateString('ja-JP') : null, 'birth_date', p.birth_date) +
+      fieldRow('扶養人数', p.dependents_count != null ? `${p.dependents_count}人` : null, 'dependents_count', p.dependents_count) +
       lockedFieldRow('入社日', p.hire_date ? new Date(p.hire_date).toLocaleDateString('ja-JP') : null) +
       lockedFieldRow('所属/役割', p.department);
     document.getElementById('myinfo-contact-fields').innerHTML =
@@ -7503,7 +7504,9 @@ function openProfileEdit(field, currentValue) {
   document.getElementById('profile-edit-title').textContent = `${CHANGE_FIELD_LABEL[field] || field}の変更申請`;
   document.getElementById('profile-edit-label').textContent = `新しい${CHANGE_FIELD_LABEL[field] || ''}`;
   const input = document.getElementById('profile-edit-value');
-  input.type = field === 'birth_date' ? 'date' : 'text';
+  input.type = field === 'birth_date' ? 'date' : (field === 'dependents_count' ? 'number' : 'text');
+  input.min = field === 'dependents_count' ? '0' : '';
+  input.max = field === 'dependents_count' ? '20' : '';
   input.value = currentValue || '';
   hideError('profile-edit-error');
   showScreen('profile-edit');

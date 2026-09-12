@@ -11038,7 +11038,10 @@ async function openLoanDetail(id) {
       <div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>使用目的</span><div style="width:100%;margin-top:4px;">${(d.breakdown || []).map((x) => `<div style="display:flex;justify-content:space-between;"><span>${(x.purpose || '').replace(/</g, '&lt;')}</span><span>${yen(x.amount)}</span></div>`).join('')}</div></div>
       <div class="field-row"><span>必要日</span><span>${d.needed_by_date}</span></div>
       <div class="field-row"><span>受取方法</span><span>${LOAN_RECEIPT_LABEL[d.receipt_method] || ''}</span></div>
-      ${d.admin_comment ? `<div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>管理者コメント</span><span style="margin-top:4px;">${d.admin_comment.replace(/</g, '&lt;')}</span></div>` : ''}`;
+      ${d.admin_comment ? `<div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>管理者コメント</span><span style="margin-top:4px;">${d.admin_comment.replace(/</g, '&lt;')}</span></div>` : ''}
+      ${d.status === 'approved' ? `<div class="field-row"><span>支払の状態</span><span>${LOAN_PAYMENT_STATUS_LABEL[d.payment_status] || d.payment_status || '未実施'}</span></div>` : ''}
+      ${d.payment_status === 'paid' ? `<div class="field-row"><span>支払方法</span><span>${LOAN_RECEIPT_LABEL[d.payment_method] || d.payment_method || ''}</span></div>` : ''}
+      ${d.payment_note ? `<div class="field-row" style="flex-direction:column;align-items:flex-start;"><span>会社からの連絡(支払について)</span><span style="margin-top:4px;font-weight:700;">${d.payment_note.replace(/</g, '&lt;')}</span></div>` : ''}`;
     // 未承認(申請中)のみ本人が修正できる。
     document.getElementById('loan-detail-edit').style.display = (d.status === 'applied') ? 'block' : 'none';
   } catch (e) { body.innerHTML = '<div class="hint">読み込みに失敗しました。</div>'; }

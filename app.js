@@ -6126,7 +6126,7 @@ function renderQualAdminMatrix(rows, wrapEl, countEl) {
   }).join('');
 
   wrapEl.innerHTML = `
-    <table class="attendance-matrix-table">
+    <table class="attendance-matrix-table plain-last-col">
       <thead><tr><th>社員</th>${headers}</tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
@@ -9564,7 +9564,7 @@ function renderSupplyHoldingsMatrix(rows, wrapEl, countEl) {
   }).join('');
 
   wrapEl.innerHTML = `
-    <table class="attendance-matrix-table">
+    <table class="attendance-matrix-table plain-last-col">
       <thead><tr><th>社員</th>${headers}</tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>

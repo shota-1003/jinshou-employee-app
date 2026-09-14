@@ -9525,6 +9525,16 @@ async function loadSupplyHoldingsAdmin() {
 // これは全部一個にまとめてほしい。項目が横に長すぎないように。タップしたらサイズが分かる
 // ようにしてくれてたらそれでいい」。サイズ違いを別列にせず品目名だけで1列にまとめ、
 // 数字はその品目の全サイズ合計にする。内訳(サイズごとの数)はセルをタップして確認する形にする。
+// 2026-09-14 Shota指示: 品目の並び順をこの順番に固定する(原文の略称を正式なitem_nameへ
+// 対応させたもの)。ここに無い品目は末尾に元の順序のまま追加する(新品目を追加してもここへ
+// 登録し忘れただけで表から消えることはない)。
+const SUPPLY_MATRIX_COLUMN_ORDER = [
+  'ヘルメット', 'フルハーネス', '安全帯', '制服ジャケット',
+  '春夏用 ポロシャツ', '春夏用 制服ズボン', '秋冬用 シャツ', '秋冬用 制服ズボン',
+  '空調服', '空調服バッテリー', '防寒着', 'インパクト', 'インパクトバッテリー',
+  'ヘッドライト', '安全ベスト',
+];
+
 function renderSupplyHoldingsMatrix(rows, wrapEl, countEl) {
   const employeeName = document.getElementById('sha-search-employee').value.trim();
   const itemName = document.getElementById('sha-search-item').value.trim();
@@ -9535,6 +9545,13 @@ function renderSupplyHoldingsMatrix(rows, wrapEl, countEl) {
   rows.forEach((r) => {
     if (itemName && !r.item_name.includes(itemName)) return;
     if (!colSeen.has(r.item_name)) { colSeen.add(r.item_name); cols.push(r.item_name); }
+  });
+  cols.sort((a, b) => {
+    const ia = SUPPLY_MATRIX_COLUMN_ORDER.indexOf(a); const ib = SUPPLY_MATRIX_COLUMN_ORDER.indexOf(b);
+    if (ia === -1 && ib === -1) return 0;
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
   });
 
   const byEmployee = new Map();

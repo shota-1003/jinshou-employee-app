@@ -11299,8 +11299,20 @@ async function loadLoanAdminList() {
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
     const rows = await rpc('admin_list_loan_requests', { p_admin_employee_code: session.employeeCode, p_status: null });
-    const filtered = (rows || []).filter((r) => (loanAdminStatusFilter === 'applied' ? r.status === 'applied' : r.status !== 'applied'));
-    if (!filtered.length) { listEl.innerHTML = `<div class="hint">${loanAdminStatusFilter === 'applied' ? '承認待ちの借入申請はありません。' : '履歴はありません。'}</div>`; return; }
+    // 2026-09-15 Shota指摘「承認した時点で画面から消えるから、いつ支払うか決めれない。
+    // 支払い待ちっていう枠がいるはず」: 承認済み(status='approved')のうち、まだ
+    // 支払いが完了していない(payment_status!=='paid')ものだけを横断的に見られるようにする。
+    // 履歴タブからは取り除かない(全履歴を見たいときの経路はそのまま残す)。
+    const filtered = (rows || []).filter((r) => {
+      if (loanAdminStatusFilter === 'applied') return r.status === 'applied';
+      if (loanAdminStatusFilter === 'payment_pending') return r.status === 'approved' && r.payment_status !== 'paid';
+      return r.status !== 'applied';
+    });
+    if (!filtered.length) {
+      const emptyMsg = loanAdminStatusFilter === 'applied' ? '承認待ちの借入申請はありません。'
+        : (loanAdminStatusFilter === 'payment_pending' ? '支払い待ちの借入はありません。' : '履歴はありません。');
+      listEl.innerHTML = `<div class="hint">${emptyMsg}</div>`; return;
+    }
     listEl.innerHTML = filtered.map((r) => `
       <div class="history-item" data-id="${r.id}" style="cursor:pointer;">
         <div class="row1"><span style="font-weight:700;">${(r.employee_name || '').replace(/</g, '&lt;')}</span><span class="status-badge ${r.status === 'approved' ? 'done' : (r.status === 'rejected' ? 'rejected' : '')}">${LOAN_STATUS_LABEL[r.status] || r.status}</span></div>

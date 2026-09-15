@@ -2834,7 +2834,13 @@ function addExpenseItem(initialFile) {
       status.textContent = 'アップロード完了';
       status.className = 'photo-status ok';
     } catch (e) {
-      status.textContent = 'アップロードに失敗しました。もう一度お試しください。';
+      // 2026-09-15 Shota指摘(徳永さん報告)「写真が読み取れない、金額等打ち込んでも
+      // 申請できない」: 実際にはOCR失敗ではなくこの写真アップロード自体の失敗
+      // (driveFileId未設定→doSubmitExpenseの必須チェックで止まる)だった可能性が高い。
+      // uploadReceiptPhoto()はサーバー側のエラー内容・HTTPステータスを含めた具体的な
+      // メッセージを投げる設計なのに、ここで握りつぶして毎回同じ一般的な文言に
+      // 差し替えていたため、原因が本人にも管理者にも分からなくなっていた。
+      status.textContent = `アップロードに失敗しました: ${e.message || '不明なエラー'}(もう一度お試しください)`;
       status.className = 'photo-status err';
     } finally {
       state.uploading = false;

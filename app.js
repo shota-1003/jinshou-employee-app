@@ -996,13 +996,46 @@ function openPinForgot() {
   const auth = getDeviceAuth();
   const hasDevice = !!(auth && auth.token && pendingLoginCode && auth.employeeCode === pendingLoginCode);
   document.getElementById('pin-forgot-device-card').style.display = hasDevice ? '' : 'none';
-  document.getElementById('pin-forgot-request-card').style.display = hasDevice ? 'none' : '';
+  // 2026-09-15 Shota指摘「暗証番号ぐらい自分のなんやけんなんで誰かの承認性にするの」:
+  // 端末トークンも無い(完全ログアウト)場合でも、まず電話番号による本人確認を試させる
+  // (管理者依頼カードは、電話番号未登録の人向けの控えとして下に隠しておく)。
+  document.getElementById('pin-forgot-phone-card').style.display = hasDevice ? 'none' : '';
+  document.getElementById('pin-forgot-request-card').style.display = 'none';
   hideError('pin-forgot-error');
+  hideError('pin-forgot-phone-error');
   hideError('pin-forgot-request-error');
   document.getElementById('pin-forgot-new').value = '';
   document.getElementById('pin-forgot-confirm').value = '';
+  document.getElementById('pin-forgot-phone').value = '';
+  document.getElementById('pin-forgot-phone-new').value = '';
+  document.getElementById('pin-forgot-phone-confirm').value = '';
   showScreen('pin-forgot');
   attachPinRevealToggles();
+}
+
+// 端末トークンも失った完全ログアウト状態の本人確認を、管理者を待たず電話番号で行う。
+async function doPinForgotPhoneReset() {
+  const phone = document.getElementById('pin-forgot-phone').value.trim();
+  const pin = document.getElementById('pin-forgot-phone-new').value.trim();
+  const confirmPin = document.getElementById('pin-forgot-phone-confirm').value.trim();
+  hideError('pin-forgot-phone-error');
+  if (!phone) { showError('pin-forgot-phone-error', '登録済みの電話番号を入力してください。'); return; }
+  if (!/^[0-9]{4,6}$/.test(pin)) { showError('pin-forgot-phone-error', '暗証番号は4〜6桁の数字で入力してください。'); return; }
+  if (pin !== confirmPin) { showError('pin-forgot-phone-error', '確認用の暗証番号が一致しません。'); return; }
+  const btn = document.getElementById('pin-forgot-phone-submit');
+  btn.disabled = true;
+  try {
+    const rows = await rpc('self_reset_pin_with_phone', { p_employee_code: pendingLoginCode, p_phone: phone, p_new_pin: pin });
+    const emp = rows && rows[0];
+    if (!emp) { showError('pin-forgot-phone-error', '本人確認に失敗しました。'); return; }
+    setDeviceAuth(pendingLoginCode, emp.out_device_token);
+    setSession({ employeeCode: pendingLoginCode, employeeId: emp.out_employee_id, employeeName: emp.out_employee_name, requestRole: emp.out_request_role });
+    enterMenu();
+  } catch (e) {
+    showError('pin-forgot-phone-error', e.message);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function doPinForgotReset() {
@@ -17249,6 +17282,11 @@ function init() {
   document.getElementById('pin-forgot-link').addEventListener('click', openPinForgot);
   document.getElementById('pin-forgot-back').addEventListener('click', () => showScreen('pin-entry'));
   document.getElementById('pin-forgot-submit').addEventListener('click', doPinForgotReset);
+  document.getElementById('pin-forgot-phone-submit').addEventListener('click', doPinForgotPhoneReset);
+  document.getElementById('pin-forgot-request-link').addEventListener('click', () => {
+    document.getElementById('pin-forgot-phone-card').style.display = 'none';
+    document.getElementById('pin-forgot-request-card').style.display = '';
+  });
   document.getElementById('pin-forgot-request-submit').addEventListener('click', doPinResetRequest);
   // 弱い暗証番号のお願いから変更画面へ (E-13)
   document.getElementById('pin-weak-change-btn').addEventListener('click', () => showScreen('pin-change'));

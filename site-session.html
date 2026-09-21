@@ -1,0 +1,15 @@
+<!doctype html><html lang="ja"><meta charset="utf-8"><title>現場管理のログイン連携</title><p>ポータルのログイン状態で現場管理を確認します。</p><script>
+'use strict';
+const allowed=new Set(['http://localhost:3011']),api='https://tcxbtanumtuyfrqtjtvo.supabase.co/rest/v1/rpc/',key='sb_publishable_UVAjFJSjIs7Sl2tMpLWRkQ_uyDw9eyW';
+const methods={instructors:['site_education_instructors','p_admin_employee_code'],session:['site_member_session','p_employee_code'],members:['site_member_directory','p_admin_employee_code'],save:['site_member_save','p_admin_employee_code'],status:['site_education_status','p_admin_employee_code'],publish:['site_education_publish','p_admin_employee_code']};
+function auth(){let raw=null;try{raw=localStorage.getItem('jinshou_device_auth')}catch{}if(!raw){const c=document.cookie.split('; ').find(x=>x.startsWith('jinshou_device_auth='));if(c)raw=decodeURIComponent(c.slice('jinshou_device_auth='.length))}try{return JSON.parse(raw||'null')}catch{return null}}
+window.addEventListener('message',async event=>{
+ if(event.source!==parent||parent===window||!allowed.has(event.origin))return;
+ const m=event.data;if(!m||m.channel!=='jinshou-site-session-v1'||typeof m.id!=='string'||m.id.length>100||!methods[m.method])return;
+ const response={channel:m.channel,id:m.id};
+ try{const a=auth();if(!a?.employeeCode||!a?.token)throw Error('ポータルにログインしてください。ログイン後は自動で反映します。');const [name,actor]=methods[m.method];const params={...(m.params||{}),[actor]:a.employeeCode};
+ const res=await fetch(api+name,{method:'POST',headers:{'Content-Type':'application/json',apikey:key,Authorization:'Bearer '+key,'X-Device-Token':a.token},body:JSON.stringify(params),signal:AbortSignal.timeout(25000)});const result=await res.json();if(!res.ok)throw Error(result.message||'ポータルから取得できませんでした');response.result=result;
+ }catch(e){response.error=e.message}
+ event.source.postMessage(response,event.origin);
+});
+</script></html>

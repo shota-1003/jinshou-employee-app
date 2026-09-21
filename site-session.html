@@ -1,4 +1,4 @@
-<!doctype html><html lang="ja"><meta charset="utf-8"><title>現場管理のログイン連携</title><h2>現場管理と自動連携</h2><p id="state">ログイン状態を確認します。この画面を開いたまま、現場管理へ戻ってください。</p><p><a href="./" target="_blank" rel="noopener">ログインが必要な場合はポータルを開く</a></p><script>
+<!doctype html><html lang="ja"><meta charset="utf-8"><title>現場管理のログイン連携</title><p>ポータルのログイン状態で現場管理を確認します。</p><script>
 'use strict';
 const allowed=new Set(['http://localhost:3011']),api='https://tcxbtanumtuyfrqtjtvo.supabase.co/rest/v1/rpc/',key='sb_publishable_UVAjFJSjIs7Sl2tMpLWRkQ_uyDw9eyW';
 const methods={instructors:['site_education_instructors','p_admin_employee_code'],session:['site_member_session','p_employee_code'],members:['site_member_directory','p_admin_employee_code'],save:['site_member_save','p_admin_employee_code'],status:['site_education_status','p_admin_employee_code'],publish:['site_education_publish','p_admin_employee_code']};
@@ -12,5 +12,5 @@ window.addEventListener('message',async event=>{
  }catch(e){response.error=e.message}
  event.source.postMessage(response,event.origin);
 });
-if(opener)opener.postMessage({channel:"jinshou-site-session-v1",ready:true},"http://localhost:3011");
+const binding=new URLSearchParams(location.hash.slice(1)).get("binding");function announce(){if(opener)opener.postMessage({channel:"jinshou-site-session-v1",ready:true,binding},"http://localhost:3011")}announce();setInterval(announce,5000);
 </script></html>

@@ -8,7 +8,7 @@ window.addEventListener('message',async event=>{
  const m=event.data;if(!m||m.channel!=='jinshou-site-session-v1'||typeof m.id!=='string'||m.id.length>100||!methods[m.method])return;
  const response={channel:m.channel,id:m.id};
  try{const a=auth();if(!a?.employeeCode||!a?.token)throw Error('ポータルにログインしてください。ログイン後は自動で反映します。');const [name,actor]=methods[m.method];const params={...(m.params||{}),[actor]:a.employeeCode};
- const res=await fetch(api+name,{method:'POST',headers:{'Content-Type':'application/json',apikey:key,Authorization:'Bearer '+key,'X-Device-Token':a.token},body:JSON.stringify(params),signal:AbortSignal.timeout(25000)});const result=await res.json();if(!res.ok)throw Error(result.message||'ポータルから取得できませんでした');response.result=result;
+ const res=await fetch(api+name,{method:'POST',headers:{'Content-Type':'application/json',apikey:key,Authorization:'Bearer '+key,'X-Device-Token':a.token},body:JSON.stringify(params),signal:AbortSignal.timeout(25000)});const raw=await res.text();const result=raw?JSON.parse(raw):null;if(!res.ok)throw Error(result?.message||'ポータルから取得できませんでした');response.result=result;
  }catch(e){response.error=e.message}
  event.source.postMessage(response,event.origin);
 });

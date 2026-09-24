@@ -6358,7 +6358,7 @@ function expenseRequestLedgerCardHtml(g, opts) {
       <div class="row2">申請日: ${dateTimeText(g.requested_at)}　区分: ${g.expense_category === 'employee_advance' ? '立替' : '会社払い'}</div>
       <div class="row2">支払予定日: ${dateText(g.scheduled_payment_date)}　支払完了日: ${dateText(g.paid_at)}　${EXPENSE_PAYMENT_STATUS_LABEL[g.payment_status] || g.payment_status || '-'}</div>
       <span class="status-badge ${statusClass}">${statusLabel}</span>
-      ${showName && g.original_uncollected_count > 0 ? `<span class="status-badge warn">原本未回収 ${g.original_uncollected_count}件</span>` : ''}
+      ${g.original_uncollected_count > 0 ? `<span class="status-badge warn">原本未提出 ${g.original_uncollected_count}件</span>` : ''}
       <button type="button" class="secondary expense-ledger-detail-btn" style="margin-top:6px;">経費精算書を開く</button>
     </div>
   `;

@@ -1,7 +1,7 @@
 <!doctype html><html lang="ja"><meta charset="utf-8"><title>現場管理のログイン連携</title><p>ポータルのログイン状態で現場管理を確認します。</p><script>
 'use strict';
 const allowed=new Set(['http://localhost:3011']),api='https://tcxbtanumtuyfrqtjtvo.supabase.co/rest/v1/rpc/',key='sb_publishable_UVAjFJSjIs7Sl2tMpLWRkQ_uyDw9eyW';
-const methods={instructors:['site_education_instructors','p_admin_employee_code'],session:['site_member_session','p_employee_code'],members:['site_member_directory','p_admin_employee_code'],save:['site_member_save','p_admin_employee_code'],status:['site_education_status','p_admin_employee_code'],publish:['site_education_publish','p_admin_employee_code']};
+const methods={sites:['admin_list_sites','p_admin_employee_code'],registerSite:['admin_register_site','p_admin_employee_code'],instructors:['site_education_instructors','p_admin_employee_code'],session:['site_member_session','p_employee_code'],members:['site_member_directory','p_admin_employee_code'],save:['site_member_save','p_admin_employee_code'],status:['site_education_status','p_admin_employee_code'],publish:['site_education_publish','p_admin_employee_code']};
 function auth(){let raw=null;try{raw=localStorage.getItem('jinshou_device_auth')}catch{}if(!raw){const c=document.cookie.split('; ').find(x=>x.startsWith('jinshou_device_auth='));if(c)raw=decodeURIComponent(c.slice('jinshou_device_auth='.length))}try{return JSON.parse(raw||'null')}catch{return null}}
 window.addEventListener('message',async event=>{
  if((event.source!==parent&&event.source!==opener)||event.source===window||!allowed.has(event.origin))return;

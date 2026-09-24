@@ -8515,10 +8515,12 @@ function renderEmploymentSection(e, code, session) {
   }
 }
 
-// 外注登録完了(引き渡し)画面: 外注ID + 初回登録コード + 有効期限 + 登録リンク/QR + 共有・コピー。
-// 管理者はPINを決めない/見ない。「初回登録の権利」だけを本人へ渡す。
-function renderSubcontractorHandoff(h) {
-  const resEl = document.getElementById('ed-to-sub-result');
+// 外注ID+初回登録コード+有効期限+登録リンク/QR+共有・コピーの「引き渡しカード」を、指定した入れ物へ描画する。
+// admin_issue_subcontractor_handoff(元社員からの移行/新規登録)と、後述の「暗証番号をお忘れの方」再発行の
+// 両方から呼ぶ共通部品(2026-09-24、外注の方が暗証番号を忘れてログインできなくなった実例への対応で
+// 後者を追加した際、同じカードUIを重複実装しないためここへ切り出した)。管理者はPINを決めない/見ない。
+// title: カード見出し(「外注作業員 登録完了」/「暗証番号の再設定コードを発行しました」等)を呼び出し側で変える。
+function renderSubcontractorHandoffCard(resEl, h, title) {
   if (!resEl || !h) return;
   const loginCode = h.out_login_code || '';
   const code = h.out_code || '';
@@ -8529,31 +8531,37 @@ function renderSubcontractorHandoff(h) {
   resEl.style.display = 'block';
   resEl.innerHTML = `
     <div class="card" style="border:1px solid var(--border); margin-top:6px;">
-      <div style="font-weight:700; margin-bottom:6px;">外注作業員 登録完了</div>
+      <div style="font-weight:700; margin-bottom:6px;">${title || '外注作業員 登録完了'}</div>
       <div class="row2">氏名：${(h.out_worker_name || '')}</div>
       <div class="row2">所属：${(h.out_company_name || '')}</div>
       <div class="row2">外注ID：<b style="font-size:16px; letter-spacing:1px;">${loginCode}</b></div>
       <div class="row2">初回登録コード：<b style="font-size:18px; letter-spacing:2px;">${code}</b></div>
       <div class="hint" style="margin:6px 0;">有効期限: ${expires}。このコードは本人が最初のログインで暗証番号を設定すると無効になります。暗証番号は本人だけが決めます(管理者は設定・閲覧できません)。</div>
-      <div id="ed-sub-qr" style="margin:10px 0; text-align:center;"></div>
+      <div class="sch-qr" style="margin:10px 0; text-align:center;"></div>
       <div style="display:flex; flex-direction:column; gap:8px;">
-        <button type="button" class="secondary" id="ed-sub-copy-btn">外注ID・コードをコピー</button>
-        <button type="button" class="secondary" id="ed-sub-copylink-btn">初回登録リンクをコピー</button>
-        <button type="button" id="ed-sub-share-btn">本人へ共有する</button>
+        <button type="button" class="secondary sch-copy-btn">外注ID・コードをコピー</button>
+        <button type="button" class="secondary sch-copylink-btn">初回登録リンクをコピー</button>
+        <button type="button" class="sch-share-btn">本人へ共有する</button>
       </div>
-      <div class="hint" style="margin-top:8px;">本人は外注ポータルの「会社で登録済みの方（登録コードではじめる）」からQR読取、または外注ID＋初回登録コードを入力して初回登録します。</div>
+      <div class="hint" style="margin-top:8px;">本人は外注ポータルの「会社で登録済みの方（登録コードではじめる）」からQR読取、または外注ID＋初回登録コードを入力して登録します。</div>
     </div>`;
   // QRは自己完結の軽量エンコーダが読み込まれていれば描画(無ければリンク共有で代替)。
+  const qrEl = resEl.querySelector('.sch-qr');
   try {
-    if (window.renderQrInto) window.renderQrInto(document.getElementById('ed-sub-qr'), link, 180);
-    else document.getElementById('ed-sub-qr').innerHTML = '<div class="hint">初回登録リンク（下の「共有」「リンクをコピー」から本人へ渡せます）</div>';
+    if (window.renderQrInto) window.renderQrInto(qrEl, link, 180);
+    else qrEl.innerHTML = '<div class="hint">初回登録リンク（下の「共有」「リンクをコピー」から本人へ渡せます）</div>';
   } catch (e) { /* QR描画失敗はリンク共有で代替 */ }
-  const shareText = `迅翔興業 外注ポータル 初回登録\n外注ID: ${loginCode}\n初回登録コード: ${code}\n登録リンク: ${link}`;
-  document.getElementById('ed-sub-copy-btn').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(`外注ID: ${loginCode} / 初回登録コード: ${code}`); };
-  document.getElementById('ed-sub-copylink-btn').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(link); };
-  document.getElementById('ed-sub-share-btn').onclick = async () => {
-    try { if (navigator.share) await navigator.share({ title: '外注ポータル 初回登録', text: shareText }); else { navigator.clipboard && navigator.clipboard.writeText(shareText); alert('共有に非対応のため、内容をコピーしました。本人へ送ってください。'); } } catch (e) { /* キャンセル */ }
+  const shareText = `迅翔興業 外注ポータル\n外注ID: ${loginCode}\n初回登録コード: ${code}\n登録リンク: ${link}`;
+  resEl.querySelector('.sch-copy-btn').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(`外注ID: ${loginCode} / 初回登録コード: ${code}`); };
+  resEl.querySelector('.sch-copylink-btn').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(link); };
+  resEl.querySelector('.sch-share-btn').onclick = async () => {
+    try { if (navigator.share) await navigator.share({ title: '外注ポータル', text: shareText }); else { navigator.clipboard && navigator.clipboard.writeText(shareText); alert('共有に非対応のため、内容をコピーしました。本人へ送ってください。'); } } catch (e) { /* キャンセル */ }
   };
+}
+
+// 外注登録完了(引き渡し)画面: 元社員からの移行/新規登録の直後に呼ぶ(既存呼び出し口を維持)。
+function renderSubcontractorHandoff(h) {
+  renderSubcontractorHandoffCard(document.getElementById('ed-to-sub-result'), h, '外注作業員 登録完了');
 }
 
 // ================= 初回登録コード管理(管理者) =================
@@ -16483,9 +16491,11 @@ async function loadSubcontractorWorkerAdmin() {
         <div class="row2">状態: ${w.status === 'active' ? '<span style="color:#2e7d32;font-weight:700;">在籍</span>' : '<span style="color:#b26a00;font-weight:700;">退職・停止</span>'}</div>
         <div class="qual-verify-btns">
           <button type="button" class="edit-sc-worker-btn" data-id="${w.id}">編集</button>
+          <button type="button" class="secondary pin-reset-sc-worker-btn" data-id="${w.id}" data-name="${(w.worker_name || '').replace(/"/g, '&quot;')}">暗証番号をお忘れの方(再設定コードを発行)</button>
           <button type="button" class="reject-btn toggle-sc-worker-btn" data-active="${w.status === 'active'}">${w.status === 'active' ? '退職・停止にする' : '再有効化する'}</button>
           <button type="button" class="reject-btn delete-sc-worker-btn" data-id="${w.id}" data-name="${w.worker_name}" data-code="${w.login_code || ''}" data-company="${(w.company_name || '').replace(/"/g, '&quot;')}">完全削除</button>
         </div>
+        <div class="sc-worker-handoff-result" data-id="${w.id}" style="display:none;"></div>
       </div>
     `;
     }).join('');
@@ -16517,6 +16527,33 @@ async function loadSubcontractorWorkerAdmin() {
         const item = btn.closest('.supply-item');
         await rpc('admin_set_subcontractor_worker_active', { p_admin_employee_code: session.employeeCode, p_id: Number(item.dataset.id), p_active: btn.dataset.active !== 'true' });
         loadSubcontractorWorkerAdmin();
+      });
+    });
+    // 2026-09-24 Shota報告「外注の方が暗証番号分からんくなってログインできなくなった」への対応。
+    // 外注ポータルには本人が暗証番号を思い出せないときの復帰手段が無く(機種変更用の「relink」画面は
+    // 現在の暗証番号を知っている前提)、社員側のような管理者リセットも無かった。既存の
+    // admin_issue_subcontractor_handoff(既に「元社員の移行」で使っている初回登録コード発行RPC)は
+    // 対象作業員が既に暗証番号を登録済みでも新しいコードを発行でき、本人がそのコードで初回登録画面から
+    // 新しい暗証番号を設定し直せる(既存の端末ログインは無効化されない)ため、新しいRPCは追加せず、
+    // ここに入口を1つ足すだけで対応する。
+    listEl.querySelectorAll('.pin-reset-sc-worker-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = Number(btn.dataset.id);
+        const name = btn.dataset.name || '';
+        if (!confirm(`【暗証番号の再設定コード発行】\n\n氏名: ${name}\n\n新しい初回登録コードを発行します。本人はこのコードで新しい暗証番号を設定できます(以前の暗証番号は使えなくなります)。\n\nよろしいですか?`)) return;
+        btn.disabled = true;
+        const item = btn.closest('.supply-item');
+        const target = item.querySelector('.sc-worker-handoff-result');
+        try {
+          const res = await rpc('admin_issue_subcontractor_handoff', { p_admin_employee_code: session.employeeCode, p_worker_id: id, p_ttl_hours: 72 });
+          const h = Array.isArray(res) ? res[0] : res;
+          renderSubcontractorHandoffCard(target, h, '暗証番号の再設定コードを発行しました');
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (e) {
+          alert(`発行に失敗しました: ${e.message || ''}`);
+        } finally {
+          btn.disabled = false;
+        }
       });
     });
     listEl.querySelectorAll('.delete-sc-worker-btn').forEach((btn) => {

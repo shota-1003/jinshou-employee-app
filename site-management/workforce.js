@@ -1,0 +1,4 @@
+const jpToday=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Tokyo'}).format(new Date());
+state.assignments ||= [];state.presence ||= [];
+const previousSiteForm=siteForm,previousOverview=overview,previousVisits=visitsPanel;
+siteForm=function(id){previousSiteForm(id);let s=state.sites.find(x=>x.id===id)||{},f=$('siteForm'),submit=f.onsubmit,a=f.querySelector('[name=address]');a.previousElementSibling.textContent='現場の住所（地図検索に使用）';a.placeholder='都道府県・市区町村・番地';let block=document.createElement('div');block.className='field';block.innerHTML=`<label>現場の位置情報・地図URL</label><input name="mapLink" value="${esc(s.mapLink||'')}" placeholder="Google マップ / Apple マップの共有URL"><p class="hint">現場の入口など、正確なピン位置を指定できます。空欄なら住所から地図を開きます。</p>`;a.closest('.field').after(block);f.onsubmit=e=>{e.preventDefault();let v=f.elements.mapLink.value.trim();if(v&&!safePlaceUrl(v)){notify('現場の地図URLは Google / Apple マップのHTTPS共有URLを指定してください');return}f.elements.mapLink.value=v;submit(e)}};

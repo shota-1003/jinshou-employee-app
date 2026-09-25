@@ -1,0 +1,30 @@
+(function(){'use strict';
+const PLAN_ID='1b5de4ad-5966-451e-895a-3f61b6074363';let generation=0;
+const owner=()=>JSON.stringify(portalSession.identity());
+const valid=(a,g)=>portalSession.connected()&&a===owner()&&g===generation;
+async function read(sid){const key=sitePortalSiteKey(sid),a=owner(),g=generation,rows=await siteSharedStore.list(key,'安全教育');if(!valid(a,g))throw Error('ログインが変わりました');const library=await siteCompanyEducationLibrary.list(key);if(!valid(a,g))throw Error('ログインが変わりました');return {key,plan:rows.find(x=>x.id===PLAN_ID&&!x.deleted),docs:[...rows.filter(x=>!x.deleted&&x.payload.kind==='safety-document'&&x.payload.state==='ready'),...library.map(d=>({id:'library:'+d.id,payload:{name:d.title,version:d.version,state:'ready',libraryId:d.id}}))]}}
+window.siteEducationShared={read,blob:async(sid,id)=>{const expected=owner(),epoch=generation,{key,docs}=await read(sid),doc=docs.find(x=>x.id===id);if(!valid(expected,epoch))throw Error('ログインが変わりました');if(!doc)throw Error('共有教材を確認できません');if(doc.payload.libraryId){const blob=await siteCompanyEducationLibrary.blob(key,doc.payload.libraryId);if(!valid(expected,epoch))throw Error('ログインが変わりました');return blob}const a=portalSession.identity(),client=new SitePrivateAttachments.Client({records:siteSharedStore,identity:()=>portalSession.connected()?portalSession.identity():null,bridge:(m,p)=>portalSession.call(m,p),queue:SitePrivateAttachments.indexedQueue()}),files=await client.list(key,'安全教育'),file=files.find(x=>x.id===doc.payload.fileRecordId);if(!valid(expected,epoch))throw Error('ログインが変わりました');if(!file)throw Error('共有教材の原本を確認できません');const blob=await client.download(file);if(!valid(expected,epoch))throw Error('ログインが変わりました');return blob}};
+window.siteEducationPlan=async sid=>{
+ const a=owner(),g=generation;show('<h2 id="sharedEducationLoading">共有教材を確認中…</h2>');const modal=$('modal'),loading=$('sharedEducationLoading');
+ try{
+  const {key,plan,docs}=await read(sid),recordKey=siteSharedStore.key(key,'安全教育',PLAN_ID),pending=(await siteSharedStore.pending()).find(x=>x.key===recordKey);
+  if(!valid(a,g)||!modal.open||!loading.isConnected)return;
+  if(!siteSharedStore.access(key,'安全教育')?.manage)throw Error('教材設定はこの現場の教育管理者が行います');
+  const old=pending?.value.p_payload||plan?.payload||{};let revision=pending?.value.p_expected_revision??plan?.revision??0;
+  show(`<h2>入場予定者に届ける安全教育</h2>${pending?'<p>前回の送信待ちの入力を復元しました。確認して保存してください。</p>':''}<form id="educationPlan"><label>現場の教材<select name="documentId" required><option value="">教材を選択</option>${docs.map(d=>`<option value="${esc(d.id)}" ${old.documentId===d.id?'selected':''}>${esc(d.payload.name)} ／ ${esc(d.payload.version)}</option>`).join('')}</select></label><label>案内文<textarea name="message">${esc(old.message||'入場前に教材を確認してください。')}</textarea></label><label><input type="checkbox" name="enabled" ${old.enabled?'checked':''}>配信する教材として設定する</label><p role="alert"></p><div id="educationPlanCompare"></div>${foot('教材設定を保存')}</form>`);
+  const f=$('educationPlan'),active=()=>valid(a,g)&&f.isConnected,notice=f.querySelector('[role=alert]');
+  const input=()=>JSON.stringify([f.elements.documentId.value,f.elements.message.value,f.elements.enabled.checked]);
+  function compareButton(){const host=$('educationPlanCompare');if(!host||host.childElementCount)return;const b=document.createElement('button');b.type='button';b.textContent='最新版と送信待ちを比較する';host.append(b);b.onclick=async()=>{
+   b.disabled=true;try{const before=input(),latest=await read(sid),op=(await siteSharedStore.pending()).find(x=>x.key===recordKey);if(!active())return;
+    const p=latest.plan?.payload,box=document.createElement('section');box.innerHTML='<h3>共有先の最新版</h3><p>'+esc(p?p.name+' ／ '+p.version:'未設定')+'</p><p>'+esc(p?.message||'')+'</p><p>'+(p?.enabled?'配信する設定':'配信しない設定')+'</p>';const use=document.createElement('button');use.type='button';use.textContent='比較したうえで、今の入力を保存する準備をする';box.append(use);host.replaceChildren(box);
+    use.onclick=async()=>{use.disabled=true;try{if(!active()||before!==input())throw Error('入力が変わりました。もう一度比較してください');if(op)await siteSharedStore.resolvePending(op.key,op.requestId);if(!active())return;if(before!==input())throw Error('入力が変わりました。もう一度比較してください');revision=latest.plan?.revision||0;host.replaceChildren();notice.textContent='比較内容を確認しました。「教材設定を保存」で今の入力を保存します。'}catch(e){if(active()){notice.textContent=e.message;host.replaceChildren();compareButton()}}finally{use.disabled=false}};
+   }catch(e){if(active())notice.textContent=e.message}finally{b.disabled=false}
+  }}
+  f.onsubmit=async e=>{e.preventDefault();const b=f.querySelector('.primary');if(b.disabled)return;b.disabled=true;try{if(!active())throw Error('ログインが変わりました');const d=docs.find(x=>x.id===f.elements.documentId.value);if(!d)throw Error('教材を選択してください');await siteSharedStore.save(key,'安全教育',PLAN_ID,{kind:'education-plan',documentId:d.id,name:d.payload.name,version:d.payload.version,message:f.elements.message.value,enabled:f.elements.enabled.checked},{revision});if(active()){closeModal();render()}}catch(e){if(active()){notice.textContent=e.message+' 入力は残っています。';compareButton()}}finally{b.disabled=false}};
+ }catch(e){if(valid(a,g)&&modal.open&&loading.isConnected)show('<h2>教材設定を開けません</h2><p>'+esc(e.message)+'</p><button onclick="closeModal()">戻る</button>')}
+};
+
+window.addEventListener('DOMContentLoaded',()=>{const prior=render;render=function(){prior();const panel=$('educationDeliveryPanel');if(!panel)return;const sid=siteId,a=owner(),g=generation,label=panel.querySelector('#planButton')?.nextElementSibling;if(label)label.textContent='共有教材設定を確認中…';read(sid).then(({plan,key})=>{if(!valid(a,g)||!panel.isConnected)return;if(label)label.textContent=plan?.payload?plan.payload.name+' ／ '+plan.payload.version+(plan.payload.enabled?'':'（配信準備なし）'):'教材未設定';if(!siteSharedStore.access(key,'安全教育')?.manage){panel.querySelector('#planButton')?.remove();panel.querySelector('#sendEducation')?.remove()}}).catch(e=>{if(label?.isConnected)label.textContent='教材設定の取得に失敗しました：'+e.message})}});
+window.addEventListener('portal-session-ready',()=>{generation++;if($('educationPlan')||$('educationSend'))closeModal()});
+})();
+

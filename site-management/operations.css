@@ -1,0 +1,20 @@
+/* Final integrated mobile review: compact navigation and readable ledger empty states. */
+.inventory-table td[colspan]{white-space:normal;line-height:1.8;overflow-wrap:anywhere}
+.inventory-log>div{min-width:0;overflow-wrap:anywhere}
+.inventory-log small,.inventory-log p{overflow-wrap:anywhere}
+.media-card-body{min-width:0}
+@media(max-width:700px){
+ aside nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:3px}
+ aside nav button{padding:12px 3px;font-size:10px;letter-spacing:0;white-space:nowrap}
+ .tabs{display:flex;flex-wrap:wrap;gap:3px 6px;overflow:visible;margin:18px 0 24px;padding-bottom:8px}
+ .tabs button{padding:10px 9px;font-size:11px;white-space:nowrap;border-radius:4px}
+ .tabs button.active{background:#e8eff9;color:#173d71}
+ .inventory-table:has(td[colspan]) table{min-width:0}
+ .inventory-table:has(td[colspan]) th{padding:12px 8px}
+ .inventory-table:has(td[colspan]) td{padding:18px 8px;font-size:13px}
+ .chat-heading{padding:8px 0 16px}
+ .site-chat-form label{margin-bottom:9px}
+}
+#kyForm textarea[name=recorder]{min-height:44px;height:44px}
+#kyForm textarea[name=participants]{min-height:60px;height:60px}
+@media(max-width:700px){dialog .modalfoot{position:sticky;bottom:-1px;background:#fff;padding:14px 0 2px;border-top:1px solid #e3e8f0;z-index:1}}

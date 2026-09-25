@@ -15,7 +15,7 @@ root.mountPrivateAttachments=async function(container,{client,site,section,signa
  const label=(name,e)=>{const l=node('label',name);l.append(e);return l};
  const submit=node('button','共有する');submit.type='submit';submit.disabled=true;
  form.append(label('分類',select),label('撮影日時（分かる場合のみ・日本時間）',captured),label('ファイル（複数可・1件25MB以内）',input));
- if(section==='写真')form.append(label('通常の現場写真（容量を抑えて保存・現場完了3年後の削除対象）',ordinary),node('p','選択すると大きなJPEG写真だけを縮小します。縮小した場合、撮影時の原本は送信しません。図面・原本・署名・事故証拠は選択せず、原本のまま保存してください。削除は保管期限の運用開始後に適用します。'));
+ if(section==='写真')form.append(label('通常の現場写真（容量を抑えて保存・3年保管後の削除対象）',ordinary),node('p','選択すると大きなJPEG写真だけを縮小します。縮小した場合、撮影時の原本は送信しません。図面・原本・署名・事故証拠は選択せず、原本のまま保存してください。現場完了・写真の登録・更新のうち最後の日から3年保管します。'));
  form.append(submit);
  async function preparePhoto(file){
   if(section!=='写真'||!ordinary.checked||file.type!=='image/jpeg'||file.size<=2*1024*1024)return file;
@@ -42,7 +42,7 @@ root.mountPrivateAttachments=async function(container,{client,site,section,signa
  };
  function draw(){if(!valid())return;list.replaceChildren();const ordered=rows.slice().sort((a,b)=>String(b.created_at||b.payload.date||'').localeCompare(String(a.created_at||a.payload.date||'')));
   const visible=ordered.filter(r=>(!category.value||(r.payload.category||'その他')===category.value)&&(!date.value||(r.payload.capturedAt||'').slice(0,10)===date.value)&&(!search.value||r.payload.name.includes(search.value)));
-  for(const row of visible){const p=row.payload,line=node('article');line.className='media-card';line.style.cssText='padding:16px;overflow-wrap:anywhere';line.append(node('h3',p.name),node('p',(p.category||'その他')+' ／ '+(p.state==='ready'?'共有済み':'送信待ち')));
+  for(const row of visible){const p=row.payload,line=node('article');line.className='media-card';line.style.cssText='padding:16px;overflow-wrap:anywhere';line.append(node('h3',p.name),node('p',(p.category||'その他')+' ／ '+(p.state==='ready'?'共有済み':p.state==='retired'?'保管期限により削除済み':'送信待ち')));
    line.append(node('p','撮影日時：'+(p.capturedAt?.replace('T',' ')||'不明')),node('p','登録日時：'+(row.created_at||p.date?new Date(row.created_at||p.date).toLocaleString('ja-JP'):'不明')),node('p','登録者：'+(row.created_by||'記録を確認中')));
    if(section==='工程表')line.append(node('p','第'+(ordered.length-ordered.indexOf(row))+'版'));
    if(p.state==='ready')line.append(button('プレビュー',()=>open(row,false)),button(p.photoRetention==='ordinary'?'共有ファイルを保存':'原本を保存',()=>open(row,true)));list.append(line);

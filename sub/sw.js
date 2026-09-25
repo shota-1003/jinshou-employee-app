@@ -3,8 +3,9 @@
 // CacheStorageはオリジン(GitHub Pages)単位で共有されるため、接頭辞を分けてemployee-appの
 // キャッシュを潰さないようにする(社員ポータルと同一オリジンにサブフォルダ配置されるため)。
 const CACHE_PREFIX = 'jinshou-subcontractor-app';
-const CACHE_NAME = 'jinshou-subcontractor-app-v13';
+const CACHE_NAME = 'jinshou-subcontractor-app-v14';
 const SHELL_FILES = [
+  './worker-education.html', './worker-education-inbox.js',
   './', './index.html', './style.css', './app.js', './client-error-reporter.js', './manifest.json',
   './icons/app-icon-180-v2.png', './icons/icon-192-v2.png', './icons/icon-512-v2.png', './icons/icon-512-maskable-v2.png',
   './icons/favicon-32-v2.png', './icons/favicon-16-v2.png',

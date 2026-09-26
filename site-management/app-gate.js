@@ -4,33 +4,38 @@ let generation=0;const drafts=new Set(),companyAllowed=new Set();
 const identity=()=>portalSession.connected()?portalSession.identity():null;
 const snapshot=()=>window.siteSharedProfilesSnapshot?.()||{ready:false,rows:[]};
 const row=id=>snapshot().rows.find(r=>String(r.localId)===String(id))||(drafts.has(String(id))?{sections:['概要'],can_manage_members:true,draft:true}:null);
-const sections=r=>[...(r?.sections||[]),...(r?.can_manage_members?['メンバー']:[]),...(companyAllowed.has('profits')?['利益管理']:[])];
+const sections=r=>[...(r?.sections||[]),...(r?.profile&&r?.sections?.includes('概要')?['関連']:[]),...(r?.can_manage_members?['メンバー']:[]),...(companyAllowed.has('profits')?['利益管理']:[])];
 // These sections have shared adapters. Unmigrated local sections must not be
 // exposed merely because a server row permits that section.
 const shared=new Set(['概要']);
+const globalSections={allTasks:'タスク',allReports:'報告',repairs:'手直し案件',accidents:'事故報告'};
 function sharedReady(t){return shared.has(t)||window.appSharedFeatures?.[t]===true}
 const canCreate=()=>companyAllowed.has('customers');
-const navPage=b=>b.dataset.nav||(b.hasAttribute('data-estimates')?'estimates':b.dataset.work==='tasks'?'allTasks':b.dataset.work==='reports'?'allReports':'');
+const globalAllowed=p=>!!identity()&&snapshot().ready&&!!globalSections[p]&&window.appSharedFeatures?.[p]===true&&snapshot().rows.some(r=>r.sections?.includes(globalSections[p]));
+const navPage=b=>b.dataset.nav||(b.hasAttribute('data-estimates')?'estimates':b.dataset.work==='tasks'?'allTasks':b.dataset.work==='reports'?'allReports':b.hasAttribute('data-accidents')?'accidents':b.hasAttribute('data-order-notice')?'inventory':'');
+const navAllowed=n=>n==='sites'||(['employees','subcontractors'].includes(n)&&window.sharedWorkforceAvailable?.()&&window.appSharedFeatures?.[n]===true)||globalAllowed(n)||(companyAllowed.has(n)&&window.appSharedFeatures?.[n]===true);
+function updateNav(){const employee=(identity()?.kind||'employee')==='employee',employeeOnly=new Set(['employees','subcontractors','profits','customers','estimates','safetyLibrary','inventory']);for(const b of document.querySelectorAll('aside nav button')){const n=navPage(b),ready=n==='sites'||!!identity()&&snapshot().ready&&window.appSharedFeatures?.[n]===true&&(!employeeOnly.has(n)||employee);b.hidden=!ready;b.disabled=ready&&!navAllowed(n);b.title=b.disabled?'閲覧できる現場または担当権限がありません':''}}
 const allowed=(id,t)=>!!identity()&&snapshot().ready&&sections(row(id)).includes(t);
 function clearModal(){const modal=$('modal');if(!modal)return;if(modal.open)closeModal();modal.replaceChildren()}
 function notice(text){clearModal();$('app').innerHTML='<section class="panel"><h1>現場管理</h1><p>'+esc(text)+'</p><button class="secondary" onclick="siteSharedProfilesRefresh()">再確認する</button></section>'}
 function loginNotice(){clearModal();$('app').innerHTML='<section class="panel"><h1>現場管理</h1><p>本人のポータルにログインすると、閲覧できる現場が表示されます。</p><p style="display:flex;flex-wrap:wrap;gap:10px"><a class="primary" id="employeePortalLogin" style="display:inline-block;color:#fff;text-decoration:none" href="https://shota-1003.github.io/jinshou-employee-app/">社員ログイン</a> <a class="secondary" style="display:inline-block;text-decoration:none" id="workerPortalLogin" href="https://shota-1003.github.io/jinshou-employee-app/sub/">協力会社ログイン</a></p><p>ログイン後、ブラウザーの戻るでこの画面に戻ってください。ログイン状態を自動で確認します。</p><button class="secondary" onclick="siteSharedProfilesRefresh()">再確認する</button></section>';function mode(worker){const url=new URL(location.href);if(worker)url.searchParams.set('portal','sub');else url.searchParams.delete('portal');history.replaceState(history.state,'',url)}$('employeePortalLogin').addEventListener('click',()=>mode(false));$('workerPortalLogin').addEventListener('click',()=>mode(true))}
-window.appGateCanMount=(p=page,id=siteId,t=tab)=>!!identity()&&snapshot().ready&&(p==='detail'?allowed(id,t)&&sharedReady(t):companyAllowed.has(p)&&window.appSharedFeatures?.[p]===true);
+window.appGateCanMount=(p=page,id=siteId,t=tab)=>!!identity()&&snapshot().ready&&(p==='detail'?allowed(id,t)&&sharedReady(t):globalAllowed(p)||companyAllowed.has(p)&&window.appSharedFeatures?.[p]===true);
 function list(){const base=snapshot(),s={...base,rows:[...base.rows,...state.sites.filter(r=>drafts.has(String(r.id))&&!base.rows.some(x=>String(x.localId)===String(r.id))).map(r=>({name:r.name,localId:r.id}))]};$('app').innerHTML=heading('PROJECTS','参加している現場','メンバーとして閲覧を許可された現場です。')+(canCreate()?'<button class="primary" onclick="siteForm()">＋ 現場を登録</button>':'')+(s.ready?'<div class="grid">'+s.rows.map(r=>'<article class="card" data-search="'+esc(r.name||r.profile?.name||'')+'"><div class="body"><h2>'+esc(r.name||r.profile?.name||'現場')+'</h2><button class="primary" data-gate-site="'+esc(r.localId)+'">現場を開く</button></div></article>').join('')+'</div>':'<p>'+esc(s.error||'ログインと現場を確認中です。')+'</p>');if(s.ready&&!s.rows.length)$('app').insertAdjacentHTML('beforeend','<p>閲覧できる現場がありません。現場の職長・リーダーにメンバー登録を依頼してください。</p>');document.querySelectorAll('[data-gate-site]').forEach(b=>b.onclick=()=>openSite(Number(b.dataset.gateSite)))}
 window.addEventListener('DOMContentLoaded',()=>{
  const previous=render;
  render=function(){
-  document.querySelectorAll('aside nav button').forEach(b=>{const n=navPage(b);b.hidden=n!=='sites'&&!(['employees','subcontractors'].includes(n)&&window.sharedWorkforceAvailable?.()&&window.appSharedFeatures?.[n]===true)&&!(companyAllowed.has(n)&&window.appSharedFeatures?.[n]===true)});
+  updateNav();
   if(!identity()){loginNotice();return}
   if(page==='sites'){list();return}
-  if(['employees','subcontractors'].includes(page)){if(window.sharedWorkforceAvailable?.()&&window.appSharedFeatures?.[page]===true){previous();return}notice('管理できる現場と本人ログインを確認してください。');return}
-  if(companyAllowed.has(page)){if(!snapshot().ready){notice('現場の閲覧権限を確認中です。再確認してください。');return}if(window.appSharedFeatures?.[page]!==true){notice('この機能は共有画面への切り替え準備中です。');return}previous();return}
+  if(['employees','subcontractors'].includes(page)){if(window.sharedWorkforceAvailable?.()&&window.appSharedFeatures?.[page]===true){previous();updateNav();return}notice('管理できる現場と本人ログインを確認してください。');return}
+  if(globalSections[page]){if(globalAllowed(page)){previous();updateNav();return}notice('この一覧を閲覧できる現場と共有画面を確認してください。');return}
+  if(companyAllowed.has(page)){if(!snapshot().ready){notice('現場の閲覧権限を確認中です。再確認してください。');return}if(window.appSharedFeatures?.[page]!==true){notice('この機能は共有画面への切り替え準備中です。');return}previous();updateNav();return}
   if(page!=='detail'){notice('この機能は現場を開いて利用してください。');return}
   const r=row(siteId);if(!snapshot().ready||!r){notice('この現場を閲覧できません。現場一覧から選び直してください。');return}
   if(!allowed(siteId,tab)){notice('この項目は閲覧対象ではありません。');return}
   if(!sharedReady(tab)){notice('この項目は共有画面への切り替え準備中です。');return}
-  previous();document.querySelectorAll('aside nav button').forEach(b=>{const n=navPage(b);b.hidden=n!=='sites'&&!(['employees','subcontractors'].includes(n)&&window.sharedWorkforceAvailable?.()&&window.appSharedFeatures?.[n]===true)&&!(companyAllowed.has(n)&&window.appSharedFeatures?.[n]===true)});
-  const tabs=document.querySelector('#app .tabs');if(tabs)for(const b of [...tabs.children]){const name=b.textContent.replace(/^🔒\s*/, '').replace(/\s+\d+$/, '').trim();if(!allowed(siteId,name))b.remove()}
+  previous();updateNav();
+  const tabs=document.querySelector('#app .tabs');if(tabs)for(const b of [...tabs.children]){const name=b.textContent.replace(/^🔒\s*/, '').replace(/\s+\d+$/, '').trim();if(!allowed(siteId,name)||!sharedReady(name))b.remove()}
  };
  const guardedRender=render;render=function(){try{const result=guardedRender();document.documentElement.removeAttribute('data-app-gate-loading');return result}catch(e){clearModal();$('app').innerHTML='<section class="panel"><h1>現場管理</h1><p>画面を確認できません。再読み込みしてください。</p></section>';document.querySelectorAll('aside nav button').forEach(b=>b.hidden=navPage(b)!=='sites');document.documentElement.removeAttribute('data-app-gate-loading');console.error('app gate render failed',e)}};window.appGateRender=render;
  openSite=function(id){const r=row(id),first=sections(r).find(sharedReady);if(!r||!first){notice('閲覧できる項目がありません。');return}siteId=id;page='detail';tab=first;render()};

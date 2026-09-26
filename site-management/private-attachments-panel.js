@@ -44,7 +44,7 @@ root.mountPrivateAttachments=async function(container,{client,site,section,signa
   const visible=ordered.filter(r=>(!category.value||(r.payload.category||'その他')===category.value)&&(!date.value||(r.payload.capturedAt||'').slice(0,10)===date.value)&&(!search.value||r.payload.name.includes(search.value)));
   for(const row of visible){const p=row.payload,line=node('article');line.className='media-card';line.style.cssText='padding:16px;overflow-wrap:anywhere';line.append(node('h3',p.name),node('p',(p.category||'その他')+' ／ '+(p.state==='ready'?'共有済み':p.state==='retired'?'保管期限により削除済み':'送信待ち')));
    line.append(node('p','撮影日時：'+(p.capturedAt?.replace('T',' ')||'不明')),node('p','登録日時：'+(row.created_at||p.date?new Date(row.created_at||p.date).toLocaleString('ja-JP'):'不明')),node('p','登録者：'+(row.created_by||'記録を確認中')));
-   if(section==='工程表')line.append(node('p','第'+(ordered.length-ordered.indexOf(row))+'版'));
+   if(section==='工程表'){line.append(node('p','第'+(ordered.length-ordered.indexOf(row))+'版'));if(row===ordered[0]){const latest=node('span','最新');latest.className='pill';line.append(latest)}}
    if(p.state==='ready')line.append(button('プレビュー',()=>open(row,false)),button(p.photoRetention==='ordinary'?'共有ファイルを保存':'原本を保存',()=>open(row,true)));list.append(line);
   }
   for(const op of pending.filter(x=>x.site===site&&x.section===section)){const line=node('p',op.file.name+'：送信未完了 ');line.append(button('再送する',async()=>{await client.retry(op.id);await refresh()}));list.append(line)}

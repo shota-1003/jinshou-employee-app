@@ -14,10 +14,10 @@ function mount({host,siteKey,localId,onChanged}={}){
   linked:[],linkedTotal:0,linkedCursor:null,linkedLoading:false,linkedReady:false,candidates:[],candidateTotal:0,candidateCursor:null,candidateLoading:false,candidateReady:false,month:thisMonth()};
  mounted.set(target,state);target.replaceChildren();
  const current=()=>!state.cancelled&&mounted.get(target)===state&&target.isConnected&&state.owner===identity()&&state.epoch===epoch;
- add(target,'h3','ポータルの接待（予定・申請）');add(target,'p','管理者が接待申請の正本を明示して関連付けます。予定・承認は実施の記録ではありません。').className='hint';
+ add(target,'h3','この現場の接待');add(target,'p','ポータルで申請した会食などを、この現場の記録として表示する欄です。予定と実施済みは別です。').className='hint';
  const status=add(target,'p','本人と現場の権限を確認中…');status.setAttribute('role','status');
  const linkedBox=add(target,'div');linkedBox.dataset.entertainmentLinked='';
- const chooser=add(target,'section');chooser.dataset.entertainmentChooser='';
+ const selection=add(target,'details');selection.dataset.entertainmentSelection='';add(selection,'summary','ポータルの接待を選んで追加');const chooser=add(selection,'section');chooser.dataset.entertainmentChooser='';
  state.cancel=()=>{state.cancelled=true;state.pending=null;target.replaceChildren()};
  if(!state.owner){status.textContent='管理者として社員ポータルへログインしてから確認してください。';return state}
  const report=()=>{if(current()&&typeof onChanged==='function')onChanged({count:0,linkedCount:state.linkedTotal,hasMore:state.linkedCursor!=null,rows:state.linked.map(r=>({id:r.id,plannedAt:r.plannedAt,store:r.store,purpose:r.purpose,status:r.status,execution:'unconfirmed'}))})};
@@ -38,7 +38,7 @@ function mount({host,siteKey,localId,onChanged}={}){
   if(!state.candidateReady){add(chooser,'p',state.candidateLoading?'この月の申請を確認中…':'候補件数は未確認です。');return}
   add(chooser,'p',`この月の選択可能な申請 ${state.candidateTotal}件`);
   if(!state.candidates.length)add(chooser,'p','この月に選べる接待申請はありません。');
-  for(const r of state.candidates){const row=add(chooser,'div');row.className='row';add(row,'span',`#${r.id} ／ ${plannedAt(r.plannedAt)} ／ ${r.store||'店舗未記入'} ／ ${r.purpose||'目的未記入'} ／ ${statusText[r.status]||r.status||'状態未確認'}`);
+  for(const r of state.candidates){const row=add(chooser,'div');row.className='row';add(row,'span',`${plannedAt(r.plannedAt)} ／ ${r.partnerCompanies||'相手先未記入'} ／ ${r.store||'場所未記入'} ／ ${r.purpose||'目的未記入'}`);
    const b=add(row,'button',r.linkActive?'この現場に関連付け済み':'この現場に関連付ける');b.type='button';b.className='secondary';b.disabled=state.busy||state.linkedLoading||state.candidateLoading||!!state.pending||!!r.linkActive;b.onclick=()=>save(r,true)}
   if(state.candidateCursor!=null){const b=add(chooser,'button','この月の申請をさらに表示');b.type='button';b.className='secondary';b.disabled=state.candidateLoading||state.busy;b.onclick=()=>loadCandidates(true)}
  }
@@ -46,7 +46,7 @@ function mount({host,siteKey,localId,onChanged}={}){
   if(!more){state.linked=[];state.linkedTotal=0;state.linkedCursor=null;state.linkedReady=false}state.linkedLoading=true;renderLinked();renderCandidates();
   try{const data=await portalSession.call('siteEntertainmentRead',{p_site_key:siteKey,p_before_id:before});if(!current()||version!==state.readVersion)return false;if(!validPage(data))throw Error('接待申請の返却形式を確認できません');
    state.linked=more?state.linked.concat(data.rows):data.rows;state.linkedTotal=Number(data.totalCount);state.linkedCursor=data.nextBeforeId;state.linkedReady=true;
-   notice('接待申請との関連付けを表示しました。');renderLinked();report();return true}
+   notice('');renderLinked();report();return true}
   catch(e){if(current()&&version===state.readVersion)notice(`取得できませんでした：${e.message}`,[['もう一度確認する',()=>loadLinked(false)]]);return false}
   finally{state.linkedLoading=false;if(current()){renderLinked();renderCandidates()}}}
  async function loadCandidates(more=false){if(!current()||state.busy)return;const period=state.month;
@@ -55,7 +55,7 @@ function mount({host,siteKey,localId,onChanged}={}){
   if(!more){state.candidates=[];state.candidateTotal=0;state.candidateCursor=null;state.candidateReady=false}state.candidateLoading=true;renderLinked();renderCandidates();
   try{const data=await portalSession.call('siteEntertainmentCandidates',{p_site_key:siteKey,p_month:period,p_before_id:before});if(!current()||version!==state.readVersion||seq!==state.candidateSeq||period!==state.month)return;
    if(!validPage(data))throw Error('接待候補の返却形式を確認できません');state.candidates=more?state.candidates.concat(data.rows):data.rows;
-   state.candidateTotal=Number(data.totalCount);state.candidateCursor=data.nextBeforeId;state.candidateReady=true;notice(`${period} の申請候補を確認しました。`);renderCandidates();if(state.conflict)showConflict();else if(state.pending)showPending()}
+   state.candidateTotal=Number(data.totalCount);state.candidateCursor=data.nextBeforeId;state.candidateReady=true;notice('');renderCandidates();if(state.conflict)showConflict();else if(state.pending)showPending()}
   catch(e){if(current()&&version===state.readVersion&&seq===state.candidateSeq)notice(`候補を取得できませんでした：${e.message}`,[['もう一度確認する',()=>loadCandidates(false)]])}
   finally{if(seq===state.candidateSeq){state.candidateLoading=false;if(current()){renderLinked();renderCandidates()}}}}
  function showConflict(){if(!current()||!state.conflict||!state.pending)return;const p=state.pending,latest=state.linked.find(x=>Number(x.id)===Number(p.p_preapproval_id));

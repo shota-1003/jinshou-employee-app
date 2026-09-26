@@ -7269,6 +7269,15 @@ function renderExpenseRequestDetailHtml(full, opts) {
       <div class="hint-inline">社員が入力した科目、無ければAIの推定をそのまま確定します。おかしいものは下の明細で「この科目で確定する」か「この明細を除外する」を押してください。</div>
       <div class="error" id="exd-bulk-error"></div>
     </div>`;
+    // 領収書の原本をまとめて回収する(2026-09-26 Shota指示「1枚づつも必要だけど一括で回収できた
+    // ってボタンもいる」)。まとめて渡された束を1件1件押す手間を減らす。1件ずつのボタン
+    // (exd-item-collect-original)は既存のまま残し、こちらは追加の入口とする。
+    const uncollected = (full.items || []).filter((it) => !it.original_receipt_collected_at).length;
+    html += `<div class="exd-bulk-bar">
+      <button type="button" id="exd-bulk-collect-originals"${uncollected === 0 ? ' disabled' : ''}>原本をまとめて回収する（未回収 ${uncollected}件）</button>
+      <div class="hint-inline">まとめて受け取ったときに使います。1枚ずつ確認しながら回収する場合は、下の明細の「原本を回収した」を個別に押してください。</div>
+      <div class="error" id="exd-bulk-collect-error"></div>
+    </div>`;
   }
 
     html += full.items.map((it, idx) => {
@@ -7539,6 +7548,40 @@ function wireExpenseRequestDetail(el, full, ctx) {
       } catch (e) { btn.disabled = false; alert(e.message || '記録できませんでした。'); }
     });
   });
+
+  // 領収書の原本をまとめて回収する(2026-09-26 Shota指示「1枚づつも必要だけど一括で回収
+  // できたってボタンもいる」)。既存の1件ずつのRPC(admin_set_original_receipt_collected)を
+  // まだ未回収の明細それぞれへ順番に呼ぶだけで、新しいRPCは作らない(SKILL-005)。
+  // 1件ごとの結果を確かめながら進めるため、途中で1件失敗しても残りは続け、
+  // 最後に成功・失敗の件数をまとめて伝える(まとめて一部だけ失敗しても分かるようにする)。
+  const bulkCollectBtn = el.querySelector('#exd-bulk-collect-originals');
+  if (bulkCollectBtn) {
+    bulkCollectBtn.addEventListener('click', async () => {
+      hideError('exd-bulk-collect-error');
+      const targets = (full.items || []).filter((it) => !it.original_receipt_collected_at);
+      if (!targets.length) return;
+      if (!window.confirm(`未回収の原本 ${targets.length}件を、すべて「回収済み」にします。よろしいですか？`)) return;
+      bulkCollectBtn.disabled = true;
+      const original = bulkCollectBtn.textContent;
+      let done = 0; let failed = 0;
+      for (const it of targets) {
+        bulkCollectBtn.textContent = `回収を記録しています...(${done + failed}/${targets.length})`;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await rpc('admin_set_original_receipt_collected', {
+            p_admin_employee_code: session.employeeCode,
+            p_expense_item_id: Number(it.expense_item_id),
+            p_collected: true,
+          });
+          done += 1;
+        } catch (e) { failed += 1; }
+      }
+      if (failed > 0) {
+        showError('exd-bulk-collect-error', `${done}件を回収済みにしました。${failed}件は記録できませんでした(明細を個別にお試しください)。`);
+      }
+      await reload();
+    });
+  }
 
   // 勘定科目の経理確定(明細ごと)。契約RPCがあれば expense_item 単位で確定する。
   el.querySelectorAll('.exd-item').forEach((itemEl) => {

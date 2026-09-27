@@ -14880,6 +14880,45 @@ async function loadDailyReportNeedsReviewAdmin() {
 
 // ---------- 日報の修正申請一覧(管理者、確認済み/反映済みの日報を本人が修正しようとした申請) ----------
 
+// 修正申請の「何が変わるのか」を表示する。old_data(修正前)・new_data(修正後)は
+// どちらも現場・勤務区分・残業等を持つ配列(entry_slot順)なので、同じ添字同士を比較し、
+// 実際に変わる項目だけを出す(2026-09-28、Shota指摘「タップしても修正の内容が見えない」)。
+const DR_EDIT_DIFF_FIELDS = [
+  ['site_raw_name', '現場', (v) => v || '-'],
+  ['work_type', '勤務区分', (v) => v || '-'],
+  ['headcount', '人工', (v) => (v == null || v === '' ? '-' : `${v}`)],
+  ['overtime_hours', '残業', (v) => (v == null || v === '' ? 'なし' : `${v}h`)],
+  ['early_start_hours', '早出', (v) => (v == null || v === '' ? 'なし' : `${v}h`)],
+  ['early_commute_hours', '通勤早出', (v) => (v ? `${v}h` : 'なし')],
+  ['commute_overtime_hours', '通勤残業', (v) => (v ? `${v}h` : 'なし')],
+  ['is_leader', 'リーダー', (v) => (v ? 'あり' : 'なし')],
+  ['is_night_shift', '夜勤', (v) => (v ? 'あり' : 'なし')],
+  ['is_over_100km', '通勤100km超', (v) => (v ? 'あり' : 'なし')],
+  ['is_transport', '運搬', (v) => (v ? 'あり' : 'なし')],
+  ['is_field_duty', '現場作業', (v) => (v ? 'あり' : 'なし')],
+  ['is_sales', '営業', (v) => (v ? 'あり' : 'なし')],
+  ['is_business_trip', '出張', (v) => (v ? 'あり' : 'なし')],
+  ['notes', '備考', (v) => v || '-'],
+];
+function dailyReportEditDiffHtml(oldData, newData) {
+  const oldArr = Array.isArray(oldData) ? oldData : [];
+  const newArr = Array.isArray(newData) ? newData : [];
+  const n = Math.max(oldArr.length, newArr.length);
+  const blocks = [];
+  for (let i = 0; i < n; i++) {
+    const o = oldArr[i] || {};
+    const nw = newArr[i] || {};
+    const diffs = DR_EDIT_DIFF_FIELDS.map(([key, label, fmt]) => {
+      const ov = fmt(o[key]);
+      const nv = fmt(nw[key]);
+      if (ov === nv) return null;
+      return `<div class="field-row"><span>${label}</span><span>${exdEsc(ov)} → <b>${exdEsc(nv)}</b></span></div>`;
+    }).filter(Boolean);
+    if (diffs.length) blocks.push(`<div style="margin-top:4px;">${n > 1 ? `<div class="hint-inline">${i + 1}件目</div>` : ''}${diffs.join('')}</div>`);
+  }
+  return blocks.length ? blocks.join('') : '<div class="hint-inline">(変更箇所を特定できませんでした。下のボタンで内容を承認/却下してください)</div>';
+}
+
 async function loadDailyReportEditRequestsAdmin() {
   const session = getSession();
   const list = document.getElementById('daily-report-edit-requests-list');
@@ -14891,7 +14930,8 @@ async function loadDailyReportEditRequestsAdmin() {
       <div class="history-item">
         <div class="row1"><span>${r.employee_name}</span><span>${r.report_date}</span></div>
         <div class="row2">理由: ${r.reason}</div>
-        <div class="hint-inline">申請日時: ${new Date(r.requested_at).toLocaleString('ja-JP')}</div>
+        ${dailyReportEditDiffHtml(r.old_data, r.new_data)}
+        <div class="hint-inline" style="margin-top:4px;">申請日時: ${new Date(r.requested_at).toLocaleString('ja-JP')}</div>
         <div class="button-row" style="margin-top:8px;">
           <button type="button" data-approve-id="${r.id}">承認して反映</button>
           <button type="button" class="secondary" data-reject-id="${r.id}">却下</button>

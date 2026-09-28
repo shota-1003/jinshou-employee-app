@@ -3,6 +3,7 @@
 
 /* Compact site list: retain the full-card target while making status visible at a glance. */
 .project-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media(min-width:1500px){.project-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .project-card{cursor:pointer;min-width:0;box-shadow:0 2px 8px #172b450b}
 .project-card:hover{transform:none;box-shadow:0 5px 15px #172b4518}
 .project-card .project-info{padding:15px 18px}

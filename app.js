@@ -7279,6 +7279,9 @@ function renderExpenseRequestDetailHtml(full, opts) {
   }
   html += exdSettlementSheetHtml(full);
 
+  // 1〜4. 短い情報カード群(PC幅では2列に並べる、exd-info-grid参照)
+  html += '<div class="exd-info-grid">';
+
   // 1. だれの・どの申請か
   html += `<div class="card exd-card"><div class="form-title" style="font-size:15px;">この経費申請の全体</div>
     <div class="field-group">
@@ -7327,6 +7330,8 @@ function renderExpenseRequestDetailHtml(full, opts) {
     </div>
     ${approvalMethodNoteHtml(ap.method)}
   </div>`;
+
+  html += '</div>'; // .exd-info-grid(1〜4)
 
   // 5. 明細と領収書の原本(勘定科目3層つき)
   html += '<div class="card exd-card"><div class="form-title" style="font-size:15px;">明細と領収書の原本</div>';
@@ -7423,6 +7428,9 @@ function renderExpenseRequestDetailHtml(full, opts) {
     ? `<img class="secure-proxy-thumb exd-cover-thumb" data-secure-kind="expense_cover_sheet" data-secure-id="${exdEsc(h.employee_request_id)}" alt="経費精算書" loading="lazy">`
     : '<div class="hint-inline">この申請に経費精算書は添付されていません。</div>'}</div></div>`;
 
+  // 7〜9. 短い情報カード群その2(PC幅では2列に並べる、exd-info-grid参照)
+  html += '<div class="exd-info-grid">';
+
   // 7. 支払(承認とは別の状態)。承認済みでまだ未払いの間は、この節を画面の一番上(概要の直後)へ
   // 移動して表示済み(payShowAtTop、上記2.の直前を参照)。ここで重複させるとid="exd-pay-submit"等が
   // ページ内に2つできてwireExpenseRequestDetailの配線が壊れるため、その場合はここでは出さない。
@@ -7460,6 +7468,8 @@ function renderExpenseRequestDetailHtml(full, opts) {
     ? '<div class="hint">この申請の変更履歴はまだありません。</div>'
     : hist.map((x) => `<div class="change-request-item"><div class="row1"><span>${exdEsc((typeof AUDIT_ACTION_LABEL !== 'undefined' && AUDIT_ACTION_LABEL[x.action]) || x.action)}</span></div><div class="row2">${exdText(x.actor || x.actor_name)}・${(x.at || x.created_at) ? new Date(x.at || x.created_at).toLocaleString('ja-JP') : '-'}</div></div>`).join('');
   html += '</div>';
+
+  html += '</div>'; // .exd-info-grid(7〜9)
 
   if (full.source === 'fallback') {
     html += '<div class="hint-inline">※ この環境には経費申請の統合RPC(admin_get_expense_request_full)がまだ無いため、既存データから組み立てて表示しています。支払方法・支払処理者・経理処理日などが「-」になります。</div>';

@@ -2,7 +2,7 @@
 @media(min-width:1600px){.project-art{height:200px}}@media(max-width:1150px){main{padding:24px}.project-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:1fr}.overview-stat{padding:20px}.command-hero{padding:26px}}@media(max-width:700px){aside{width:100%;position:static;padding:18px 20px}aside h2{font-size:17px}aside nav{margin:18px 0 0}aside button{font-size:11px;padding:12px 7px}main{margin:0;padding:18px}.top{font-size:8px;gap:8px}.badge{font-size:8px;padding:5px}.command-hero{padding:24px;display:block}.command-hero h1{font-size:26px}.hero-actions{margin-top:20px}.overview-stats{grid-template-columns:1fr 1fr}.overview-stat{padding:18px}.overview-stat:nth-child(2){border-right:0}.overview-stat:nth-child(-n+2){border-bottom:1px solid var(--line)}.project-grid{grid-template-columns:1fr}.project-art{height:175px}.hero h1{font-size:23px}.hero{gap:12px}.hero .primary{padding:10px}.panel{padding:20px}.key-values{grid-template-columns:86px 1fr;font-size:12px;gap:14px 8px}.location-grid{gap:8px}.place-link{padding:12px;gap:8px}.contact-person{flex-wrap:wrap}.tabs{gap:10px}.tabs button{padding:13px 6px}.table{min-width:540px}.table-wrap{width:100%}.search{max-width:100%}.section-head{gap:12px}.section-head h2{font-size:16px}}
 
 /* Compact site list: retain the full-card target while making status visible at a glance. */
-.project-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.project-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
 .project-card{cursor:pointer;min-width:0;box-shadow:0 2px 8px #172b450b}
 .project-card:hover{transform:none;box-shadow:0 5px 15px #172b4518}
 .project-card .project-info{padding:15px 18px}
@@ -24,7 +24,8 @@
 .project-alerts .project-alert-warning{background:#fff0e9;color:#9d421e;font-weight:700}
 .project-alerts .project-alert-ok{background:#edf6f2;color:#28604b}
 .project-card .project-open{width:auto;margin-left:auto;padding:5px 0;color:#315a8c;white-space:nowrap;font-size:11px}
-@media(max-width:1100px){.project-grid{grid-template-columns:1fr}}
+@media(max-width:1150px){.project-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.project-grid{grid-template-columns:1fr}}
 @media(max-width:700px){.project-card .project-info{padding:13px}.project-card-heading h2{font-size:15px}.project-card-bottom{display:block}.project-alerts{margin-top:7px}.project-card .project-open{display:block;margin:7px 0 0;text-align:right}}
 /* Shared adapters use the same controls as the original screens. Screen-only: printed forms retain their own rules. */
 @media screen{#app .panel button:not([class]){background:white;border:1px solid var(--line);color:var(--ink);padding:10px 15px;border-radius:5px;font-size:12px;line-height:1.5;min-height:40px;margin:4px 8px 4px 0}#app .panel button:not([class]):hover:not(:disabled){background:#edf2f9}#app .panel button:not([class]):focus-visible{outline:3px solid #6594ce;outline-offset:2px}#app .panel button:not([class]):disabled{opacity:.55}#app .panel table:not([class]){width:100%;border-collapse:collapse;font-size:13px}#app .panel table:not([class]) th,#app .panel table:not([class]) td{padding:12px 15px;text-align:left;border-bottom:1px solid var(--line);overflow-wrap:anywhere}#app .panel table:not([class]) th{font-size:12px;color:#657c96;background:#edf2f9}#app .panel table:not([class]) td{line-height:1.8}}

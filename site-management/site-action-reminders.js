@@ -92,12 +92,12 @@
       const state = calculateSiteActionReminders({ profile: site.profile, rows, operation: record?.payload, now: new Date() });
       host.replaceChildren();
       const panel = document.createElement('section');
-      panel.className = 'panel';
+      panel.className = host.closest('[data-site-action-history]') ? 'site-action-checks' : 'panel';
       panel.dataset.siteActionReminders = '';
       panel.style.marginBottom = '20px';
       const title = document.createElement('h2');
-      title.textContent = '挨拶・調査の確認';
-      panel.append(title);
+      title.textContent = '実施状況';
+      if (!host.closest('[data-site-action-history]')) panel.append(title);
       const messages = [];
       if (state.beginningMissing) messages.push(['開始挨拶：未記録。現場へ行き、対応を記録してください。', '開始挨拶']);
       else messages.push(['開始挨拶：記録済み', 'recorded-beginning']);

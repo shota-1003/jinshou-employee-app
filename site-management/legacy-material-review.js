@@ -1,0 +1,8 @@
+'use strict';
+(()=>{const notice=document.querySelector('#notice'),body=document.querySelector('#rows'),backup=document.querySelector('#backup');try{
+ const raw=localStorage.getItem('jinshou-inventory-v1');if(!raw){notice.textContent='このブラウザー・この保存場所には旧資材台帳がありません。以前使っていた画面と同じブラウザーで開くと、その保存場所の台帳を確認できます。';return}
+ const data=JSON.parse(raw);if(data.version!==1||!Array.isArray(data.items)||!Array.isArray(data.moves))throw Error('旧台帳の形式を確認できません。元データは変更していません。');
+ let examples=0,unclassified=0;const ids=new Set();for(const item of data.items){if(!item||typeof item.id!=='string'||ids.has(item.id)||typeof item.name!=='string'||typeof item.unit!=='string'||!Number.isSafeInteger(item.initial)||item.initial<0)throw Error('旧台帳に確認が必要な行があります。元データは変更していません。');ids.add(item.id);const sample=/【見本】|【検証用】|Synthetic|review-fixture/i.test(item.name);sample?examples++:unclassified++;const tr=document.createElement('tr');for(const value of [sample?'見本・検証用':'出所の確認が必要',item.name,item.unit,item.initial,data.moves.filter(m=>m.item===item.id).length,item.id]){const td=document.createElement('td');td.textContent=String(value);tr.append(td)}body.append(tr)}
+ notice.textContent='旧台帳が残っています。共有台帳への自動移行はしていません。';document.querySelector('#summary').textContent='品目 '+data.items.length+'件 ／ 見本・検証用 '+examples+'件 ／ 出所確認 '+unclassified+'件 ／ 入出庫 '+data.moves.length+'件 ／ 注文 '+(Array.isArray(data.orders)?data.orders.length:0)+'件';
+ backup.disabled=false;backup.onclick=()=>{const blob=new Blob([raw],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='jinshou-legacy-materials-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+ }catch(e){notice.textContent=e.message}})();

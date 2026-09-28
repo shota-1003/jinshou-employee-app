@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>材料注文 操作確認画面｜見本専用</title>
+  <link rel="stylesheet" href="premium.css">
+  <link rel="stylesheet" href="inventory.css">
+  <link rel="stylesheet" href="inventory-grid.css">
+  <style>
+    :root{--ink:#17304f;--line:#dce4ed}*{box-sizing:border-box}body{margin:0;background:#eef2f6;color:var(--ink);font-family:'Yu Gothic UI','Meiryo',sans-serif}main{max-width:1420px;margin:auto;padding:22px}.demo-banner{background:#102746;color:#fff;border-radius:12px;padding:20px 24px;margin-bottom:16px}.demo-banner h1{font-size:23px;margin:0 0 8px}.demo-banner p{color:#e1eaf5;margin:0;line-height:1.7}.demo-tools{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 16px}.demo-tools button,.print-preview button{border:1px solid #b8c7d8;background:#fff;border-radius:6px;padding:10px 15px;min-height:44px;color:var(--ink);cursor:pointer}.demo-tools small{font-size:12px;color:#52667e}.demo-screen{background:#fff;border:1px solid var(--line);border-radius:12px;padding:22px}.demo-screen [data-actions] button:not([data-demo-keep]){display:none}.demo-screen > h2{font-size:18px}.print-preview{display:none}.print-preview[data-open]{display:block;position:fixed;inset:0;overflow:auto;background:#e9edf2;z-index:100;padding:18px}.print-preview .print-paper{background:#fff;max-width:210mm;min-height:297mm;margin:auto;padding:8mm}.print-preview .print-actions{position:sticky;top:0;background:#e9edf2;padding:8px;display:flex;justify-content:center;gap:12px}.print-preview .print-mark{border:2px solid #9b3243;color:#9b3243;text-align:center;padding:6px;font-weight:700;margin-bottom:10px}.print-preview table{width:100%;border-collapse:collapse;font-size:11px}.print-preview th,.print-preview td{border:1px solid #75859b;padding:5px;text-align:left}.print-preview .print-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}.print-preview .signatures{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}.print-preview .signatures div{border:1px solid #75859b;min-height:58px;padding:8px}@media(max-width:700px){main{padding:10px}.demo-screen{padding:12px}.demo-banner{padding:16px}.print-preview .print-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media print{@page{size:A4 portrait;margin:8mm}body{background:#fff}main,.print-actions{display:none!important}.print-preview[data-open]{display:block;position:static;padding:0;background:#fff}.print-preview .print-paper{padding:0;min-height:0;max-width:none}.print-preview .print-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+    .demo-order-warning{position:sticky;top:0;z-index:5;background:#fff2ef;border:2px solid #a63c45;color:#842b34!important;padding:9px 12px;font-weight:700;font-size:13px;margin:0 0 12px!important}
+  </style>
+  <script src="shared-inventory-aggregates.js" defer></script>
+  <script src="shared-inventory-panel.js" defer></script>
+  <script src="material-order-demo.js" defer></script>
+</head>
+<body>
+  <main>
+    <div class="demo-banner"><h1>材料注文の操作確認画面</h1><p>これは見本専用です。本番の注文・在庫・現場には送信されません。注文者は「検証注文者」、部材は見本130品目、倉庫残数は合成値です。</p></div>
+    <div class="demo-tools"><button type="button" id="resetDemo">この画面の見本注文を消す</button><small>見本注文はこのブラウザー内だけに保存されます。再読込・編集・印刷を試せます。</small></div>
+    <section id="demoBox" class="demo-screen panel" aria-label="見本専用の材料注文"></section>
+  </main>
+  <section id="printPreview" class="print-preview" aria-label="見本印刷プレビュー"></section>
+</body>
+</html>

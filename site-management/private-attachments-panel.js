@@ -1,7 +1,7 @@
 (function(root){
 'use strict';
 root.mountPrivateAttachments=async function(container,{client,site,section,signal}){
- container.replaceChildren();let active=true,rows=[],pending=[],busy=false;const urls=new Set();
+ container.replaceChildren();let active=true,rows=[],pending=[],busy=false,drawVersion=0;const urls=new Set(),thumbUrls=new Set();let thumbs=null;
  const valid=()=>active&&!signal?.aborted&&container.isConnected;
  const node=(tag,text)=>{const e=document.createElement(tag);if(text)e.textContent=text;return e};
  const title=node('h2',section+'・共有ファイル'),status=node('p'),list=node('div'),form=node('form');
@@ -16,7 +16,7 @@ root.mountPrivateAttachments=async function(container,{client,site,section,signa
  const submit=node('button','共有する');submit.type='submit';submit.disabled=true;
  form.append(label('分類',select),label('撮影日時（分かる場合のみ・日本時間）',captured),label('ファイル（複数可・1件25MB以内）',input));
  if(section==='写真')form.append(label('通常の現場写真（容量を抑えて保存・3年保管後の削除対象）',ordinary),node('p','選択すると大きなJPEG写真だけを縮小します。縮小した場合、撮影時の原本は送信しません。図面・原本・署名・事故証拠は選択せず、原本のまま保存してください。現場完了・写真の登録・更新のうち最後の日から3年保管します。'));
- form.append(submit);
+ const dialog=node('dialog'),formStatus=node('p'),cancel=node('button','保存せず戻る'),add=node('button','＋ '+section+'を追加');dialog.className='shared-media-upload';dialog.style.cssText='width:min(640px,calc(100vw - 32px));max-height:90vh;overflow:auto;box-sizing:border-box';dialog.setAttribute('aria-label',section+'を追加');formStatus.setAttribute('role','status');cancel.type='button';cancel.className='secondary';cancel.onclick=()=>{if(!busy)dialog.close()};add.type='button';add.className='primary';add.hidden=true;add.onclick=()=>{if(valid()&&client.records.access(site,section)?.manage)dialog.showModal()};dialog.addEventListener('cancel',e=>{if(busy)e.preventDefault()});form.append(formStatus,cancel,submit);dialog.append(node('h2',section+'を追加'),form);
  async function preparePhoto(file){
   if(section!=='写真'||!ordinary.checked||file.type!=='image/jpeg'||file.size<=2*1024*1024)return file;
   const image=await createImageBitmap(file),long=Math.max(image.width,image.height);
@@ -32,27 +32,33 @@ root.mountPrivateAttachments=async function(container,{client,site,section,signa
  date.type='date';date.setAttribute('aria-label','撮影日で絞り込む');search.type='search';search.placeholder='ファイル名で検索';search.setAttribute('aria-label',search.placeholder);
  const button=(label,action)=>{const b=node('button',label);b.type='button';b.onclick=async()=>{b.disabled=true;try{await action()}catch(e){if(valid())status.textContent=e.message}finally{b.disabled=false}};return b};
  filters.append(category,date,search,button('共有一覧を再読込',()=>refresh()),button('絞り込み解除',()=>{category.value=date.value=search.value='';draw()}));
- const preview=node('div');container.append(title,form,status,filters,preview,list);
+ const preview=node('div');container.append(title,add,status,filters,preview,list,dialog);
  const clearPreview=()=>{preview.replaceChildren();for(const url of urls)URL.revokeObjectURL(url);urls.clear()};
- const cleanup=()=>{active=false;clearPreview();signal?.removeEventListener('abort',cleanup)};signal?.addEventListener('abort',cleanup,{once:true});if(signal?.aborted)cleanup();
+ const clearThumbs=()=>{drawVersion++;thumbs?.disconnect();thumbs=null;for(const url of thumbUrls)URL.revokeObjectURL(url);thumbUrls.clear()};
+ const cleanup=()=>{active=false;clearPreview();clearThumbs();if(dialog.open)dialog.close();dialog.remove();signal?.removeEventListener('abort',cleanup)};signal?.addEventListener('abort',cleanup,{once:true});if(signal?.aborted)cleanup();
  const open=async(row,download)=>{const blob=await client.download(row);if(!valid())return;clearPreview();const url=URL.createObjectURL(blob);urls.add(url);
   if(!download&&['image/jpeg','image/png','image/webp','image/gif'].includes(blob.type)){const img=node('img');img.src=url;img.alt=row.payload.name;img.style.cssText='max-width:100%;max-height:70vh;object-fit:contain';preview.append(node('h3',row.payload.name),img,button('閉じる',clearPreview));}
   else if(!download&&blob.type==='application/pdf'){const frame=node('iframe');frame.src=url;frame.title=row.payload.name;frame.style.cssText='width:100%;height:70vh;border:1px solid #ccd6e0';preview.append(node('h3',row.payload.name),frame,button('閉じる',clearPreview));}
   else{const a=node('a');a.href=url;a.download=row.payload.name;a.click();}
  };
- function draw(){if(!valid())return;list.replaceChildren();const ordered=rows.slice().sort((a,b)=>String(b.created_at||b.payload.date||'').localeCompare(String(a.created_at||a.payload.date||'')));
+ function draw(){if(!valid())return;clearThumbs();const version=drawVersion;list.replaceChildren();const ordered=rows.slice().sort((a,b)=>String(b.created_at||b.payload.date||'').localeCompare(String(a.created_at||a.payload.date||'')));
   const visible=ordered.filter(r=>(!category.value||(r.payload.category||'その他')===category.value)&&(!date.value||(r.payload.capturedAt||'').slice(0,10)===date.value)&&(!search.value||r.payload.name.includes(search.value)));
   for(const row of visible){const p=row.payload,line=node('article');line.className='media-card';line.style.cssText='padding:16px;overflow-wrap:anywhere';line.append(node('h3',p.name),node('p',(p.category||'その他')+' ／ '+(p.state==='ready'?'共有済み':p.state==='retired'?'保管期限により削除済み':'送信待ち')));
    line.append(node('p','撮影日時：'+(p.capturedAt?.replace('T',' ')||'不明')),node('p','登録日時：'+(row.created_at||p.date?new Date(row.created_at||p.date).toLocaleString('ja-JP'):'不明')),node('p','登録者：'+(row.created_by||'記録を確認中')));
    if(section==='工程表'){line.append(node('p','第'+(ordered.length-ordered.indexOf(row))+'版'));if(row===ordered[0]){const latest=node('span','最新');latest.className='pill';line.append(latest)}}
    if(p.state==='ready')line.append(button('プレビュー',()=>open(row,false)),button(p.photoRetention==='ordinary'?'共有ファイルを保存':'原本を保存',()=>open(row,true)));list.append(line);
+   if(p.state==='ready'&&['image/jpeg','image/png','image/webp','image/gif'].includes(p.mime)){
+    const thumb=button('写真を読み込み中…',()=>open(row,false));thumb.className='media-thumb';thumb.style.cssText='width:100%;height:160px;overflow:hidden;padding:0';thumb.setAttribute('aria-label',p.name+'をプレビュー');line.prepend(thumb);
+    const load=async()=>{try{const blob=await client.download(row);if(!valid()||version!==drawVersion||!thumb.isConnected)return;const url=URL.createObjectURL(blob);thumbUrls.add(url);const img=node('img');img.src=url;img.alt=p.name;img.style.cssText='width:100%;height:100%;object-fit:cover';thumb.replaceChildren(img)}catch(e){if(valid()&&version===drawVersion&&thumb.isConnected){thumb.textContent='写真を開く';thumb.title=e.message}}};
+    if(root.IntersectionObserver){thumb._load=load;thumbs ||= new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){thumbs?.unobserve(entry.target);entry.target._load?.()}},{rootMargin:'160px'});thumbs.observe(thumb)}else load();
+   }
   }
   for(const op of pending.filter(x=>x.site===site&&x.section===section)){const line=node('p',op.file.name+'：送信未完了 ');line.append(button('再送する',async()=>{await client.retry(op.id);await refresh()}));list.append(line)}
   if(!visible.length)list.prepend(node('p','該当する共有ファイルはありません。'));
  }
- const refresh=async()=>{const result=await client.list(site,section),queue=await client.pending();if(!valid())return;rows=result;pending=queue;const allowed=!!client.records.access(site,section)?.manage;form.hidden=!allowed;input.disabled=submit.disabled=!allowed||busy;draw()};
+ const refresh=async()=>{const result=await client.list(site,section),queue=await client.pending();if(!valid())return;rows=result;pending=queue;title.textContent=section+'・共有ファイル（'+rows.length+'件）';const allowed=!!client.records.access(site,section)?.manage;form.hidden=add.hidden=!allowed;input.disabled=submit.disabled=!allowed||busy;if(!allowed&&dialog.open)dialog.close();draw()};
  category.onchange=date.onchange=search.oninput=draw;
- form.onsubmit=async e=>{e.preventDefault();if(busy||!form.reportValidity())return;const files=[...input.files],metadata={category:select.value,capturedAt:captured.value,photoRetention:section==='写真'&&ordinary.checked?'ordinary':'original'};busy=true;input.disabled=submit.disabled=select.disabled=captured.disabled=ordinary.disabled=true;const failed=[],retained=[];status.textContent='共有しています…';try{for(const file of files){if(!valid())return;try{const upload=await preparePhoto(file);if(!valid())return;await client.add(site,section,upload,metadata)}catch(e){failed.push(file.name+'：'+e.message);if(!e.uploadId)retained.push(file)}}if(valid())status.textContent=failed.length?failed.join(' ／ ')+'。送信待ちがある場合は再送してください。':'共有しました';}finally{busy=false;if(valid()){const transfer=new DataTransfer();retained.forEach(file=>transfer.items.add(file));input.files=transfer.files;select.disabled=captured.disabled=ordinary.disabled=false;await refresh().catch(e=>status.textContent=e.message)}}};
+ form.onsubmit=async e=>{e.preventDefault();if(busy||!form.reportValidity())return;const files=[...input.files],metadata={category:select.value,capturedAt:captured.value,photoRetention:section==='写真'&&ordinary.checked?'ordinary':'original'};busy=true;input.disabled=submit.disabled=select.disabled=captured.disabled=ordinary.disabled=cancel.disabled=true;const failed=[],retained=[];status.textContent=formStatus.textContent='共有しています…';try{for(const file of files){if(!valid())return;try{const upload=await preparePhoto(file);if(!valid())return;await client.add(site,section,upload,metadata)}catch(e){failed.push(file.name+'：'+e.message);if(!e.uploadId)retained.push(file)}}if(valid()){status.textContent=formStatus.textContent=failed.length?failed.join(' ／ ')+'。送信待ちがある場合は再送してください。':'共有しました';if(!failed.length)dialog.close()}}finally{busy=false;if(valid()){const transfer=new DataTransfer();retained.forEach(file=>transfer.items.add(file));input.files=transfer.files;select.disabled=captured.disabled=ordinary.disabled=cancel.disabled=false;await refresh().catch(e=>status.textContent=formStatus.textContent=e.message)}}};
  await refresh().catch(e=>{if(valid())status.textContent=e.message});return cleanup;
 };
 })(window);

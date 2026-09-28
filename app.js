@@ -11651,6 +11651,8 @@ function populateSitePrefectureSelect(selectId) {
 
 function resetProposeSiteForm() {
   document.getElementById('propose-site-name').value = '';
+  document.getElementById('propose-site-address').value = '';
+  document.getElementById('propose-site-prime-contractor').value = '';
   document.getElementById('propose-site-notes').value = '';
   document.getElementById('propose-site-out-of-prefecture').checked = false;
   document.getElementById('propose-site-prefecture').value = '';
@@ -13155,9 +13157,11 @@ async function doProposeSite(forceCreate) {
   const btn = document.getElementById('propose-site-submit');
   btn.disabled = true;
   try {
-    const result = await rpc('propose_new_site', {
+    const result = await rpc('propose_new_site_details', {
       p_employee_code: session.employeeCode, p_site_name: name, p_prefecture: prefecture,
       p_is_out_of_prefecture: isOutOfPrefecture, p_notes: notes, p_force_create: !!forceCreate,
+      p_address: document.getElementById('propose-site-address').value.trim() || null,
+      p_prime_contractor: document.getElementById('propose-site-prime-contractor').value.trim() || null,
     });
     const r = result[0];
     if (r.created) {
@@ -13241,7 +13245,7 @@ async function loadAllSitesList() {
     // site_details(admin_register_siteが内部で使っていたのみで画面側の導線が無かった)をそのまま
     // 使い、新しいRPCは追加しない。
     const addrOf = (notes) => {
-      const m = /住所:\s*([^\n]*)/.exec(notes || '');
+      const m = [...String(notes || '').matchAll(/^住所:[ \t]*([^\r\n]*)/gm)].pop();
       return m ? m[1].trim() : '';
     };
     listEl.innerHTML = rows.map((s) => `

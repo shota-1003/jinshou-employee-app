@@ -7348,13 +7348,14 @@ function renderExpenseRequestDetailHtml(full, opts) {
       </div>
     </div>`;
   }
-  html += exdSettlementSheetHtml(full);
-
-  // 1〜4. 短い情報カード群(PC幅では2列に並べる、exd-info-grid参照)
-  html += '<div class="exd-info-grid">';
+  // 2026-09-29 Shota指摘「この時点で誰とか見たい」「領収書じゃなくてこの用紙の横ってことだし」。
+  // 税理士へ渡す経費精算書の横に、申請の概要(誰との交際費か含む)を並べて出す
+  // (exd-top-split、900px以上で2列・未満は縦一列のまま)。
+  html += '<div class="exd-top-split">';
+  html += `<div class="exd-top-doc">${exdSettlementSheetHtml(full)}</div>`;
 
   // 1. だれの・どの申請か
-  html += `<div class="card exd-card"><div class="form-title" style="font-size:15px;">この経費申請の全体</div>
+  html += `<div class="card exd-card exd-top-side"><div class="form-title" style="font-size:15px;">この経費申請の全体</div>
     <div class="field-group">
       ${exdRowText('申請番号', h.expense_no)}
       ${exdRowText('申請者', h.employee_name ? `${h.employee_name}(社員番号 ${h.employee_code || '-'})` : null)}
@@ -7366,6 +7367,11 @@ function renderExpenseRequestDetailHtml(full, opts) {
       ${partnerSummaryRow}
       ${ap.rejection_reason ? exdRowText('却下・差戻しの理由', ap.rejection_reason) : ''}
     </div></div>`;
+
+  html += '</div>'; // .exd-top-split(経費精算書+この経費申請の全体)
+
+  // 2〜4. 短い情報カード群(PC幅では2列に並べる、exd-info-grid参照)
+  html += '<div class="exd-info-grid">';
 
   // 2. 日付(必ず何の日付かを書く)
   html += `<div class="card exd-card"><div class="form-title" style="font-size:15px;">日付</div>
@@ -7403,7 +7409,7 @@ function renderExpenseRequestDetailHtml(full, opts) {
     ${approvalMethodNoteHtml(ap.method)}
   </div>`;
 
-  html += '</div>'; // .exd-info-grid(1〜4)
+  html += '</div>'; // .exd-info-grid(2〜4)
 
   // 5. 明細と領収書の原本(勘定科目3層つき)
   html += '<div class="card exd-card"><div class="form-title" style="font-size:15px;">明細と領収書の原本</div>';

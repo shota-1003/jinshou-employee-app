@@ -7474,11 +7474,11 @@ function renderExpenseRequestDetailHtml(full, opts) {
   </div>`;
 
   // 9. 変更履歴(いつ・誰が・何をしたか)
-  const hist = (ap.history || []).concat(pay.history || []);
+  const hist = groupAuditHistory((ap.history || []).concat(pay.history || []));
   html += '<div class="card exd-card"><div class="form-title" style="font-size:15px;">変更履歴(いつ・誰が・何をしたか)</div>';
   html += hist.length === 0
     ? '<div class="hint">この申請の変更履歴はまだありません。</div>'
-    : hist.map((x) => `<div class="change-request-item"><div class="row1"><span>${exdEsc((typeof AUDIT_ACTION_LABEL !== 'undefined' && AUDIT_ACTION_LABEL[x.action]) || x.action)}</span></div><div class="row2">${exdText(x.actor || x.actor_name)}・${(x.at || x.created_at) ? new Date(x.at || x.created_at).toLocaleString('ja-JP') : '-'}</div></div>`).join('');
+    : hist.map((x) => `<div class="change-request-item"><div class="row1"><span>${exdEsc((typeof AUDIT_ACTION_LABEL !== 'undefined' && AUDIT_ACTION_LABEL[x.action]) || x.action)}${x.count > 1 ? `(${x.count}件)` : ''}</span></div><div class="row2">${exdText(x.actor)}・${x.at ? new Date(x.at).toLocaleString('ja-JP') : '-'}</div></div>`).join('');
   html += '</div>';
 
   html += '</div>'; // #exd-info-list(2,3,7,8,9)
@@ -15306,6 +15306,7 @@ const AUDIT_ACTION_LABEL = {
   expense_payment_recorded: '支払いを記録',
   expense_payment_scheduled: '支払予定日を記録',
   expense_account_category_finalized: '勘定科目を確定',
+  expense_original_receipt_collected: '領収書の原本を回収した',
   entertainment_auto_approved_executive: '接待事前申請の自動承認(承認免除ルール)',
   request_cancelled_by_applicant: '申請者本人による取消',
   paid_leave_request_cancelled_by_employee: '有給申請の本人取消',
@@ -15317,6 +15318,25 @@ const AUDIT_ACTION_LABEL = {
   self_approval_exempt_granted: '承認免除の付与(廃止済みの旧機能)',
   self_approval_exempt_revoked: '承認免除の解除(廃止済みの旧機能)',
 };
+
+// 変更履歴の表示を「同じ操作・同じ人・同じ日時」でまとめる。
+// 2026-09-29 Shota指摘「この見た目もう少しすっきりさせたい」: 明細が複数ある申請では
+// 「勘定科目をまとめて確定する」等のボタン一発で明細の件数ぶん(例:14件)のaudit_logsが
+// 生成され、変更履歴に同じ操作が同じ時刻で延々と並んでいた(audit_logsは明細1件ずつの
+// 実際の操作記録のため、これ自体は正しいデータであり削除・統合はしない。表示だけをまとめる)。
+function groupAuditHistory(list) {
+  const groups = [];
+  const index = new Map();
+  (list || []).forEach((x) => {
+    const action = x.action;
+    const actor = x.actor || x.actor_name;
+    const at = x.at || x.created_at;
+    const key = `${action}|${actor}|${at}`;
+    const existing = index.get(key);
+    if (existing) { existing.count += 1; } else { const g = { action, actor, at, count: 1 }; index.set(key, g); groups.push(g); }
+  });
+  return groups;
+}
 
 // 一覧の「承認済み」バッジの右に付ける自動承認タグ(該当しなければ空文字)。
 function areqAutoApprovalTag(row) {
@@ -15473,9 +15493,10 @@ async function loadRequestDetailContent() {
     const targetTable = sourceType === 'entertainment_preapproval' ? 'entertainment_preapprovals'
       : sourceType === 'qualification' ? 'employee_qualifications' : 'employee_requests';
     const history = await rpc('admin_get_request_audit_log', { p_admin_employee_code: session.employeeCode, p_target_table: targetTable, p_target_id: Number(sourceId) }).catch(() => []);
+    const historyGrouped = groupAuditHistory(history);
     const historyEl = document.getElementById('rdetail-history');
-    historyEl.innerHTML = history.length === 0 ? '<div class="hint">変更履歴はありません。</div>' : history.map((h) => `
-      <div class="change-request-item"><div class="row1"><span>${AUDIT_ACTION_LABEL[h.action] || h.action}</span></div><div class="row2">${h.actor_name}・${new Date(h.created_at).toLocaleString('ja-JP')}</div></div>
+    historyEl.innerHTML = historyGrouped.length === 0 ? '<div class="hint">変更履歴はありません。</div>' : historyGrouped.map((h) => `
+      <div class="change-request-item"><div class="row1"><span>${AUDIT_ACTION_LABEL[h.action] || h.action}${h.count > 1 ? `(${h.count}件)` : ''}</span></div><div class="row2">${h.actor}・${new Date(h.at).toLocaleString('ja-JP')}</div></div>
     `).join('');
 
     renderRequestDetailActions(sourceType, r);

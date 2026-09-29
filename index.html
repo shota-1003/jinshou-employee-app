@@ -271,11 +271,6 @@
          外出・遅刻・早退/経費/常用伝票/支給品/会議/接待・会食(ユーザー指示)。 -->
     <div class="section-title">よく使う機能</div>
     <div class="home-card-grid">
-      <a class="home-card" id="home-ky-link" href="https://shota-1003.github.io/jinshou-site-management/?view=ky" style="text-decoration:none;color:inherit;">
-        <span class="icon-slot" data-icon="clipboard-list"></span>
-        <span class="home-card-label">今日のKY</span>
-        <span class="home-card-desc">作業内容を確認・自分の項目をチェック</span>
-      </a>
       <button type="button" class="home-card" data-nav="assignment-calendar">
         <span class="icon-slot" data-icon="calendar"></span>
         <span class="home-card-label">配置カレンダー</span>
@@ -886,10 +881,16 @@
     <div class="dr-view-toggle" style="margin:10px 0;">
       <button type="button" class="secondary dr-view-tab" data-view="list">リスト表示</button>
       <button type="button" class="secondary dr-view-tab" data-view="calendar">カレンダー表示</button>
+      <button type="button" class="secondary dr-view-tab" data-view="ledger">出勤簿</button>
     </div>
 
     <div id="my-daily-report-list-view">
       <div id="my-daily-report-list"></div>
+    </div>
+
+    <div id="my-daily-report-ledger-view" style="display:none;">
+      <div class="hint-inline" style="margin-bottom:8px;">スプレッドシートの出勤簿と同じ、この給与期間(または今月)の1日ごとの記録です。</div>
+      <div id="my-daily-report-ledger"></div>
     </div>
 
     <div id="my-daily-report-calendar-view" style="display:none;">

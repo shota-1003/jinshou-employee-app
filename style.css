@@ -1203,6 +1203,11 @@ button.link {
      (明細が複数件並ぶ#exd-items-list)も、既存の申請管理等と同じ考え方でPC幅を広く使う。 */
   body:has(#screen-request-detail.active) main,
   body:has(#screen-my-request-detail.active) main { max-width: 1400px; }
+  /* 2026-09-29 Shota指摘「右の黒いとこ狭い、もっと右の欄拡げた方が見やすい」: 配置カレンダーは
+     申請管理・借入管理等と同じ「PC幅の広い画面で情報量が多い」screenなのに、この一覧から
+     漏れており main が既定の1040pxのまま止まっていた(カレンダー自身の内側の2カラム比率を
+     54:46へ直しても、外側のmainがそれより狭ければ意味がなく、右に空の紺色背景だけが残る)。 */
+  body.assignment-calendar-open main { max-width: 1400px; }
 }
 
 @media (min-width: 1280px) {
@@ -1213,6 +1218,7 @@ button.link {
   body:has(#screen-loan-admin.active) main { max-width: 1600px; }
   body:has(#screen-request-detail.active) main,
   body:has(#screen-my-request-detail.active) main { max-width: 1600px; }
+  body.assignment-calendar-open main { max-width: 1800px; }
   [id$="-list"], [id$="-results"] { column-count: 3; }
   #today-list, #daily-report-entry-list, #expense-item-list,
   .home-card-grid, .main-menu-grid, .dash-card-grid, .supply-select-grid, .menu-list {
@@ -1632,16 +1638,12 @@ body.assignment-calendar-open .app-header { display: none; }
    開いても同じ項目が同じ見た目で出る。iPhone 375px で横に溢れないよう、ラベルと値は
    折り返し可・値は右寄せで幅を分け合う。 */
 .exd-card { padding: 12px 14px; margin-bottom: 10px; }
-/* 2026-09-29 Shota指摘: PC幅の広い画面で経費申請詳細が縦に長すぎ、右側が空欄のまま。
-   短い情報カード(この経費申請の全体・日付・金額・承認・支払・経理処理と税理士への提出・変更履歴)
-   だけを対象に、900px以上では2列に並べて縦スクロールを減らす。明細一覧・経費精算書等の
-   横に広いブロックはexd-info-gridの対象外のまま(モバイルは従来通り縦一列、display:contents
-   でラッパー自体は見た目に影響しない)。 */
-.exd-info-grid { display: contents; }
-@media (min-width: 900px) {
-  .exd-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
-  .exd-info-grid > .exd-card { margin-bottom: 0; }
-}
+/* 2026-09-29追記: 日付・金額・支払・経理処理・変更履歴の短いカード群は、当初display:gridの
+   2列(exd-info-grid)で並べていたが、日付(6行)と金額(4行)のように高さが違うカードを
+   grid/flexで並べると「同じ行」の高さに揃えられ、丈の低い側の下に空白が残った
+   (Shota指摘「なんでここ開けるん？空白って分からんの」)。#exd-items-listと同じ
+   [id$="-list"]の多列(column-count:3)に5枚まとめて流し込む方式(id="exd-info-list",
+   renderExpenseRequestDetailHtml参照)へ変更し、このgridクラスは使わなくなった。
 /* 2026-09-29 Shota指摘「この時点で誰とか見たい」「領収書じゃなくてこの用紙の横ってことだし」。
    経費精算書(税理士へ渡す用紙)の横に、申請の概要(誰との交際費か含む)を並べる。
    モバイルは経費精算書→概要の縦一列のまま(DOM順を変えていない)。 */
@@ -1649,6 +1651,17 @@ body.assignment-calendar-open .app-header { display: none; }
 @media (min-width: 900px) {
   .exd-top-split { display: grid; grid-template-columns: minmax(380px, 55%) 1fr; gap: 16px; align-items: start; margin-bottom: 10px; }
   .exd-top-split > .exd-top-side { position: sticky; top: 8px; margin-bottom: 0; }
+}
+/* 2026-09-29 Shota指摘「支払い管理みたいに左うえに戻るほしい」「この戻るボタン上までいかないと
+   いけない」。経費申請の詳細は縦に長く、戻るボタン(画面の一番上、1個目の要素)まで毎回
+   スクロールし直す必要があった。app-header(社員ポータルの帯、position:sticky top:0)の
+   すぐ下に浮かせて、どこまでスクロールしても押せるようにする。 */
+#screen-request-detail > .back-link:first-child,
+#screen-my-request-detail > .back-link:first-child {
+  position: sticky; top: 66px; z-index: 9; width: fit-content;
+  background: color-mix(in oklch, var(--card-bg-solid) 92%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--radius-pill); box-shadow: var(--shadow-sm); padding: 6px 12px 6px 8px;
 }
 .exd-card .field-row { padding: 7px 2px; align-items: flex-start; gap: 10px; font-size: 13.5px; }
 .exd-card .field-label { flex: 1 1 auto; min-width: 0; word-break: break-word; }

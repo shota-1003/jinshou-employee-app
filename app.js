@@ -1640,10 +1640,19 @@ function enterMenu(replace) {
   document.getElementById('menu-greeting-hi').textContent = greeting;
   document.getElementById('menu-greeting-name').textContent = `${session.employeeName}さん`;
   document.getElementById('menu-greeting-sub').textContent = sub;
+  showScreen('menu', { replace: !!replace });
+  refreshHomeData(session);
+  refreshPinWeakBanner(session);
+  consumeHomeFocus();
+}
+
+// ホームの中身(データ部分)だけを再読込する。enterMenu()の初回表示と、ホームの更新ボタン
+// (home-refresh-btn)の両方から呼ぶ共通処理(showScreen遷移はenterMenu側だけが行う。
+// 更新ボタンは既にホームにいる状態で呼ぶため、画面遷移(スクロール位置リセット等)を伴わない)。
+function refreshHomeData(session) {
   checkAnonUnreadBadge().then(loadTodayList);
   loadAnnounceBanner();
   loadHomeAnnouncePreview();
-  showScreen('menu', { replace: !!replace });
   renderHomeAdminBanner(session);
   renderHomeDailyReportCard(session);
   renderHomeDailyReportStatusBanner(session);
@@ -1655,8 +1664,6 @@ function enterMenu(replace) {
   renderHomeEventsArea(session);
   renderHomeMyOutingBanner(session);
   renderHomeAssignmentCard(session);
-  refreshPinWeakBanner(session);
-  consumeHomeFocus();
 }
 
 // 本人が現在「外出・一時離脱」中の場合、ホーム最上部に目立つバナーで表示し、その場で
@@ -18268,6 +18275,17 @@ function init() {
   document.getElementById('pin-forgot-request-submit').addEventListener('click', doPinResetRequest);
   // 弱い暗証番号のお願いから変更画面へ (E-13)
   document.getElementById('pin-weak-change-btn').addEventListener('click', () => showScreen('pin-change'));
+  // ホームの更新ボタン(2026-10-01追加、Shota指示「支払い管理みたいにポータルにも更新ボタンが欲しい」)。
+  // 押すたびにホームの各セクションを再読込する(画面遷移は伴わない)。
+  document.getElementById('home-refresh-btn').addEventListener('click', (e) => {
+    const session = getSession();
+    if (!session) return;
+    refreshHomeData(session);
+    const btn = e.currentTarget;
+    btn.classList.remove('is-spinning');
+    void btn.offsetWidth; // アニメーションを毎回やり直すための強制リフロー
+    btn.classList.add('is-spinning');
+  });
   document.getElementById('pin-change-forgot-link').addEventListener('click', () => {
     const card = document.getElementById('pin-change-forgot-card');
     card.style.display = card.style.display === 'none' ? '' : 'none';

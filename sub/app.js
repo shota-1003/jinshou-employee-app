@@ -183,6 +183,14 @@ function todayJST() {
   const jst = new Date(now.getTime() + (now.getTimezoneOffset() + 540) * 60000);
   return `${jst.getFullYear()}-${String(jst.getMonth() + 1).padStart(2, '0')}-${String(jst.getDate()).padStart(2, '0')}`;
 }
+// JSTの「今日からN日前」をYYYY-MM-DDで返す(つけ忘れた日の後追い報告、2026-10-01追加、
+// Shota指示「ただし2日まで」の上限計算に使う)。
+function daysAgoJST(n) {
+  const now = new Date();
+  const jst = new Date(now.getTime() + (now.getTimezoneOffset() + 540) * 60000);
+  jst.setDate(jst.getDate() - n);
+  return `${jst.getFullYear()}-${String(jst.getMonth() + 1).padStart(2, '0')}-${String(jst.getDate()).padStart(2, '0')}`;
+}
 
 // ---- 起動 ----
 // LINEアプリ内ブラウザ向けの案内(強制はしない)。?openExternalBrowser=1 を付けたリンクを
@@ -282,6 +290,32 @@ function bindEvents() {
   // openAttendance(targetDate) が Event を日付として送って全 RPC が 22007(invalid date)になっていた
   // (本番ログ: invalid input syntax for type date: "{\"isTrusted\":true}")。必ず引数なしで呼ぶ。
   $('home-attendance-btn').addEventListener('click', () => openAttendance());
+  // つけ忘れた日(その日の記録が1件も無い日)を自分で後から報告できるようにする
+  // (2026-10-01追加、Shota指示。以前は履歴に既に提出済みの日しか編集できず、まるごと
+  // 忘れた日は本人では何もできなかった)。未来日はsubmit_my_subcontractor_attendance側で
+  // 既に拒否されるため、ここでは「何日前まで戻れるか」(Shota指示「2日まで」)だけを制御する。
+  const backdateToggle = $('home-backdate-toggle');
+  const backdateWrap = $('home-backdate-wrap');
+  const backdateInput = $('home-backdate-input');
+  if (backdateToggle && backdateWrap && backdateInput) {
+    backdateToggle.addEventListener('click', () => {
+      const showing = backdateWrap.style.display !== 'none';
+      backdateWrap.style.display = showing ? 'none' : 'block';
+      if (!showing) {
+        backdateInput.min = daysAgoJST(2);
+        backdateInput.max = todayJST();
+        if (!backdateInput.value) backdateInput.value = daysAgoJST(1);
+      }
+    });
+    $('home-backdate-go').addEventListener('click', () => {
+      const d = backdateInput.value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d < daysAgoJST(2) || d > todayJST()) {
+        alert('報告できるのは今日から2日前までです。');
+        return;
+      }
+      openAttendance(d, 'home');
+    });
+  }
   $('home-profile-btn').addEventListener('click', openProfile);
   $('home-logout-btn').addEventListener('click', doLogout);
 

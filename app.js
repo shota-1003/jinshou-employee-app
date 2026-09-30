@@ -18275,12 +18275,17 @@ function init() {
   document.getElementById('pin-forgot-request-submit').addEventListener('click', doPinResetRequest);
   // 弱い暗証番号のお願いから変更画面へ (E-13)
   document.getElementById('pin-weak-change-btn').addEventListener('click', () => showScreen('pin-change'));
-  // ホームの更新ボタン(2026-10-01追加、Shota指示「支払い管理みたいにポータルにも更新ボタンが欲しい」)。
-  // 押すたびにホームの各セクションを再読込する(画面遷移は伴わない)。
-  document.getElementById('home-refresh-btn').addEventListener('click', (e) => {
+  // 更新ボタン(2026-10-01追加、Shota指示「支払い管理みたいにポータルにも更新ボタンが欲しい」→
+  // 「どこでも押せるようにしといて」)。ホームだけの専用ボタンから、全画面共通のヘッダーへ変更。
+  // 画面ごとに専用の更新処理を書かず、各画面が入場時に既に持っている読込処理
+  // (SCREEN_ENTER_HOOKS、home画面だけは例外でrefreshHomeData)を再実行するだけにする
+  // (画面数が増えても個別対応が要らない)。
+  document.getElementById('global-refresh-btn').addEventListener('click', (e) => {
     const session = getSession();
     if (!session) return;
-    refreshHomeData(session);
+    const id = currentScreenId();
+    if (id === 'menu') refreshHomeData(session);
+    else if (SCREEN_ENTER_HOOKS[id]) SCREEN_ENTER_HOOKS[id]();
     const btn = e.currentTarget;
     btn.classList.remove('is-spinning');
     void btn.offsetWidth; // アニメーションを毎回やり直すための強制リフロー

@@ -13944,9 +13944,20 @@ function addDailyReportEntry(prefill) {
     if (prefill && prefill.site_id) siteSelect.value = String(prefill.site_id);
   });
   siteSearch.addEventListener('input', () => populateSiteSelect(siteSelect, siteSearch.value.trim(), true));
-  siteSelect.addEventListener('change', () => {
-    if (siteSelect.value === '__new__') newSiteWrap.style.display = 'block';
+  // 「同じ現場なのに出張チェックが抜ける」対策(2026-10-02 Shota指摘): 前日との連続性ではなく、
+  // 現場そのものに対して「本人が直近その現場へ行った時、出張扱いだったか」を見て既定値にする
+  // (日帰りの繰り返しにも、連続した出張にも両方対応する)。本人が既に手で触っていたら上書きしない。
+  const isBusinessTripEl0 = clone.querySelector('.dr-is-business-trip');
+  siteSelect.addEventListener('change', async () => {
+    if (siteSelect.value === '__new__') { newSiteWrap.style.display = 'block'; return; }
+    if (isBusinessTripEl0.dataset.userSet === '1' || !siteSelect.value) return;
+    try {
+      const session = getSession();
+      const def = await rpc('get_my_recent_business_trip_default', { p_employee_code: session.employeeCode, p_site_id: Number(siteSelect.value) });
+      if (isBusinessTripEl0.dataset.userSet !== '1') isBusinessTripEl0.checked = !!def;
+    } catch (e) { /* 既定値が取れなくても入力自体は続けられる */ }
   });
+  isBusinessTripEl0.addEventListener('change', () => { isBusinessTripEl0.dataset.userSet = '1'; });
   newSiteToggleBtn.addEventListener('click', () => {
     siteSelect.value = '__new__';
     newSiteWrap.style.display = 'block';
@@ -13984,6 +13995,8 @@ function addDailyReportEntry(prefill) {
   // 出張は日次フラグ(あり/なし)のみ。宿泊日数は日報では扱わない。
   const isBusinessTripEl = clone.querySelector('.dr-is-business-trip');
   if (prefill && prefill.is_business_trip) isBusinessTripEl.checked = true;
+  // 既存日報の再表示時(編集)は、現場の既定値で上書きされないよう「本人が既に決めた値」として扱う。
+  if (prefill && prefill.site_id) isBusinessTripEl.dataset.userSet = '1';
   if (prefill && prefill.is_transport) clone.querySelector('.dr-is-transport').checked = true;
   if (prefill && prefill.is_field_duty) clone.querySelector('.dr-is-field-duty').checked = true;
   if (prefill && prefill.is_sales) clone.querySelector('.dr-is-sales').checked = true;

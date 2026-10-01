@@ -9979,7 +9979,7 @@ async function openAttendanceDetail(groupId, groupLabel) {
                 <td class="numeral">${d.headcount.toFixed(2).replace(/\.?0+$/, '') || '0'}</td>
                 <td>${d.teate.map((t) => `<span class="ledger-tag">${exdEsc(t)}</span>`).join('') || ''}</td>
                 <td>${exdEsc(d.notes.join('・'))}</td>
-                <td>${d.status === 'needs_review' ? '要確認' : exdEsc(d.status)}</td>
+                <td>${dailyReportStatusBadgeHtml({ report_status: d.status })}</td>
               </tr>`).join('')}
               <tr style="font-weight:700;border-top:2px solid var(--border);"><td colspan="3">合計</td><td class="numeral">${grandTotal.toFixed(2).replace(/\.?0+$/, '') || '0'}</td><td colspan="3"></td></tr>
             </tbody>

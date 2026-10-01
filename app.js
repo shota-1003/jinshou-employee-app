@@ -9837,8 +9837,23 @@ async function loadAttendanceMatrix() {
       periodLabel = `${year}年`;
     }
     if (mySeq !== attendanceMatrixRequestSeq) return; // より新しいリクエストが既に発行されている
-    document.getElementById('am-hint').textContent = `${rows.length}件(${periodLabel})。${attendancePeriod === 'month' ? 'セルをタップするとその日の内訳、行をタップするとその期間の内訳を確認できます。' : '行をタップすると年間の内訳を確認できます。'}`;
+    const confirmHint = (attendancePeriod === 'month' && attendanceView === 'employee') ? '名前の横の✓は本人が最終確認済みです。' : '';
+    document.getElementById('am-hint').textContent = `${rows.length}件(${periodLabel})。${attendancePeriod === 'month' ? 'セルをタップするとその日の内訳、行をタップするとその期間の内訳を確認できます。' : '行をタップすると年間の内訳を確認できます。'}${confirmHint}`;
     if (rows.length === 0) { wrapEl.innerHTML = '<div class="hint">この期間の出面データはありません。</div>'; return; }
+
+    // 「名前の横に確定している人は分かるようにして」(2026-10-01 Shota指摘): 本人の最終確認
+    // (confirm_my_attendance_period)が済んでいるかを一覧できるようにする。本人の確認は
+    // 給与期間(26日〜25日)単位のため、カレンダー月表示でもその月と重なる給与期間で判定する。
+    let confirmedSet = new Set();
+    if (attendancePeriod === 'month' && attendanceView === 'employee') {
+      try {
+        const ym = currentAttendanceMonth();
+        const { start: pStart, end: pEnd } = computeDailyReportPeriodBounds(ym.year, ym.month, 'pay_period');
+        const confirmRows = await rpc('admin_list_period_confirmations_in_range', { p_admin_employee_code: session.employeeCode, p_period_start: pStart, p_period_end: pEnd });
+        confirmedSet = new Set((confirmRows || []).map((r) => r.employee_code));
+      } catch (e) { /* 確認状況が取れなくても出面集計自体は表示を続ける */ }
+      if (mySeq !== attendanceMatrixRequestSeq) return;
+    }
 
     let headers = '';
     for (let i = 1; i <= colCount; i++) headers += `<th>${colLabel(i)}</th>`;
@@ -9852,8 +9867,9 @@ async function loadAttendanceMatrix() {
           : '<td class="am-cell-empty">-</td>';
       }
       const total = attendancePeriod === 'month' ? r.month_total : r.year_total;
+      const confirmedBadge = confirmedSet.has(r.group_id) ? ' <span class="am-confirmed-badge" title="本人が最終確認済み">✓</span>' : '';
       return `<tr class="am-row-clickable" data-group-id="${r.group_id}" data-group-label="${r.group_label}">
-        <td>${r.group_label}</td>${cells}<td class="am-total-col">${total}</td>
+        <td>${r.group_label}${confirmedBadge}</td>${cells}<td class="am-total-col">${total}</td>
       </tr>`;
     }).join('');
     const colTotals = [];

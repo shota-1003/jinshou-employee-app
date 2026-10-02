@@ -854,6 +854,22 @@ function hideError(elId) {
   document.getElementById(elId).classList.remove('show');
 }
 
+// 2026-10-02: .error は既定で非表示(.show が付いた時だけ表示)のため、`el.textContent = 'エラー文'` と
+// 書くだけで showError() を使っていない箇所(最終確認・日報取消・貸付記録など60以上)は、サーバーが
+// 「管理者に依頼してください」等の理由を返しても画面に何も出ず、押しても無反応に見えていた
+// (佐川さんの「取消を確定する」を実画面で再現して確認)。個別修正ではなく、.error の文章が
+// 変わった時に表示/非表示を自動で合わせる(既存の showError/hideError とも両立する)。
+(function syncErrorVisibility() {
+  const sync = (el) => el.classList.toggle('show', el.textContent.trim() !== '');
+  new MutationObserver((records) => {
+    for (const r of records) {
+      const node = r.target.nodeType === 3 ? r.target.parentElement : r.target;
+      const el = node && node.closest ? node.closest('.error') : null;
+      if (el) sync(el);
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+})();
+
 let pendingLoginCode = null; // 社員番号入力〜暗証番号入力/登録の間だけ保持する一時変数
 
 // 起動時: この端末が有効な端末トークンを持っていれば、暗証番号なしでログイン状態を
@@ -15212,8 +15228,14 @@ async function renderMyDailyReportDetailBody(dateStr) {
   const body = document.getElementById('my-daily-report-detail-body');
   body.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
-    const rows = await rpc('get_my_daily_report_detail', { p_employee_code: session.employeeCode, p_report_date: dateStr });
+    let rows = await rpc('get_my_daily_report_detail', { p_employee_code: session.employeeCode, p_report_date: dateStr });
     if (!rows || rows.length === 0) { body.innerHTML = '<div class="empty-state">この日の日報は見つかりませんでした</div>'; return; }
+    // 2026-10-02: 本人が編集画面で削除した現場(反映済みのため管理者確認待ちで「却下」状態になっているもの)は、
+    // 本人に「修正依頼あり」と見せると、何も依頼されていないのに直せず詰んだように見える(佐川さんの9/7)。
+    // 有効な日報が他にある日は、本人が削除した行を詳細にも出さない。
+    const isSelfRemoved = (r) => r.report_status === 'rejected' && String(r.rejected_reason || '').startsWith('本人により削除');
+    const liveRows = rows.filter((r) => !isSelfRemoved(r));
+    if (liveRows.length > 0) rows = liveRows;
     const isCancelled = rows.every((r) => r.report_status === 'cancelled');
     const cancelledMeta = rows.find((r) => r.cancelled_at) || {};
     // 2026-10-02修正: 取消済みの行(重複等で既に無効化された側)まで含めて判定すると、
@@ -15239,7 +15261,7 @@ async function renderMyDailyReportDetailBody(dateStr) {
           <label for="my-daily-report-cancel-reason">取消理由<span class="required-mark">(必須)</span></label>
           <textarea id="my-daily-report-cancel-reason" rows="2" placeholder="例: 日付を間違えて登録した／現場を間違えた など"></textarea>
           <div class="error" id="my-daily-report-cancel-error"></div>
-          <button type="button" id="my-daily-report-cancel-confirm-btn" style="margin-top:6px;color:var(--danger);border-color:var(--danger);">取消を確定する</button>
+          <button type="button" class="secondary" id="my-daily-report-cancel-confirm-btn" style="margin-top:6px;color:var(--danger);border-color:var(--danger);font-weight:700;">取消を確定する</button>
           <button type="button" class="secondary" id="my-daily-report-cancel-abort-btn" style="margin-top:6px;">やめる</button>
         </div>
       </div>` : '';

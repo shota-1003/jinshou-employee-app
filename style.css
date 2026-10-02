@@ -1340,6 +1340,36 @@ button.link {
 .ab-foot-cell { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card-bg); padding: 6px 8px; text-align: center; }
 .ab-foot-label { font-size: 10.5px; color: var(--text-muted); line-height: 1.3; }
 .ab-foot-val { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.ab-print-btn { padding: 3px 12px; font-size: 12px; width: auto; margin: 0; }
+.ab-pending { display: block; font-size: 11px; color: var(--text-muted); opacity: .8; font-style: italic; }
+#ab-print-root { display: none; }
+/* 印刷: 出勤簿だけを、白地・黒文字・A4縦で出す */
+@media print {
+  @page { size: A4 portrait; margin: 8mm; }
+  body.printing-ab > *:not(#ab-print-root) { display: none !important; }
+  /* 画面用の「高さ100%」指定が残っていると、出勤簿が1ページ分で終わっても2ページ目の白紙が出る */
+  body.printing-ab { min-height: 0 !important; height: auto !important; padding: 0 !important; margin: 0 !important; overflow: visible !important; }
+  html:has(body.printing-ab) { height: auto !important; min-height: 0 !important; overflow: visible !important; }
+  body.printing-ab #ab-print-root { display: block !important; }
+  body.printing-ab, body.printing-ab #ab-print-root { background: #fff !important; }
+  body.printing-ab #ab-print-root, body.printing-ab #ab-print-root * { color: #000 !important; background: #fff !important; border-color: #888 !important; text-shadow: none !important; box-shadow: none !important; }
+  body.printing-ab .attendance-book-table { font-size: 9.5px; }
+  body.printing-ab .attendance-book-table th, body.printing-ab .attendance-book-table td { padding: 2px 4px; white-space: normal; }
+  body.printing-ab .attendance-book-table th { background: #eee !important; }
+  body.printing-ab .attendance-book-table tr.ab-sun td { background: #f6dede !important; }
+  body.printing-ab .attendance-book-table tr.ab-sat td { background: #deeaf6 !important; }
+  body.printing-ab .attendance-book-table tr { page-break-inside: avoid; }
+  body.printing-ab .ab-scroll { overflow: visible !important; border: 1px solid #888 !important; }
+  body.printing-ab .attendance-book-table td.ab-site, body.printing-ab .attendance-book-table td.ab-note { min-width: 0; font-size: 9px; }
+  body.printing-ab .attendance-book-table th, body.printing-ab .attendance-book-table td { line-height: 1.15; }
+  body.printing-ab .ab-head { padding: 0 0 4px; }
+  body.printing-ab .ab-title { font-size: 14px; }
+  body.printing-ab .ab-foot { margin-top: 5px; gap: 3px; }
+  body.printing-ab .ab-foot-row { grid-template-columns: repeat(7, 1fr); gap: 3px; }
+  body.printing-ab .ab-foot-cell { padding: 2px 3px; }
+  body.printing-ab .ab-foot-label { font-size: 8px; line-height: 1.15; }
+  body.printing-ab .ab-foot-val { font-size: 11px; }
+}
 
 /* 2026-10-02 Shota指示「絞り込みは縦をやめて横に3列」。PC利用が前提の集計画面のため3列を基本とし、
    幅が狭い画面(スマホ)だけ縦に戻して選択欄が潰れないようにする。 */

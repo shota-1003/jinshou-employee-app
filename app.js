@@ -14655,6 +14655,19 @@ async function loadDailyReportLedger() {
 // 出勤簿の「最終確認して提出」ブロック(2026-10-01追加、Shota指示)。確認済みならその日時を表示し、
 // 未確認ならボタンを出す。確認すると、この期間は本人による編集ができなくなる
 // (submit_daily_report側でサーバーが拒否する。ここでは案内だけで、強制自体はサーバー側の仕事)。
+//
+// 2026-10-02誤操作対応: 鈴木さんが「<」「>」ナビで次の給与期間(まだ終わっていない進行中の期間)へ
+// 移動した状態のまま誤って最終確認ボタンを押し、本来確定すべきでない期間を確定してしまった実例が
+// 発生した(他に3名も同様の誤操作を確認済み)。期間の終了日(25日)を過ぎていない場合は、ボタン自体を
+// 無効化し理由を明示する(押せてしまうこと自体が誤操作の入口だったため、警告だけでなく無効化する)。
+// サーバー側(confirm_my_attendance_period)にも同じ判定を追加済み(多重防御、クライアント側だけに
+// 依存しない)。
+function isAttendancePeriodOver(endDateStr) {
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+  const todayStr = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  return todayStr > endDateStr;
+}
+
 async function renderDailyReportLedgerConfirmBlock(session, start, end) {
   try {
     const rows = await rpc('get_my_attendance_period_confirmation', { p_employee_code: session.employeeCode, p_period_start: start, p_period_end: end });
@@ -14666,6 +14679,15 @@ async function renderDailyReportLedgerConfirmBlock(session, start, end) {
       </div>`;
     }
   } catch (e) { /* 未確認として扱う */ }
+
+  if (!isAttendancePeriodOver(end)) {
+    return `<div class="card" id="dr-ledger-confirm-block" style="margin-bottom:10px;">
+      <div class="hint" style="margin-bottom:8px;">この期間(${start}〜${end})はまだ終わっていません。最終確認は期間終了後(${end}の翌日以降)に行ってください。「&lt;」「&gt;」で期間を移動した場合、確定したい期間を表示していることを確認してください。</div>
+      <button type="button" id="dr-ledger-confirm-btn" disabled title="この期間はまだ終わっていないため、最終確認できません">この期間を最終確認して提出する</button>
+      <div class="error" id="dr-ledger-confirm-error"></div>
+    </div>`;
+  }
+
   return `<div class="card" id="dr-ledger-confirm-block" style="margin-bottom:10px;">
     <div class="hint" style="margin-bottom:8px;">内容を確認し、間違いが無ければ最終確認してください。確認すると、この期間はご自身では編集できなくなります。</div>
     <button type="button" id="dr-ledger-confirm-btn">この期間を最終確認して提出する</button>
@@ -14675,7 +14697,7 @@ async function renderDailyReportLedgerConfirmBlock(session, start, end) {
 
 function wireDailyReportLedgerConfirmButton(session, start, end) {
   const btn = document.getElementById('dr-ledger-confirm-btn');
-  if (!btn) return;
+  if (!btn || btn.disabled) return;
   btn.addEventListener('click', async () => {
     if (!confirm(`${start}〜${end}の日報内容で間違いありませんか？確認すると、この期間はご自身で編集できなくなります。`)) return;
     btn.disabled = true;

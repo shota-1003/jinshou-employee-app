@@ -11947,7 +11947,7 @@ async function doDecideSite(itemEl, action) {
     }
     await rpc('admin_decide_pending_site', { p_admin_employee_code: session.employeeCode, p_site_id: Number(id), p_action: action });
     await loadSiteAdminList();
-  } catch (e) { /* 失敗時は一覧が更新されないだけ */ }
+  } catch (e) { window.alert(e.message || '処理に失敗しました。'); }
 }
 
 const JAPAN_PREFECTURES = [
@@ -14036,6 +14036,8 @@ function addDailyReportEntry(prefill) {
       const info = Array.isArray(rows) ? rows[0] : rows;
       if (!info) { isBusinessTripEl0.disabled = false; setHint(''); return null; }
       if (info.is_out_of_prefecture) { isBusinessTripEl0.disabled = false; setHint(`県外の現場${info.prefecture ? '(' + info.prefecture + ')' : ''}です。出張の場合はチェックしてください。`); return true; }
+      // 「現場外」は県内か県外か分からない(県外へ行った日もある)ため、出張チェックは選べるままにする(2026-10-03 Shota指摘)。
+      if (info.is_unknown_location) { isBusinessTripEl0.disabled = false; setHint('現場外です。県外へ出張した場合は出張にチェックしてください(行き先は管理者が確認します)。'); return null; }
       isBusinessTripEl0.checked = false; isBusinessTripEl0.disabled = true; setHint('県内の現場は出張になりません。');
       return false;
     } catch (e) { isBusinessTripEl0.disabled = false; setHint(''); return null; }
@@ -14923,12 +14925,13 @@ async function openAttendanceFixApprovePanel(btn, session, reload) {
       if (r.is_over_100km) bits.push('100km超');
       if (r.is_leader) bits.push('リーダー');
       if (r.is_night_shift) bits.push('夜勤');
-      bits.push('出張' + (r.is_business_trip ? 'あり' : 'なし') + '(' + (r.is_out_of_prefecture ? '県外の現場' : '県内の現場') + ')');
+      const isOutsideSite = r.site_name === '現場外';
+      bits.push('出張' + (r.is_business_trip ? 'あり' : 'なし') + '(' + (isOutsideSite ? '現場外: 県内か県外か不明' : (r.is_out_of_prefecture ? '県外の現場' : '県内の現場')) + ')');
       const fixBtns = (reason === 'conflict' && isConflict(r) && r.report_status !== 'rejected')
         ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"><span class="hint-inline">直す:</span>'
           + [['終日', 1], ['午前', 0.5], ['午後', 0.5]].map(([w, h]) => '<button type="button" class="secondary afn-fix" style="padding:2px 10px;" data-id="' + r.id + '" data-wt="' + w + '" data-hc="' + h + '">' + w + '・' + h + '人工にする</button>').join('') + '</div>' : '';
       const tripBtn = (reason === 'trip_site' && r.is_business_trip && !r.is_out_of_prefecture && r.report_status !== 'rejected')
-        ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"><button type="button" class="afn-trip-clear" data-id="' + r.id + '">出張から外す(県内の現場のため出張にしない)</button>'
+        ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"><button type="button" class="afn-trip-clear" data-id="' + r.id + '">出張から外す(' + (isOutsideSite ? '県外ではなかった・出張にしない' : '県内の現場のため出張にしない') + ')</button>'
           + '<button type="button" class="secondary afn-trip-count" data-id="' + r.id + '">出張扱いにする(県外の現場へ直す)</button></div>'
           + '<div class="afn-site-pick" data-id="' + r.id + '" style="display:none;margin-top:6px;"></div>' : '';
       return '<div style="padding:6px 8px;border:1px solid var(--border,#555);border-radius:8px;margin-bottom:6px;"><strong>' + exdEsc(r.site_name || '-') + '</strong> <span class="hint-inline">[' + exdEsc(statusLabel[r.report_status] || r.report_status) + ']</span><div class="hint-inline">' + exdEsc(bits.join(' / ')) + '</div>' + tripBtn
@@ -14943,9 +14946,10 @@ async function openAttendanceFixApprovePanel(btn, session, reload) {
     } else if (reason === 'rejected' && targets.length) {
       actions = '<div class="hint-inline">本人の再提出を待たずに、この内容のまま管理者が確定することもできます。</div><div><button type="button" class="afn-approve">この内容のまま確定する</button></div>';
     } else if (reason === 'trip_site') {
-      actions = '<div class="hint-inline">県内の現場なので出張には数えません(給与は変わりません)。選べるのは次のどちらかです。</div>'
+      const hasOutside = rows.some((r) => r.site_name === '現場外');
+      actions = '<div class="hint-inline">' + (hasOutside ? '「現場外」は県内か県外か分かりません。県外へ行っていたなら出張にできます。' : '県内の現場なので出張には数えません(給与は変わりません)。') + '選べるのは次のどれかです。</div>'
         + '<div class="hint-inline">① 出張ではなかった → 「出張から外す」を押す。</div>'
-        + '<div class="hint-inline">② 本当に出張だった(行った先は県外の現場) → 「出張扱いにする」で、行った県外の現場を選んで直す。</div>'
+        + '<div class="hint-inline">② 本当に出張だった(行った先は県外) → 「出張扱いにする」で、行った県外の現場を選んで直す(行き先が分からない・現場にない場合は「現場外(県外)」を選ぶ)。</div>'
         + '<div class="hint-inline">③ 分からない → 理由を書いて差し戻し、本人に現場を直してもらう。</div>'
         + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px;"><input type="text" class="afn-reason" placeholder="差し戻す理由(例: 現場を確認して出し直してください)" style="flex:1;min-width:160px;"><button type="button" class="secondary afn-reject-all">現場の間違いなので差し戻す</button></div>';
     }
@@ -16469,7 +16473,9 @@ function renderRequestDetailActions(sourceType, r) {
     const decide = async (action, reason) => {
       const session = getSession();
       try {
-        if (sourceType === 'site_proposal') await rpc(rejectRpc, { p_admin_employee_code: session.employeeCode, p_site_id: currentRequestDetail.sourceId, p_action: action });
+        // 現場の承認処理は 'active'(承認) / 'inactive'(却下) だけを受け付ける。ここの 'approved'/'rejected' をそのまま渡すと
+        // 「不正な操作です」で必ずエラーになっていた(2026-10-03 Shota指摘「新規現場申請 坂本が承認してもエラー」)。
+        if (sourceType === 'site_proposal') await rpc(rejectRpc, { p_admin_employee_code: session.employeeCode, p_site_id: currentRequestDetail.sourceId, p_action: action === 'approved' ? 'active' : 'inactive' });
         else await rpc(rejectRpc, { p_admin_employee_code: session.employeeCode, p_request_id: currentRequestDetail.sourceId, p_action: action, p_note: reason || null });
         navReturn('admin-all-requests');
       } catch (e) { showError('rdetail-error', e.message || '処理に失敗しました。'); }

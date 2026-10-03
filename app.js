@@ -14835,13 +14835,19 @@ async function loadPeriodConfirmChangesAdmin() {
 
 // 管理ホーム「本人確認の前に直す必要がある日報(提出済み・差戻し・食い違い)」の遷移先(2026-10-03、Shota指摘)。
 // 本人確認済みなのにまだ残っている人を先頭に出す(給与から黙って落ちないように)。
-async function loadAttendanceFixNeededAdmin() {
+async function loadAttendanceFixNeededAdmin(opts) {
   const session = getSession();
   const list = document.getElementById('attendance-fix-needed-list');
-  list.innerHTML = '<div class="hint">読み込み中...</div>';
+  // 承認・修正のあとの再読み込みでは「読み込み中」に差し替えず、スクロール位置も保つ
+  // (2026-10-03 Shota指摘「承認する度に一旦戻る」。差し替えで高さが0になり先頭へ戻っていた)。
+  const silent = !!(opts && opts.silent === true);
+  const scroller = document.scrollingElement || document.documentElement;
+  const keepY = silent ? scroller.scrollTop : 0;
+  const restoreScroll = () => { if (silent) scroller.scrollTop = keepY; };
+  if (!silent) list.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
     const rows = await rpc('admin_list_attendance_fix_needed', { p_admin_employee_code: session.employeeCode });
-    if (!rows || rows.length === 0) { list.innerHTML = '<div class="empty-state">管理者の承認待ち・差戻しなど、給与に反映されない日報はありません</div>'; return; }
+    if (!rows || rows.length === 0) { list.innerHTML = '<div class="empty-state">管理者の承認待ち・差戻しなど、給与に反映されない日報はありません</div>'; restoreScroll(); return; }
     const md = (d) => { const p = String(d).split('-'); return Number(p[1]) + '/' + Number(p[2]); };
     // 給与期間ごとにまとめ(新しい期間が上)、期間の中では「本人確認済み」の人を先頭にする。
     const byEmp = new Map();
@@ -14865,10 +14871,11 @@ async function loadAttendanceFixNeededAdmin() {
     }).join('');
     list.onclick = (ev) => {
       const b = ev.target && ev.target.closest ? ev.target.closest('.afn-open') : null;
-      if (b) openAttendanceFixApprovePanel(b, session, loadAttendanceFixNeededAdmin);
+      if (b) openAttendanceFixApprovePanel(b, session, () => loadAttendanceFixNeededAdmin({ silent: true }));
     };
+    restoreScroll();
   } catch (e) {
-    list.innerHTML = '<div class="empty-state">読み込みに失敗しました</div>';
+    if (!silent) list.innerHTML = '<div class="empty-state">読み込みに失敗しました</div>';
   }
 }
 

@@ -719,18 +719,22 @@
             try {
                 const dayData = await readRpc('assignment_get_day', { p_employee_code: me, p_date: date });
                 let issues = null; let conf = null;
+                let extraFailed = false;
                 if (state.canEdit) {
-                    [issues, conf] = await Promise.all([
-                        readRpc('assignment_validate_day', { p_employee_code: me, p_date: date }),
-                        readRpc('assignment_get_confirmation_status', { p_employee_code: me, p_date: date }),
-                    ]);
+                    // 警告・確認状況の取得に失敗しても、日別の配置そのものは表示する(従来の動き)。
+                    try {
+                        [issues, conf] = await Promise.all([
+                            readRpc('assignment_validate_day', { p_employee_code: me, p_date: date }),
+                            readRpc('assignment_get_confirmation_status', { p_employee_code: me, p_date: date }),
+                        ]);
+                    } catch (e) { extraFailed = true; fail(e); }
                 }
                 // 連続タイムラインは日付ごとのキャッシュから描くので、取得した日付の枠へ入れる。
-                state.days.set(date, { day: dayData, issues, confirmation: conf, full: true });
+                state.days.set(date, { day: dayData, issues, confirmation: conf, full: !extraFailed });
                 // 画面の「いまの日」の状態は、まだその日を選んでいるときだけ更新する。
                 if (state.selected === date) {
                     state.day_data = dayData;
-                    if (state.canEdit) { state.issues = issues; state.confirmation = conf; }
+                    if (state.canEdit && !extraFailed) { state.issues = issues; state.confirmation = conf; }
                 }
             } catch (e) { fail(e); }
         }
@@ -5251,6 +5255,14 @@
         (async function init() {
             syncLayoutMode();
             await loadMonth();
+            // 月の読み込みが一時的に失敗(データベースが混んでいて時間切れ等)したとき、すぐ「自分の予定」だけの
+            // 表示へ落とすと、全員の配置が消えたように見える(2026-10-03 Shota指摘「配置カレンダーが自分の配置しか
+            // 見れない」)。canEdit は月データを取得できたときだけ true になるので、失敗している間は間をあけて
+            // 数回取り直し、それでもだめなときだけ従来どおり自分の予定へ切り替える。
+            for (let attempt = 1; attempt <= 3 && !state.canEdit && state.offline; attempt += 1) {
+                await new Promise((r) => { setTimeout(r, 2000 * attempt); });
+                await loadMonth();
+            }
             if (!state.canEdit && !ctx.defaultView) state.view = 'me';
             if (state.view === 'me') { await loadMine(); render(); return; }
             const initDate = state.selected;

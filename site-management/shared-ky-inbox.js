@@ -1,7 +1,7 @@
 (function(root){'use strict';
  const escapeText=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const today=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
- const actorId=person=>JSON.stringify([person?.kind||'employee',person?.code||'',person?.worker_id||'',person?.company_id||person?.companyId||'']);
+ const actorId=person=>JSON.stringify([person?.kind||'employee',person?.code||'',person?.worker_id||'',person?.company_id||person?.companyId||'',person?.authEpoch||'']);
  let generation=0,active=null;
  root.mountSiteKyInbox=async function(host){
   if(!host||!root.portalSession?.identity||!root.SharedKy?.Session||!root.mountSharedKy)return;

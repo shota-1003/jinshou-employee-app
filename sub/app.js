@@ -234,12 +234,13 @@ async function boot() {
       const r = await rpc('subcontractor_resume_session', { p_login_code: loginCode });
       const row = Array.isArray(r) ? r[0] : r;
       if (row && row.out_worker_id) {
-        currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+        currentWorker = { id: row.out_worker_id, name: row.out_worker_name, company: row.out_company_name };
         // 端末が「会社・氏名」をまだ覚えていない世代の端末でも、ここで覚え直す
         // (次にトークンが切れたときに、暗証番号だけの画面で名前を出せるようにする)。
         rememberProfile(rememberedProfile.companyId, row);
         saveAuth();
         enterHome();
+        maybeOpenKyDailyReport();
         return;
       }
     } catch (e) { /* 期限切れ等 → 暗証番号ログインへ */ }
@@ -348,11 +349,12 @@ async function doPinLogin() {
     const row = Array.isArray(r) ? r[0] : r;
     if (!row || !row.out_device_token) throw new Error('ログインに失敗しました。');
     deviceToken = row.out_device_token;
-    currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+    currentWorker = { id: row.out_worker_id, name: row.out_worker_name, company: row.out_company_name };
     rememberProfile(rememberedProfile.companyId, row);
     saveAuth();
     $('pin-entry-code').value = '';
     enterHome();
+    maybeOpenKyDailyReport();
   } catch (e) {
     setErr('pin-entry-error', e.message || 'ログインに失敗しました。初回の方は下の「初回の方」からご登録ください。');
   }
@@ -411,7 +413,7 @@ async function doSelfRegister() {
 
   loginCode = row.out_login_code;
   deviceToken = row.out_device_token;
-  currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+  currentWorker = { id: row.out_worker_id, name: row.out_worker_name, company: row.out_company_name };
   rememberProfile(companyId, row);
   saveAuth();
   ['reg-name', 'reg-furigana', 'reg-phone', 'reg-pin', 'reg-pin2'].forEach((id) => { const el = $(id); if (el) el.value = ''; });
@@ -461,7 +463,7 @@ async function doRecover() {
     const row = Array.isArray(r) ? r[0] : r;
     if (!row || !row.out_device_token) throw new Error('ログインに失敗しました。');
     loginCode = row.out_login_code; deviceToken = row.out_device_token;
-    currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+    currentWorker = { id: row.out_worker_id, name: row.out_worker_name, company: row.out_company_name };
     rememberProfile(companyId, row);
     saveAuth();
     ['rec-name', 'rec-pin', 'rec-phone'].forEach((id) => { const el = $(id); if (el) el.value = ''; });
@@ -490,7 +492,7 @@ async function doRelink() {
     const row = Array.isArray(r) ? r[0] : r;
     if (!row || !row.out_device_token) throw new Error('本人確認に失敗しました。');
     loginCode = row.out_login_code; deviceToken = row.out_device_token;
-    currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+    currentWorker = { id: row.out_worker_id, name: row.out_worker_name, company: row.out_company_name };
     rememberProfile(companyId, row);
     saveAuth();
     ['relink-name', 'relink-phone', 'relink-pin'].forEach((id) => { $(id).value = ''; });
@@ -524,7 +526,7 @@ async function doFirstLogin() {
     const row = Array.isArray(r) ? r[0] : r;
     if (!row || !row.out_device_token) throw new Error('初回登録に失敗しました。');
     loginCode = lc; deviceToken = row.out_device_token;
-    currentWorker = { name: row.out_worker_name, company: row.out_company_name };
+    currentWorker = { id: row.out_worker_id, name: row.out_worker_name, company: row.out_company_name };
     rememberProfile(null, row);
     saveAuth();
     ['fl-login-code', 'fl-code', 'fl-pin', 'fl-pin2'].forEach((id) => { $(id).value = ''; });
@@ -539,6 +541,11 @@ function doLogout() {
   rpc('subcontractor_logout', { p_login_code: loginCode }).catch(() => {});
   clearAuth();
   showScreen('welcome');
+}
+
+function maybeOpenKyDailyReport() {
+  const pending = window.KyDailyReportHandoff.peek('worker', loginCode);
+  if (pending) openAttendance(pending.date, 'home');
 }
 
 function enterHome() {
@@ -852,7 +859,11 @@ function renumberAttBlocks() {
 }
 let attTargetDate = null; // 訂正時は対象日を指定(nullなら当日)
 let attOrigin = 'home';   // 提出完了後の戻り先(home / history)
+let attOpenTicket = 0;
 async function openAttendance(targetDate, origin) {
+  const openTicket = ++attOpenTicket;
+  const requestActor = loginCode;
+  const requestToken = deviceToken;
   // 防御: 文字列の YYYY-MM-DD 以外(Event オブジェクト等)が渡されても当日にする(2026-09-06 の 22007 事故の再発防止)。
   if (typeof targetDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) targetDate = null;
   if (typeof origin !== 'string') origin = null;
@@ -869,18 +880,41 @@ async function openAttendance(targetDate, origin) {
     const cand = await rpc('get_my_subcontractor_site_candidates', { p_login_code: loginCode, p_date: d });
     sites = (cand || []).filter((a) => a.site_id).map((a) => ({ id: a.site_id, label: (a.site_name || '(現場)') + (a.source === '配置' ? '（本日の配置）' : a.source === '最近' ? '（最近）' : '') }));
   } catch (e) {}
+  if (openTicket !== attOpenTicket || loginCode !== requestActor || deviceToken !== requestToken) return;
   const seen = {}; sites = sites.filter((s) => (seen[s.id] ? false : (seen[s.id] = true)));
   const opts = sites.map((s) => `<option value="${s.id}">${escapeHtml(s.label)}</option>`).join('');
   // 外注の方は新しい現場を作れない(2026-10-03 Shota指示)。一覧から選ぶだけ。一覧に無いときは会社の担当者へ連絡してもらう。
   attSiteOptionsHtml = opts || '<option value="">(選べる現場がありません)</option>';
   // ブロックを初期化(1現場)。既存登録があればそれで復元。
   $('att-blocks').innerHTML = '';
-  let existing = [];
+  let existing = null;
   try { existing = (await rpc('get_my_subcontractor_attendance', { p_login_code: loginCode, p_report_date: d })) || []; } catch (e) {}
-  if (existing.length) {
+  if (openTicket !== attOpenTicket || attTargetDate !== d || loginCode !== requestActor || deviceToken !== requestToken) return;
+  const pending = window.KyDailyReportHandoff.peek('worker', loginCode);
+  let suggestion = { kind: 'none' };
+  if (pending && pending.date === d) {
+    suggestion = await window.KyDailyReportAdapters.suggestion({
+      actorKind: 'worker', actorCode: loginCode,
+      actorKey: currentWorker?.id ? 'worker:' + currentWorker.id : null,
+      date: d, existing, eligibleSiteIds: sites.map(s => s.id), rpc,
+    });
+  }
+  if (openTicket !== attOpenTicket || attTargetDate !== d || loginCode !== requestActor || deviceToken !== requestToken) return;
+  if (existing?.length) {
     existing.slice(0, 2).forEach((x) => addAttBlock({ site_id: x.site_id, work_type: x.work_type, headcount: x.headcount, overtime_hours: x.overtime_hours, is_night_shift: x.is_night_shift, is_business_trip: x.is_business_trip, notes: x.notes }));
+    if (suggestion.kind === 'notice') setErr('att-error', suggestion.message);
+  } else if (suggestion.kind === 'prefill') {
+    if (suggestion.addSignedWorkerSite) {
+      attSiteOptionsHtml = '<option value="' + suggestion.siteId + '">' + escapeHtml(suggestion.siteName) + '（KYで参加）</option>' + attSiteOptionsHtml;
+    }
+    const block = addAttBlock({ site_id: suggestion.siteId, notes: suggestion.notes });
+    if (block?.querySelector('.ab-site').value !== String(suggestion.siteId)) {
+      $('att-blocks').innerHTML = ''; addAttBlock();
+      setErr('att-error', '現場候補を選択できなかったため、KYからの入力を止めました。');
+    } else setErr('att-error', suggestion.message);
   } else {
     addAttBlock();
+    if (suggestion.kind === 'notice') setErr('att-error', suggestion.message);
   }
   if (!sites.length) setErr('att-error', '今日の配置に現場が登録されていません。会社の担当者に連絡してください(新しい現場は外注の方からは登録できません)。');
   loadTodayAttendance(d);

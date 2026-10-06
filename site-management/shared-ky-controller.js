@@ -3,6 +3,12 @@ const selfItems=[['health','体調の確認'],['uniform','制服・作業服'],[
 const leaderItems=[['start_permitted','作業開始・再開を許可'],['photo_record','写真を記録した'],['daily_slip','常用伝票を提出した'],['required_documents','必要書類を提出した'],['leader_handover','職長として本日の引継ぎをした'],['end_completed','終業の確認を完了した']];
 const heatSeason=date=>typeof date==='string'&&/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(date)&&date.slice(5)>='06-01'&&date.slice(5)<='09-30';
 const selfItemsFor=(date,phase)=>selfItems.filter(([key],i)=>(phase==='start'?i<17:phase==='end'?i>=17:true)&&(!key.startsWith('heat_')||heatSeason(date)));
+function assignRandomRoles(risks,roster,random=Math.random){
+ const people=[...new Set(roster)];if(!people.length)throw Error('参加者を選んでください');if(people.length>100||risks.length>100)throw Error('参加者または危険予測の件数が上限を超えています');
+ const shuffled=[...people];for(let i=shuffled.length-1;i>0;i--){const j=Math.min(i,Math.max(0,Math.floor(random()*(i+1))));[shuffled[i],shuffled[j]]=[shuffled[j],shuffled[i]]}
+ const rows=Math.max(risks.length,3,Math.ceil(people.length/2));
+ return Array.from({length:rows},(_,i)=>({...risks[i],speaker:shuffled[(2*i)%people.length],owner:shuffled[(2*i+1)%people.length]}));
+}
 const stable=v=>Array.isArray(v)?'['+v.map(stable).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+stable(v[k])).join(',')+'}':JSON.stringify(v);
 class Session{
  constructor({records,rpc,identity,site,record,canManage=false,canConfirmLeader=false}){Object.assign(this,{records,rpc,identity,site,canManage,canConfirmLeader});this.id=record?.id||crypto.randomUUID();this.revision=record?.revision||0;this.draft=structuredClone(record?.payload||{kind:'ky',data:{},kyCanonical:{schemaVersion:1,date:new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}),roster:[],leader:'',work:'',risks:[{},{},{}]}});this.saved=record?stable(this.draft):null;this.confirmations=[];this.signatures=[];this.signatureDrafts={};this.owner=this.actor().key;this.ownerEpoch=this.identity()?.authEpoch||'';this.requests=new Map()}
@@ -17,5 +23,5 @@ class Session{
  async signPhase(phase,ink,agreed,displayedChecks){this.check();if(this.dirty()||!this.revision)throw Error('先にKYの内容を共有保存してください');if(!['start','end'].includes(phase)||!this.draft.kyCanonical.roster.includes(this.actor().key))throw Error('本人のKYを開いてください');const p=this.args();delete p.p_section;const keys=selfItemsFor(this.draft.kyCanonical.date,phase).map(x=>x[0]),own=this.actor().key,expected={};for(const key of keys){const row=this.confirmations.find(c=>c.actor===own&&c.kind==='self'&&c.item_key===key);if(!row)throw Error('自分の確認項目をすべて保存してからサインしてください');expected[key]=row.from_signature?0:Number(row.revision)}if(stable(expected)!==stable(displayedChecks))throw Error('確認内容が変わりました。開き直してサインしてください');const args={...p,p_phase:phase,p_strokes:structuredClone(ink),p_agreed:agreed===true,p_expected_checks:expected},fingerprint=stable(args),request=this.requests.get(fingerprint)||crypto.randomUUID();this.requests.set(fingerprint,request);const result=await this.rpc('kyPhaseSign',{...args,p_request_id:request});this.check();this.requests.delete(fingerprint);return result}
  async readiness(phase='end'){if(this.dirty())throw Error('未保存の変更があります');const p=this.args();delete p.p_section;const r=await this.rpc('safetyReadiness',{...p,p_phase:phase});this.check();return r}
 }
-root.SharedKy={Session,selfItems,leaderItems,heatSeason,selfItemsFor};if(typeof module!=='undefined')module.exports=root.SharedKy;
+root.SharedKy={Session,selfItems,leaderItems,heatSeason,selfItemsFor,assignRandomRoles};if(typeof module!=='undefined')module.exports=root.SharedKy;
 })(typeof window!=='undefined'?window:globalThis);

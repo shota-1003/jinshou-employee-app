@@ -883,8 +883,7 @@ async function openAttendance(targetDate, origin) {
   if (openTicket !== attOpenTicket || loginCode !== requestActor || deviceToken !== requestToken) return;
   const seen = {}; sites = sites.filter((s) => (seen[s.id] ? false : (seen[s.id] = true)));
   const opts = sites.map((s) => `<option value="${s.id}">${escapeHtml(s.label)}</option>`).join('');
-  // 外注の方は新しい現場を作れない(2026-10-03 Shota指示)。一覧から選ぶだけ。一覧に無いときは会社の担当者へ連絡してもらう。
-  attSiteOptionsHtml = opts || '<option value="">(選べる現場がありません)</option>';
+  attSiteOptionsHtml = (opts || '') + '<option value="__new__">その他(一覧にない現場を入力)</option>';
   // ブロックを初期化(1現場)。既存登録があればそれで復元。
   $('att-blocks').innerHTML = '';
   let existing = null;
@@ -916,7 +915,7 @@ async function openAttendance(targetDate, origin) {
     addAttBlock();
     if (suggestion.kind === 'notice') setErr('att-error', suggestion.message);
   }
-  if (!sites.length) setErr('att-error', '今日の配置に現場が登録されていません。会社の担当者に連絡してください(新しい現場は外注の方からは登録できません)。');
+  if (!sites.length) { const b0 = document.querySelector('#att-blocks .att-site-block'); if (b0) { b0.querySelector('.ab-site').value = '__new__'; b0.querySelector('.ab-newsite-wrap').style.display = 'block'; } }
   loadTodayAttendance(d);
 }
 

@@ -53,7 +53,8 @@ root.mountSharedKy=async function(box,{session:s,members=[],isCurrent=()=>true})
  if(s.revision)await s.refresh();paint();
  const pendingChecks=()=>Object.values(s.signatureDrafts||{}).some(x=>x.ink?.strokes?.length||x.agreed)||[...box.querySelectorAll('[data-check]')].some(cell=>{const old=s.confirmations.find(x=>x.actor===s.actor().key&&x.kind===cell.dataset.checkKind&&x.item_key===cell.dataset.check);return cell.querySelector('[data-result]')?.value!==(old?.result||'')||cell.querySelector('[data-note]')?.value!==(old?.note||'')});
  const activeInput=()=>box.contains(document.activeElement)&&document.activeElement.matches('input,textarea,select');
- let polling=false;const liveTimer=setInterval(async()=>{if(!valid()){clearInterval(liveTimer);return}if(polling||document.hidden||!s.canManage||!s.revision||s.dirty()||busy||activeInput()||pendingChecks())return;polling=true;try{await s.refresh();if(valid()&&!document.hidden&&!s.dirty()&&!busy&&!activeInput()&&!pendingChecks())paint()}catch{}finally{polling=false}},8000);
+ const passEditorOpen=()=>!!box.querySelector('[data-role-pass-form] fieldset');
+ let polling=false;const liveTimer=setInterval(async()=>{if(!valid()){clearInterval(liveTimer);return}if(polling||document.hidden||!s.canManage||!s.revision||s.dirty()||busy||activeInput()||pendingChecks()||passEditorOpen())return;polling=true;try{await s.refresh();if(valid()&&!document.hidden&&!s.dirty()&&!busy&&!activeInput()&&!pendingChecks()&&!passEditorOpen())paint()}catch{}finally{polling=false}},8000);
 };
 })(window);
 

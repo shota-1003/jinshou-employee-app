@@ -5,11 +5,12 @@ window.addEventListener('DOMContentLoaded',()=>{
   original(id);
   const f=$('sharedProfileForm')||$('siteForm');
   if(!f||f.id==='sharedProfileForm')return; // Shared profile owns its picker.
-  const actor=JSON.stringify(portalSession.identity()),prior=state.sites.find(s=>String(s.id)===String(id))||null;
+  const actor=JSON.stringify(portalSession.identity()),epoch=window.siteSyncSessionEpoch?.(),prior=state.sites.find(s=>String(s.id)===String(id))||null;
   const pickers={},choices={prime:null,client:null},touched={prime:false,client:false},peopleTouched={prime:false,client:false};
   const notice=document.createElement('p');notice.setAttribute('role','status');f.prepend(notice);
   const retry=document.createElement('button');retry.type='button';retry.className='secondary';retry.textContent='顧客候補を再読込';retry.hidden=true;notice.after(retry);
-  const matches=()=>f.isConnected&&actor===JSON.stringify(portalSession.identity());
+  const matches=()=>f.isConnected&&portalSession.connected()&&actor===JSON.stringify(portalSession.identity())&&epoch===window.siteSyncSessionEpoch?.();
+  const primeLabel=document.createElement('label'),primeInput=document.createElement('input');primeLabel.textContent='元請け会社名（必須・新しい会社はここに入力）';primeInput.name='primeName';primeInput.required=true;primeInput.maxLength=200;primeInput.value=prior?.primeName||company(prior?.prime)?.name||'';primeLabel.append(primeInput);(f.elements.prime.closest('label')||f.elements.prime).after(primeLabel);
   const sharedPeople=(key,company)=>{
    const box=$(key+'Contacts');if(!box)return;
    const selected=new Set(company?.id===prior?.[key+'CompanyId']?(prior?.[key+'People']||[]).map(String):[]);box.replaceChildren();
@@ -19,32 +20,35 @@ window.addEventListener('DOMContentLoaded',()=>{
   };
   for(const key of ['prime','client']){
    const anchor=f.elements[key],picker=document.createElement('select');picker.name=key+'SharedChoice';pickers[key]=picker;
+   if(!id){anchor.hidden=true;anchor.disabled=true;anchor.value='';$(key+'Contacts')?.replaceChildren()}
    picker.innerHTML='<option value="">共有顧客から選ぶ（未選択なら現在の入力を維持）</option>';anchor.before(picker);
-   anchor.addEventListener('change',()=>{if(!matches())return;choices[key]=null;touched[key]=true;picker.value=''});
+   anchor.addEventListener('change',()=>{if(!matches())return;choices[key]=null;touched[key]=true;picker.value='';if(key==='prime')primeInput.value=company(anchor.value)?.name||''});
    picker.addEventListener('change',()=>{if(!matches())return;touched[key]=true;peopleTouched[key]=true;const c=window.siteSharedCompanies?.().find(x=>x.id===picker.value);choices[key]=c||null;
-    if(c){anchor.value='';sharedPeople(key,c)}else if(prior?.[key+'CompanyId'])sharedPeople(key,null)});
+    if(c){anchor.value='';sharedPeople(key,c);if(key==='prime')primeInput.value=c.name}else if(prior?.[key+'CompanyId'])sharedPeople(key,null)});
   }
+  primeInput.addEventListener('input',()=>{if(!matches())return;choices.prime=null;touched.prime=true;peopleTouched.prime=true;pickers.prime.value='';f.elements.prime.value='';sharedPeople('prime',null)});
   const loadChoices=async()=>{retry.disabled=true;notice.textContent='顧客候補を確認中…';try{
    const options=await siteSharedCustomerChoicesLoad();if(!matches())return;
    for(const key of ['prime','client']){const picker=pickers[key],current=picker.value||(!touched[key]?prior?.[key+'CompanyId']||'':'');
     picker.replaceChildren(new Option('共有顧客から選ぶ（未選択なら現在の入力を維持）',''));
     for(const c of options){const duplicate=options.filter(x=>x.name===c.name).length>1;picker.add(new Option(c.name+(duplicate?' ／ ID '+c.id.slice(0,8):''),c.id))}
-    if(options.some(c=>c.id===current)){picker.value=current;choices[key]=options.find(c=>c.id===current);if(!touched[key])sharedPeople(key,choices[key])}
+    if(options.some(c=>c.id===current)){picker.value=current;choices[key]=options.find(c=>c.id===current);if(!touched[key]){sharedPeople(key,choices[key]);if(key==='prime')primeInput.value=choices[key].name}}
    }
    notice.textContent='';retry.hidden=true;
   }catch(e){if(matches()){notice.textContent='顧客候補を取得できません。既存の現場情報は保持されます: '+e.message;retry.hidden=false}}
   finally{retry.disabled=false}};
   retry.onclick=loadChoices;loadChoices();
   f.onsubmit=async event=>{event.preventDefault();if(!f.reportValidity()||!matches())return;
+   const primeName=primeInput.value.trim();if(!primeName){notice.textContent='元請け会社を選択するか、会社名を入力してください';primeInput.focus();return}primeInput.value=primeName;
    const map=f.elements.mapLink?.value.trim();if(map&&!safePlaceUrl(map)){notify('現場の地図URLは Google / Apple マップのHTTPS共有URLを指定してください');return}
    if(f.elements.mapLink)f.elements.mapLink.value=map||'';
    const data=new FormData(f),value=Object.fromEntries(data);value.id=id||Date.now();
    if(!id){if(!String(value.createdBy||'').trim()){notify('案件作成者を入力してください');return}value.createdAt=new Date().toLocaleDateString('sv-SE')}
    for(const key of ['prime','client']){const selected=choices[key],oldId=prior?.[key+'CompanyId']||'',oldLocal=prior?.[key];
-    delete value[key+'SharedChoice'];const localValue=Number(value[key]);const unchanged=!touched[key];
+    delete value[key+'SharedChoice'];const localValue=Number(value[key]||0);const unchanged=!touched[key];
     value[key]=selected?.id||(unchanged&&oldId?oldLocal:localValue);
     value[key+'CompanyId']=selected?.id||(unchanged?oldId:'');
-    value[key+'Name']=selected?.name||(unchanged?prior?.[key+'Name']||'':company(value[key])?.name||'');
+    value[key+'Name']=key==='prime'?primeName:selected?.name||(unchanged?prior?.[key+'Name']||'':company(value[key])?.name||'');
     const pickedPeople=data.getAll(key+'People');value[key+'People']=unchanged&&!peopleTouched[key]&&oldId?[...(prior?.[key+'People']||[])]:pickedPeople;
    }
    if(value.start&&value.end&&value.end<value.start){notify('完了予定日は着工日以降にしてください');return}

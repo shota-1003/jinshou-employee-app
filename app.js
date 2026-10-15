@@ -15681,6 +15681,19 @@ async function loadMyDailyReports() {
         list.appendChild(hdiv);
         return;
       }
+      // 取り消されたシステム自動休日は現場名が無い(NULL)。「null(休日)」と出ないよう説明の文言にする。
+      if (isCancelled && r.site_names.every((n) => n == null || n === '')) {
+        const cdiv = document.createElement('div');
+        cdiv.className = 'history-item is-holiday-auto is-cancelled';
+        cdiv.style.opacity = '0.6';
+        cdiv.innerHTML = `
+          <div class="row1"><span>${r.report_date}</span><span class="mini-tag muted">取消済み</span></div>
+          <div class="row2">休日（システム自動登録）</div>
+          <div class="hint-inline">自動で入った休日は取り消されました。日報を入力できます</div>
+        `;
+        list.appendChild(cdiv);
+        return;
+      }
       const div = document.createElement('div');
       div.className = 'history-item' + (isCancelled ? ' is-cancelled' : '');
       div.style.cursor = 'pointer';

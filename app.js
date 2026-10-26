@@ -16699,7 +16699,9 @@ function renderRequestDetailActions(sourceType, r) {
     });
   } else if (sourceType === 'entertainment_preapproval') {
     if (r.status_group !== 'pending' && r.status_group !== 'special_review') { box.innerHTML = '<div class="hint">この申請は既に処理済みです。</div>'; return; }
-    const special = r.status_group === 'special_review';
+    // status_group は事後申請でも 'pending' で返るため、本人が事前申請していない(requires_special_review)かどうかで判定する。
+    // 以前は status_group だけで見ていたため、例外承認の理由欄が出ず、理由なしで押して毎回エラーになっていた(2026-10-26)。
+    const special = r.status_group === 'special_review' || r.requires_special_review === true;
     box.innerHTML = `
       ${special ? `${icon('alert-triangle')}<div class="preapproval-warning">この接待は事前申請されていません。例外承認の理由を入力してください。</div>
         <label>例外承認理由(管理者入力)<span class="required-mark">(必須)</span></label>

@@ -7936,7 +7936,9 @@ function wireExpenseRequestDetail(el, full, ctx) {
             const pr = Array.isArray(payRes) ? payRes[0] : payRes;
             if (pr && pr.ok === false) {
               const missing = Array.isArray(pr.missing) ? pr.missing.join(' / ') : '';
-              showError('exd-pay-error', `支払を記録できません: ${pr.reason_label || pr.reason || '支払可能条件を満たしていません'}${missing ? '(不足: ' + missing + ')' : ''}`);
+              // DBが返す message(日本語の説明)を優先する。以前は reason の記号(over_approved_amount 等)がそのまま画面に出ていた(2026-10-26)。
+              const overHint = pr.reason === 'over_approved_amount' ? ' 領収書の金額が承認額と違う場合は、金額を支払欄で調整せず、申請の明細を差し戻して本人に正しい金額で出し直してもらってください。' : '';
+              showError('exd-pay-error', `支払を記録できません: ${pr.reason_label || pr.message || pr.reason || '支払可能条件を満たしていません'}${missing ? '(不足: ' + missing + ')' : ''}${overHint}`);
               payBtn.disabled = false; return;
             }
             await reload(); return;

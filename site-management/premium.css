@@ -30,3 +30,6 @@
 @media(max-width:700px){.project-card .project-info{padding:13px}.project-card-heading h2{font-size:15px}.project-card-bottom{display:block}.project-alerts{margin-top:7px}.project-card .project-open{display:block;margin:7px 0 0;text-align:right}}
 /* Shared adapters use the same controls as the original screens. Screen-only: printed forms retain their own rules. */
 @media screen{#app .panel button:not([class]){background:white;border:1px solid var(--line);color:var(--ink);padding:10px 15px;border-radius:5px;font-size:12px;line-height:1.5;min-height:40px;margin:4px 8px 4px 0}#app .panel button:not([class]):hover:not(:disabled){background:#edf2f9}#app .panel button:not([class]):focus-visible{outline:3px solid #6594ce;outline-offset:2px}#app .panel button:not([class]):disabled{opacity:.55}#app .panel table:not([class]){width:100%;border-collapse:collapse;font-size:13px}#app .panel table:not([class]) th,#app .panel table:not([class]) td{padding:12px 15px;text-align:left;border-bottom:1px solid var(--line);overflow-wrap:anywhere}#app .panel table:not([class]) th{font-size:12px;color:#657c96;background:#edf2f9}#app .panel table:not([class]) td{line-height:1.8}}
+
+/* Fill wide screens without changing printed forms or responsive columns. */
+@media screen{main{max-width:none}}

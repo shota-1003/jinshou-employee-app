@@ -1,0 +1,281 @@
+[
+  {
+    "id": "portal-start",
+    "category": "ポータル",
+    "title": "ログイン・配置の確認",
+    "audience": "社員・外注作業員",
+    "old": [
+      3,
+      5,
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    "pageCount": 2,
+    "sha256": "e04544639ab0bf2d8fb3589e57c2034b7c9a736fa22b0f05de9396080685f21b"
+  },
+  {
+    "id": "portal-report",
+    "category": "ポータル",
+    "title": "日報の提出・訂正",
+    "audience": "社員・外注作業員",
+    "old": [
+      26,
+      28,
+      29,
+      30
+    ],
+    "pageCount": 2,
+    "sha256": "5df636ae84ef2a864e5ee5d67c985e007904ff0b838d66a10e6d988d80ce0a28"
+  },
+  {
+    "id": "portal-requests",
+    "category": "ポータル",
+    "title": "通知・申請・登録情報",
+    "audience": "社員・外注作業員",
+    "old": [
+      31,
+      32,
+      33,
+      34,
+      35
+    ],
+    "pageCount": 2,
+    "sha256": "db485581630d988a3a4ec195efb79824f7ce86f57d2f07210378245cc7292004"
+  },
+  {
+    "id": "placement",
+    "category": "職長・教育担当者",
+    "title": "配置と参加者の確認",
+    "audience": "配置担当・職長",
+    "old": [
+      12,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52
+    ],
+    "pageCount": 2,
+    "sha256": "dcf1d4bb24bd46dcc2d3e76b40e76d4071b9c206d85e4b7ccbe4b3111746065c"
+  },
+  {
+    "id": "site-start",
+    "category": "現場管理",
+    "title": "現場を開く・基本情報と対応履歴",
+    "audience": "現場管理者・職長",
+    "old": [
+      14,
+      25
+    ],
+    "pageCount": 2,
+    "sha256": "980bda6a7f5ccab0641b423bd4f88188ff91ff6c6c6acb0bde4bd724ee00d03e"
+  },
+  {
+    "id": "site-records",
+    "category": "現場管理",
+    "title": "工程・写真・タスク・手直し",
+    "audience": "現場メンバー",
+    "old": [
+      15,
+      16,
+      19,
+      20,
+      21,
+      25
+    ],
+    "pageCount": 2,
+    "sha256": "e96653360fe6ec8edcdf669a06882b7fe2aa24de5d8b0036fc05eee4dc232f34"
+  },
+  {
+    "id": "materials",
+    "category": "現場管理",
+    "title": "資材の注文から返却まで",
+    "audience": "注文担当・資材担当",
+    "old": [
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44
+    ],
+    "pageCount": 2,
+    "sha256": "8a907ce28406aa62ae51b7ca6646f3803f8041684224d1efbd5620a7ad66449d"
+  },
+  {
+    "id": "profit",
+    "category": "現場管理",
+    "title": "利益管理・請求連携の見方",
+    "audience": "社長・許可された管理者",
+    "old": [
+      45,
+      46,
+      55
+    ],
+    "pageCount": 2,
+    "sha256": "7e1ed63ee8402132f388483d60f873e2c7b98ac104d98625319eb96e6ce07e1b"
+  },
+  {
+    "id": "ky-foreman",
+    "category": "職長・教育担当者",
+    "title": "職長のKY作成・役割のパス",
+    "audience": "職長",
+    "old": [
+      17,
+      18,
+      69,
+      78,
+      80,
+      96,
+      99
+    ],
+    "pageCount": 2,
+    "sha256": "13b7b1c0e50c0c32069342f3a7cae3cdfa24e74f8d36773c3eb3d1c0f4ff9655"
+  },
+  {
+    "id": "ky-personal",
+    "category": "ポータル",
+    "title": "毎朝と終業のKY・本人サイン",
+    "audience": "社員・外注作業員",
+    "old": [
+      17,
+      18,
+      69,
+      78
+    ],
+    "pageCount": 2,
+    "sha256": "ba07953ba1196b8ecac274950c4783e1c699e238c8f85c829d26c48b64822425"
+  },
+  {
+    "id": "common-safety",
+    "category": "安全教育",
+    "title": "共通安全教育・入る前の基本",
+    "audience": "全社員・外注作業員",
+    "old": [
+      58,
+      67,
+      73,
+      76,
+      85,
+      86
+    ],
+    "pageCount": 3,
+    "sha256": "07fa67b358cc35c8fdff4f9221e02dd5f62d6aa6b8705d6b6958f5c81df92798"
+  },
+  {
+    "id": "site-induction",
+    "category": "安全教育",
+    "title": "新規入場者教育・この現場で働く前に",
+    "audience": "初めて現場へ入る社員・外注",
+    "old": [
+      69,
+      77,
+      95
+    ],
+    "pageCount": 3,
+    "sha256": "bb670ab319bc14757d7646a9fba38cdb24b69967ecf08b2a8434014be7074ac4"
+  },
+  {
+    "id": "education-create",
+    "category": "職長・教育担当者",
+    "title": "教材を作る・登録する・配信する",
+    "audience": "職長・教育管理者",
+    "old": [
+      58,
+      73,
+      76,
+      77,
+      85,
+      86,
+      94,
+      95
+    ],
+    "pageCount": 3,
+    "sha256": "cdf4b08bff7945c5c2285873f3dadda1460b61da2c05f3daffd191a934f54707"
+  },
+  {
+    "id": "accident-first",
+    "category": "事故対応",
+    "title": "事故が起きたときの初動",
+    "audience": "全員",
+    "old": [
+      22,
+      70,
+      82,
+      83,
+      108
+    ],
+    "pageCount": 2,
+    "sha256": "a558b24b568ef66d33124fc9aab6c06270b7e9b99ede051982a4c4c366ded55b"
+  },
+  {
+    "id": "accident-report",
+    "category": "事故対応",
+    "title": "事故報告・原因・再発防止のまとめ方",
+    "audience": "職長・報告担当・安全担当",
+    "old": [
+      23,
+      24,
+      59,
+      60,
+      61,
+      62,
+      66,
+      71,
+      72,
+      84,
+      87,
+      88,
+      89,
+      100,
+      108
+    ],
+    "pageCount": 2,
+    "sha256": "becd2882c60e8326c67ac5f2e6de8252aded17fe1810d894e9dbb402d83d8474"
+  },
+  {
+    "id": "fall-prevention",
+    "category": "安全教育",
+    "title": "高所作業・工具と資材の落下防止",
+    "audience": "作業員・職長",
+    "old": [
+      63,
+      64,
+      65,
+      68,
+      81
+    ],
+    "pageCount": 2,
+    "sha256": "7e5cf229b3fbe58c7d86f1ef85b7064d5f9afe0ed6a805554743b9d910bd1f7d"
+  },
+  {
+    "id": "heat-prevention",
+    "category": "安全教育",
+    "title": "暑い日の熱中症予防・異常時の対応",
+    "audience": "全員",
+    "old": [
+      79
+    ],
+    "pageCount": 2,
+    "sha256": "ee0d3f4873cb1fddc219abf9f1ca238d4bff5a07ee9fbdc5245d0f1db1345337"
+  },
+  {
+    "id": "reky",
+    "category": "安全教育",
+    "title": "条件が変わったときの再KY",
+    "audience": "作業員・職長",
+    "old": [
+      69,
+      80,
+      99
+    ],
+    "pageCount": 2,
+    "sha256": "fab8385ef20d0c4298c78c56347b42a5697cc375320806f6c8ffd69e3406afab"
+  }
+]

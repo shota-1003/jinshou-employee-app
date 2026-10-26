@@ -13,8 +13,9 @@
       10,
       11
     ],
+    "number": "01",
     "pageCount": 2,
-    "sha256": "e04544639ab0bf2d8fb3589e57c2034b7c9a736fa22b0f05de9396080685f21b"
+    "sha256": "a26489090c45444d25ffb0469b6efe1d789ebf6bfbb976f923db5079920b1280"
   },
   {
     "id": "portal-report",
@@ -27,8 +28,9 @@
       29,
       30
     ],
+    "number": "02",
     "pageCount": 2,
-    "sha256": "5df636ae84ef2a864e5ee5d67c985e007904ff0b838d66a10e6d988d80ce0a28"
+    "sha256": "100601553e6421afa25f674760ea9e2654b5002a5f24df09c97f966e1ac43505"
   },
   {
     "id": "portal-requests",
@@ -42,8 +44,9 @@
       34,
       35
     ],
+    "number": "03",
     "pageCount": 2,
-    "sha256": "db485581630d988a3a4ec195efb79824f7ce86f57d2f07210378245cc7292004"
+    "sha256": "b248cfee9231538202d08e4f59bcff75bd2e32d696a82a607287aff1de0c3a18"
   },
   {
     "id": "placement",
@@ -59,8 +62,9 @@
       51,
       52
     ],
+    "number": "04",
     "pageCount": 2,
-    "sha256": "dcf1d4bb24bd46dcc2d3e76b40e76d4071b9c206d85e4b7ccbe4b3111746065c"
+    "sha256": "03b3705da947ab763762ac77fccabc3aca33e5cc2b3d624922dc7fd28b39f59c"
   },
   {
     "id": "site-start",
@@ -71,8 +75,9 @@
       14,
       25
     ],
+    "number": "05",
     "pageCount": 2,
-    "sha256": "980bda6a7f5ccab0641b423bd4f88188ff91ff6c6c6acb0bde4bd724ee00d03e"
+    "sha256": "c46a27ceee089c6e7cda18a7be6cf6f573957b7ead740f27de8636e2f4cef46c"
   },
   {
     "id": "site-records",
@@ -87,8 +92,9 @@
       21,
       25
     ],
+    "number": "06",
     "pageCount": 2,
-    "sha256": "e96653360fe6ec8edcdf669a06882b7fe2aa24de5d8b0036fc05eee4dc232f34"
+    "sha256": "2e279c02377fe7c997c55d6a2dea8540abf73f9136b04faa4a7ca2ad3375e1cd"
   },
   {
     "id": "materials",
@@ -105,8 +111,9 @@
       43,
       44
     ],
+    "number": "07",
     "pageCount": 2,
-    "sha256": "8a907ce28406aa62ae51b7ca6646f3803f8041684224d1efbd5620a7ad66449d"
+    "sha256": "4f40c2b67ea0c319df8225844bd5435cd805ea0b9ac8bb2d64aef6c7a2964449"
   },
   {
     "id": "profit",
@@ -118,8 +125,9 @@
       46,
       55
     ],
+    "number": "08",
     "pageCount": 2,
-    "sha256": "7e1ed63ee8402132f388483d60f873e2c7b98ac104d98625319eb96e6ce07e1b"
+    "sha256": "6e9b9c4c4149a3b6a9be634754e769a9f92d8fb73d21c1239e8a3012b1d28b71"
   },
   {
     "id": "ky-foreman",
@@ -135,8 +143,9 @@
       96,
       99
     ],
+    "number": "09",
     "pageCount": 2,
-    "sha256": "13b7b1c0e50c0c32069342f3a7cae3cdfa24e74f8d36773c3eb3d1c0f4ff9655"
+    "sha256": "896c9af2e774361114156e13d514f5f468be8d84de20db6ef0e7bc2bb0871010"
   },
   {
     "id": "ky-personal",
@@ -149,8 +158,9 @@
       69,
       78
     ],
+    "number": "10",
     "pageCount": 2,
-    "sha256": "ba07953ba1196b8ecac274950c4783e1c699e238c8f85c829d26c48b64822425"
+    "sha256": "abddc0b7fbddcf6e75972331ae846a719da80a1383b7091de82b7a7f57c3387f"
   },
   {
     "id": "common-safety",
@@ -165,8 +175,9 @@
       85,
       86
     ],
+    "number": "11",
     "pageCount": 3,
-    "sha256": "07fa67b358cc35c8fdff4f9221e02dd5f62d6aa6b8705d6b6958f5c81df92798"
+    "sha256": "3d6f6cc34f34706de433307923e0b73bdcb8baa7a5272e3b0ba6fdcd5a17f213"
   },
   {
     "id": "site-induction",
@@ -178,8 +189,9 @@
       77,
       95
     ],
+    "number": "12",
     "pageCount": 3,
-    "sha256": "bb670ab319bc14757d7646a9fba38cdb24b69967ecf08b2a8434014be7074ac4"
+    "sha256": "ed7bc4a1d2ebfe561a0a708431a7c272d814f79b017e597c56f47763e970a63b"
   },
   {
     "id": "education-create",
@@ -196,8 +208,9 @@
       94,
       95
     ],
+    "number": "13",
     "pageCount": 3,
-    "sha256": "cdf4b08bff7945c5c2285873f3dadda1460b61da2c05f3daffd191a934f54707"
+    "sha256": "e5c4a72a6b436cca988110b2aaf2e80885be4fdc650dbaba1a81f738e4050f79"
   },
   {
     "id": "accident-first",
@@ -211,8 +224,9 @@
       83,
       108
     ],
+    "number": "14",
     "pageCount": 2,
-    "sha256": "a558b24b568ef66d33124fc9aab6c06270b7e9b99ede051982a4c4c366ded55b"
+    "sha256": "60fe4fef8714b5c98a641f7781fa9759c5928fcd34da88cb5c024000e2dadc4d"
   },
   {
     "id": "accident-report",
@@ -236,8 +250,9 @@
       100,
       108
     ],
+    "number": "15",
     "pageCount": 2,
-    "sha256": "becd2882c60e8326c67ac5f2e6de8252aded17fe1810d894e9dbb402d83d8474"
+    "sha256": "0eaf8607af77c32ae89728537fe93934f4ba23639deb14339b2591fa869f9523"
   },
   {
     "id": "fall-prevention",
@@ -251,8 +266,9 @@
       68,
       81
     ],
+    "number": "16",
     "pageCount": 2,
-    "sha256": "7e5cf229b3fbe58c7d86f1ef85b7064d5f9afe0ed6a805554743b9d910bd1f7d"
+    "sha256": "016194357b60097948a4cb81c75596ec5034f223fbb56b6a04d32011b552f801"
   },
   {
     "id": "heat-prevention",
@@ -262,8 +278,9 @@
     "old": [
       79
     ],
+    "number": "17",
     "pageCount": 2,
-    "sha256": "ee0d3f4873cb1fddc219abf9f1ca238d4bff5a07ee9fbdc5245d0f1db1345337"
+    "sha256": "e55fd5f16b6fd20e7660a657d50c65227040e5835242d3bb58821c0e336f087d"
   },
   {
     "id": "reky",
@@ -275,7 +292,8 @@
       80,
       99
     ],
+    "number": "18",
     "pageCount": 2,
-    "sha256": "fab8385ef20d0c4298c78c56347b42a5697cc375320806f6c8ffd69e3406afab"
+    "sha256": "6e4222c3589eb50ca9a8970a8ee2cb3eab0dff556dde7ac21e1f9bf5b12a4ec5"
   }
 ]

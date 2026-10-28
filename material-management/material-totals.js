@@ -4,7 +4,7 @@ const num=n=>Number(n).toLocaleString('ja-JP'),today=()=>new Date().toLocaleDate
 const labels={materialRegister:'資材登録',materialPurchase:'購入追加',materialAdjust:'総数訂正',materialUpdate:'資材情報の変更',materialCategoriesAdd:'区分の追加',purchase:'購入',item:'資材登録'};
 root.MaterialTotals={mount:async function(box,{view,client,onRefresh}){
  box.__materialDispose?.();
- const owner=client.owner(),generation=client.generation,token={},categoryListId='mt-categories-'+crypto.randomUUID();box.__materialTotals=token;
+ const owner=client.owner(),generation=client.generation,token={};box.__materialTotals=token;
  let history=[],pending=[],tab='items',query='',busy=false,sort='original',category='',group=true,large=false,relayout=()=>{},layoutFrame,observedViewport;
  const alive=()=>{try{return box.isConnected&&box.__materialTotals===token&&client.owner()===owner&&client.generation===generation}catch{return false}};
  const check=()=>{if(!alive())throw Error('画面またはログインが変わりました')};
@@ -61,12 +61,11 @@ root.MaterialTotals={mount:async function(box,{view,client,onRefresh}){
   if(!view.capabilities.manager||view.capabilities.canWrite===false)throw Error('管理者の更新権限が必要です');
   let body=dateField;if(kind==='register')body+='<p>元の表に記載された総数を登録する場合は、確認できる基準日を指定してください。</p><label>資材名<input name="name" required maxlength="120"></label><div class="mt-fields"><label>単位<input name="unit" value="本" required maxlength="20"></label><label>総保有数<input name="initial" type="number" min="0" max="100000000" step="1" required></label><label>参考単価（円・任意）<input name="referencePrice" type="number" min="0" max="100000000" step="1"></label></div>';
   if(kind==='update')body+='<label>資材名<input name="name" value="'+esc(item.name)+'" required maxlength="120"></label><div class="mt-fields"><label>単位<input name="unit" value="'+esc(item.unit)+'" required maxlength="20"></label><label>参考単価（円）<input name="referencePrice" type="number" min="0" max="100000000" step="1" value="'+(price(item)===null?'':price(item))+'"></label></div><p class="mt-muted">単価を空欄にすると未登録になります。参考評価額を計算する単価です。購入した請求書の金額とは別に管理します。</p>';
-  if(kind==='register'||kind==='update')body+='<div class="mt-fields"><label>区分（任意）<input name="category" list="'+categoryListId+'" value="'+esc(item?.category||'')+'" maxlength="100" placeholder="例：足場材、金具、機械"></label><label>表示順<input name="sortOrder" type="number" min="-1000000" max="1000000" step="1" value="'+Number(item?.sortOrder||0)+'" required></label></div><p class="mt-muted">表示順が小さい資材から並びます。同じ番号は登録順です。</p>';
+  if(kind==='register'||kind==='update')body+='<div class="mt-fields"><label>区分（任意）<select name="category"><option value="">未分類</option>'+categoryNames().map(c=>'<option value="'+esc(c)+'"'+(c===item?.category?' selected':'')+'>'+esc(c)+'</option>').join('')+'</select></label><label>表示順<input name="sortOrder" type="number" min="-1000000" max="1000000" step="1" value="'+Number(item?.sortOrder||0)+'" required></label></div><p class="mt-muted">表示順が小さい資材から並びます。同じ番号は登録順です。</p>';
   if(kind==='adjust')body+='<p><strong>'+esc(item.name)+'</strong> 現在 '+num(total(item))+' '+esc(item.unit)+'</p><label>正しい総保有数<input name="total" type="number" value="'+total(item)+'" min="0" max="100000000" step="1" required></label><label>訂正する理由<textarea name="reason" maxlength="1000" required placeholder="例：棚卸で数え直したため"></textarea></label><p data-preview></p>';
   if(kind==='purchase')body+='<div class="mt-fields"><label>購入先（任意）<input name="supplier" maxlength="200"></label><label>請求書・伝票番号（任意）<input name="invoiceNumber" maxlength="100"></label></div><div data-lines></div><button type="button" data-add>＋ 資材をもう1つ追加</button><p>購入数は会社全体の総保有数に加算されます。連携先の現場管理にも、この総数が反映されます。</p>';
   if(kind!=='adjust')body+='<label>メモ（任意）<textarea name="note" maxlength="1000"></textarea></label>';
   if(kind==='purchase')body+=fileField();
-  if(kind==='register'||kind==='update')body+='<datalist id="'+categoryListId+'">'+categoryNames().map(c=>'<option value="'+esc(c)+'"></option>').join('')+'</datalist>';
   const f=shell({register:'新しい資材を登録',purchase:'購入した資材を追加',adjust:'総保有数を訂正',update:'単価・名称・区分を編集'}[kind],body),err=f.querySelector('[data-error]');let savedHistoryId=null,saved=false;
   if(kind==='adjust'){const update=()=>f.querySelector('[data-preview]').textContent=num(total(item))+' → '+num(Number(f.elements.total.value))+' '+item.unit;f.elements.total.addEventListener('input',update);update()}
   if(kind==='purchase'){addLine(f,item);f.querySelector('[data-add]').addEventListener('click',()=>{if(!busy)addLine(f)})}

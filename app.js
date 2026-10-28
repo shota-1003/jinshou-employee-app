@@ -138,6 +138,10 @@ async function rpc(name, params, opts) {
     } else if (res.status === 404 && OPTIONAL_MISSING_RPCS.has(name)) {
       // 任意/本番未提供の機能RPC(ラッキー賞など、DB未適用の環境がある)の404は
       // graceful degrade(呼び出し側でカードを隠す)が正しい動作。Productionエラーとして報告しない。
+    } else if (opts.expectPermissionDenied && res.status === 400 && /権限が確認できませんでした/.test(message)) {
+      // 「権限がある種類だけ表示する」画面が、権限の無い種類のRPCを意図的に呼んで読み飛ばす場合の拒否は、
+      // 想定内の通常フロー。障害として報告しない(2026-10-28: 日報担当が「支払い・受け渡し待ち」を開くたびに
+      // 貸付管理の拒否が社長のDiscordへ「異常を検知」として届いていた)。
     } else {
       // セッション失効・認証拒否(想定内)以外は、可視化マップが検知できるよう実Productionエラーとして報告する。
       window.ClientErrorReporter.reportHttpError(`rpc/${name}`, res.status, message);
@@ -16318,9 +16322,9 @@ async function fetchFulfillmentPending(session) {
   const today = todayJST();
   const d10 = (v) => (v ? String(v).slice(0, 10) : '');
   const [exp, loan, sup] = await Promise.allSettled([
-    rpc('admin_list_expense_payment_pending', { p_admin_employee_code: code }),
-    rpc('admin_list_loan_requests', { p_admin_employee_code: code, p_status: null }),
-    rpc('admin_list_supply_pending_delivery', { p_admin_employee_code: code }),
+    rpc('admin_list_expense_payment_pending', { p_admin_employee_code: code }, { expectPermissionDenied: true }),
+    rpc('admin_list_loan_requests', { p_admin_employee_code: code, p_status: null }, { expectPermissionDenied: true }),
+    rpc('admin_list_supply_pending_delivery', { p_admin_employee_code: code }, { expectPermissionDenied: true }),
   ]);
   const items = [];
   if (exp.status === 'fulfilled') {

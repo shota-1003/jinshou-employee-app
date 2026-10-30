@@ -8615,9 +8615,10 @@ async function loadEmployeeDirectory() {
 }
 
 function resetEmployeeCreateForm() {
-  ['ec-code', 'ec-name', 'ec-furigana', 'ec-department', 'ec-hire-date', 'ec-phone', 'ec-address',
+  ['ec-code', 'ec-name', 'ec-furigana', 'ec-hire-date', 'ec-phone', 'ec-address',
     'ec-emergency-name', 'ec-emergency-relation', 'ec-emergency-phone'].forEach((id) => { document.getElementById(id).value = ''; });
   document.getElementById('ec-gender').value = '';
+  document.getElementById('ec-department').value = '';
   document.getElementById('ec-foreign-worker').checked = false;
   document.getElementById('ec-grant-nippo-admin').checked = false;
   hideError('ec-error');
@@ -8632,6 +8633,8 @@ async function doCreateEmployee() {
   if (!code) { showError('ec-error', '社員番号を入力してください。'); return; }
   if (!/^[0-9]{1,10}$/.test(code)) { showError('ec-error', '社員番号は数字で入力してください(例: 0044)。'); return; }
   if (!name) { showError('ec-error', '氏名を入力してください。'); return; }
+  // 役職区分は旅費の区分を決める。空だと旅費精算書が自動で作られないため、登録の時点で必須にする(2026-10-31 Shota指示)。
+  if (!document.getElementById('ec-department').value) { showError('ec-error', '役職区分を選んでください(旅費の単価がこの区分で決まります)。'); return; }
   const btn = document.getElementById('ec-submit');
   btn.disabled = true;
   try {
@@ -15371,6 +15374,7 @@ async function loadAttendanceFixNeededAdmin(opts) {
       // 「管理者の確認待ち」の日は、その場で中身を確認して承認・差し戻しできる(2026-10-03 Shota指摘「これ承認できんやん」)。
       const lines = items.map((r) => '<div class="hint-inline afn-line"><strong>' + exdEsc(md(r.work_date)) + '</strong> ' + exdEsc(r.reason_text) + (r.detail ? '(' + exdEsc(r.detail) + ')' : '')
         + ' <button type="button" class="secondary afn-open" style="margin-left:6px;padding:2px 10px;" data-emp="' + exdEsc(r.employee_code) + '" data-date="' + exdEsc(String(r.work_date).slice(0, 10)) + '" data-reason="' + exdEsc(r.reason) + '">' + (r.reason === 'submitted' ? '中身を確認して承認' : '中身を確認する') + '</button>'
+        + (r.reason === 'trip_unchecked' ? ' <button type="button" class="secondary trip-dismiss-btn" style="margin-left:6px;padding:2px 10px;" data-emp="' + exdEsc(r.employee_code) + '" data-date="' + exdEsc(String(r.work_date).slice(0, 10)) + '" title="県外の現場だが日帰りで、出張ではない日。押すとこの表示が消えます(給与・旅費は変わりません)">出張ではない(日帰り)</button>' : '')
         + '<div class="afn-panel" style="display:none;margin-top:6px;"></div></div>').join('');
       const periodHead = h.period_start !== lastPeriod ? '<div class="afn-period" style="font-weight:800;margin:14px 0 6px;">給与期間 ' + exdEsc(h.period_start) + '〜' + exdEsc(h.period_end) + '</div>' : '';
       lastPeriod = h.period_start;
@@ -15390,6 +15394,30 @@ async function loadAttendanceFixNeededAdmin(opts) {
     if (!silent) list.innerHTML = '<div class="empty-state">読み込みに失敗しました</div>';
   }
 }
+
+// 「県外の現場だが日帰りで出張ではない」の日を、チェック漏れの表示から外す(2026-10-31 Shota指摘「正しいことをしているのに表示が消えない」)。
+// 印は表示を消すだけで、給与・旅費は変わらない。本人は自分の日(dismiss_my_trip_unchecked)、日報担当・社長は全員の日(admin_dismiss_trip_unchecked)に付けられる。
+document.addEventListener('click', async (ev) => {
+  const b = ev.target && ev.target.closest ? ev.target.closest('.trip-dismiss-btn') : null;
+  if (!b || b.disabled) return;
+  const session = getSession();
+  if (!session) return;
+  b.disabled = true;
+  try {
+    if (b.dataset.self === '1') await rpc('dismiss_my_trip_unchecked', { p_employee_code: session.employeeCode, p_work_date: b.dataset.date });
+    else await rpc('admin_dismiss_trip_unchecked', { p_admin_employee_code: session.employeeCode, p_employee_code: b.dataset.emp, p_work_date: b.dataset.date });
+    if (b.closest('.afn-line')) afnRemoveLine(b);
+    else {
+      const li = b.closest('li');
+      const ul = li && li.parentElement;
+      if (li) li.remove();
+      if (ul && ul.children.length === 0) { const card = ul.closest('.card'); if (card) card.remove(); }
+    }
+  } catch (e) {
+    b.disabled = false;
+    alert((e && e.message) || '印を付けられませんでした。もう一度お試しください。');
+  }
+});
 
 // 一覧の各行から、その日の日報の中身を表示し、種類に応じて承認・差し戻し・修正をする
 // (承認はadmin_confirm_daily_reports、人工と勤務区分の修正はadmin_fix_daily_report_work_typeを使う)。
@@ -15723,11 +15751,12 @@ function attendanceFixBannerHtml(allItems) {
   const items = allItems.filter((x) => x.blocks_confirm !== false);
   let noticeHtml = '';
   if (notices.length > 0) {
-    const nlines = notices.map((x) => '<li><strong>' + exdEsc(md(x.work_date)) + '</strong> ' + exdEsc(x.reason_text) + (x.detail ? '<span class="hint-inline">(現場: ' + exdEsc(x.detail) + ')</span>' : '') + '</li>').join('');
+    const nlines = notices.map((x) => '<li><strong>' + exdEsc(md(x.work_date)) + '</strong> ' + exdEsc(x.reason_text) + (x.detail ? '<span class="hint-inline">(現場: ' + exdEsc(x.detail) + ')</span>' : '')
+      + (x.reason === 'trip_unchecked' ? ' <button type="button" class="secondary trip-dismiss-btn" data-self="1" data-date="' + exdEsc(String(x.work_date).slice(0, 10)) + '" style="margin-left:6px;padding:2px 10px;">出張ではない(日帰り)</button>' : '') + '</li>').join('');
     noticeHtml = '<div class="card" id="dr-ledger-trip-notice" style="margin-bottom:10px;border:2px solid var(--gold,#c9a227);">'
       + '<div style="font-weight:800;">ℹ 確認してください(' + new Set(notices.map((x) => x.work_date)).size + '日)</div>'
       + '<ul style="margin:6px 0 6px 18px;padding:0;">' + nlines + '</ul>'
-      + '<div class="hint">この日は出張手当に数えられません。現場が正しければそのままで構いません(確認は止まりません)。</div>'
+      + '<div class="hint">この日は出張手当に数えられません。現場が正しければそのままで構いません(確認は止まりません)。日帰りで出張ではない日は「出張ではない(日帰り)」を押すと、この表示が消えます(給与・旅費は変わりません)。</div>'
       + '</div>';
   }
   if (items.length === 0) return noticeHtml;

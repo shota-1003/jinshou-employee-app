@@ -4613,6 +4613,7 @@
                     ...(savedDate !== state.selected ? [loadDayData(savedDate, true)] : []),
                 ]);
                 render();
+                refreshMonthGrid(); renderWeekStrip();   // 別の日へ登録した分も、月グリッド・週ストリップに出す
                 return true;
             } catch (e) { fail(e); return false; }
         }
@@ -4791,6 +4792,7 @@
                             : 'コピーできる配置がありませんでした');
                         await Promise.all([loadMonth(), loadDay()]);
                         render();
+                        refreshMonthGrid(); renderWeekStrip();
                     } catch (e) { fail(e); }
                 }
                 copySelected.addEventListener('click', () => {
@@ -4861,6 +4863,8 @@
                 else toast(`${labelDate(toDate)} には既に同じ現場があります`);
                 await loadMonth();
                 render();
+                // コピー先(別の日)の月グリッドと週ストリップも描き直す(2026-10-30: 翌日へコピーしても、コピー先の日に出なかった)
+                refreshMonthGrid(); renderWeekStrip();
             } catch (e) { fail(e); }
         }
 

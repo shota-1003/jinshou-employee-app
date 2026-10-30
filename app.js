@@ -15067,7 +15067,7 @@ async function doSubmitDailyReport(isDraft) {
     // 現場外の用件(用件・相手先・県外)を、旅費用の個人カレンダーの予定として保存する。日報の提出は済んでいるため、失敗しても提出は止めない(メッセージで知らせるだけ)。
     let offsiteWarning = '';
     try {
-      const own = dailyReportTarget.type === 'employee' && (!dailyReportTarget.employeeCode || dailyReportTarget.employeeCode === session.employeeCode);
+      const own = dailyReportTarget.type === 'self' || (dailyReportTarget.type === 'employee' && dailyReportTarget.employeeCode === session.employeeCode); // 自分の日報だけ(代理入力・外注は対象外)
       const offEl = own ? Array.from(document.querySelectorAll('.daily-report-entry .dr-offsite-wrap')).find((w) => w.style.display === 'block') : null;
       if (offEl) {
         const purpose = offEl.querySelector('.dr-offsite-purpose').value;
@@ -15975,6 +15975,10 @@ function openPersonalEventForm(eventId, dateStr) {
         <label for="pev-out">県外(この日を旅費の対象にする。現場の登録は要りません)</label>
       </div>
       <div id="pev-out-pref-wrap" style="${existing && existing.is_out_of_prefecture ? '' : 'display:none;'}">
+        <div class="checkbox-row">
+          <input type="checkbox" id="pev-maenori" ${existing && /^前のり/.test(existing.title || '') ? 'checked' : ''}>
+          <label for="pev-maenori">前のり(予定名の先頭に「前のり」を付けます)</label>
+        </div>
         <label>県外の都道府県</label>
         <select id="pev-out-pref">${JAPAN_PREFECTURES.filter((pf) => pf !== '徳島県').map((pf) => `<option value="${pf}" ${existing && existing.out_prefecture === pf ? 'selected' : ''}>${pf}</option>`).join('')}</select>
       </div>
@@ -15999,8 +16003,15 @@ async function savePersonalEvent(originalDateStr) {
   const session = getSession();
   const errEl = document.getElementById('pev-error');
   errEl.style.display = 'none';
-  const title = document.getElementById('pev-title').value.trim();
+  let title = document.getElementById('pev-title').value.trim();
   if (!title) { errEl.textContent = '予定名を入力してください。'; errEl.style.display = 'block'; return; }
+  // 前のり(予定名の先頭に付ける。旅費の場所にもそのまま出る)。外したときは先頭の「前のり」を取る。
+  const maenoriEl = document.getElementById('pev-maenori');
+  if (maenoriEl && document.getElementById('pev-out').checked) {
+    const bare = title.replace(/^前のり[\s　]*/, '');
+    title = maenoriEl.checked ? `前のり ${bare}`.trim() : bare;
+    if (!title) title = '前のり';
+  }
   const btn = document.getElementById('pev-save');
   btn.disabled = true;
   try {

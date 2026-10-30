@@ -2,3 +2,5 @@
 .estimate-paper td{white-space:pre;border-bottom-width:0}.estimate-paper tr{background:transparent!important}.estimate-paper table{margin:0}.estimate-template-scroll{min-height:400px}
 .estimate-paper .estimate-edit-cell{color:#142b45!important}
 .estimate-paper{box-sizing:border-box;margin-bottom:28px!important;padding-bottom:48px;overflow:hidden}.estimate-paper-footer{position:absolute;bottom:14px;right:20px;font:14px sans-serif;color:#67758a}.estimate-paper:last-child{margin-bottom:0!important}
+
+#recipientFields{display:flex;flex-wrap:wrap;gap:12px;flex:1}#recipientFields[hidden],#templateInput[hidden]{display:none!important}#recipientFields label{flex:1;min-width:180px}#recipientFields input{display:block;width:100%;box-sizing:border-box}#recipientHonorific{width:100%;margin:0}

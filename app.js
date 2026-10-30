@@ -10297,11 +10297,27 @@ function wireAttendanceDetailAdminEditing(root, session, ctx) {
       panel.scrollIntoView({ block: 'nearest' });
       try {
         const rows = await rpc('admin_list_reports_for_day', { p_admin_employee_code: session.employeeCode, p_employee_code: ctx.employeeCode, p_work_date: date });
-        if (!rows || rows.length === 0) { panel.innerHTML = '<div class="hint">この日の日報はありません(画面を開き直してください)。</div>'; return; }
         const n = attendanceBookNum;
-        const statusLabel = { submitted: '提出済み(承認待ち)', confirmed: '確定済み', rejected: '差戻し中' };
+        const statusLabel = { submitted: '提出済み(承認待ち)', confirmed: '確定済み', rejected: '差戻し中', cancelled: '取り消し済み', removed_by_self: '本人が削除' };
+        const isRemoved = (r) => r.report_status === 'cancelled' || r.report_status === 'removed_by_self';
+        // 日報が1件も無い日・取り消し/削除だけの日も、管理者が正しい日報をここから入力できる
+        const proxyHtml = '<div style="margin:8px 0;"><button type="button" class="ad-proxy-enter">この日の日報を、管理者が正しく入力する</button>'
+          + '<div class="hint-inline">本人が間違えて出した・消した日でも、ここから正しい内容を入れ直せます(入力した記録は残ります)。</div></div>';
+        if (!rows || rows.length === 0) {
+          panel.innerHTML = '<div class="hint-inline">この日の日報はありません。</div>' + proxyHtml;
+          panel.querySelector('.ad-proxy-enter').addEventListener('click', () => openProxyDailyReportForEmployee(ctx.employeeCode, ctx.employeeName, date));
+          return;
+        }
         panel.innerHTML = '<div class="hint-inline">' + exdEsc(ctx.employeeName) + 'さんの ' + exdEsc(date) + ' の日報です。直す所だけ変えて、理由を書いて「この内容に直す」を押してください(変えない所は触らなくて大丈夫です)。直した記録は残ります。</div>'
-          + rows.map((r) => '<div class="ad-rpt" data-id="' + r.id + '" style="padding:8px;border:1px solid var(--border,#555);border-radius:8px;margin:8px 0;">'
+          + proxyHtml
+          + rows.map((r) => isRemoved(r)
+            ? '<div class="ad-rpt" data-id="' + r.id + '" style="padding:8px;border:1px dashed var(--border,#555);border-radius:8px;margin:8px 0;opacity:.9;">'
+              + '<div><strong>' + exdEsc(r.site_name || '-') + '</strong> <span class="hint-inline">[' + exdEsc(statusLabel[r.report_status] || r.report_status) + ']</span> <span class="hint-inline">' + exdEsc(r.work_type) + '・' + n(r.headcount) + '人工</span></div>'
+              + '<div class="hint-inline">この日報は今、出勤簿・給与に数えていません' + (r.rejected_reason ? '(' + exdEsc(r.rejected_reason) + ')' : '') + '。正しい内容なら、元に戻せます。</div>'
+              + '<input type="text" class="ad-reason" placeholder="戻す理由(必須。例: 実際に出勤していたため)" style="width:100%;margin-top:6px;">'
+              + '<div style="margin-top:6px;"><button type="button" class="ad-restore">この日報を元に戻す</button></div>'
+              + '<div class="ad-msg error" style="display:none;white-space:pre-wrap;"></div></div>'
+            : '<div class="ad-rpt" data-id="' + r.id + '" style="padding:8px;border:1px solid var(--border,#555);border-radius:8px;margin:8px 0;">'
             + '<div><strong>' + exdEsc(r.site_name || '-') + '</strong> <span class="hint-inline">[' + exdEsc(statusLabel[r.report_status] || r.report_status) + ']</span> <span class="hint-inline">' + exdEsc(r.work_type) + '・' + n(r.headcount) + '人工</span></div>'
             + '<div class="hint-inline">現場を変えるときだけ、現場名を入れて探して選んでください。</div>'
             + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px;"><input type="text" class="ad-site-q" placeholder="現場名(例: ファスプレ)" style="flex:1;min-width:150px;"><button type="button" class="secondary ad-site-find">探す</button></div>'
@@ -10314,12 +10330,26 @@ function wireAttendanceDetailAdminEditing(root, session, ctx) {
             + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;"><button type="button" class="ad-save">この内容に直す</button><button type="button" class="secondary ad-cancel-rpt">この日報を取り消す</button></div>'
             + '<div class="ad-msg error" style="display:none;white-space:pre-wrap;"></div>'
             + '</div>').join('');
+        panel.querySelector('.ad-proxy-enter').addEventListener('click', () => openProxyDailyReportForEmployee(ctx.employeeCode, ctx.employeeName, date));
         panel.querySelectorAll('.ad-rpt').forEach((box, idx) => {
           const r = rows[idx];
           const id = Number(box.dataset.id);
           const msgEl = box.querySelector('.ad-msg');
           const showMsg = (t) => { msgEl.textContent = t; msgEl.style.display = t ? 'block' : 'none'; msgEl.classList.toggle('show', !!t); };
           const lock = (v) => box.querySelectorAll('button').forEach((x) => { x.disabled = v; });
+          if (isRemoved(r)) {
+            box.querySelector('.ad-restore').addEventListener('click', async () => {
+              const reason = box.querySelector('.ad-reason').value.trim();
+              if (!reason) { showMsg('戻す理由を入力してください。'); return; }
+              if (!window.confirm(ctx.employeeName + 'さんの ' + date + ' の「' + (r.site_name || '-') + '」の日報を元に戻します(出勤簿・給与に数えます)。\n理由: ' + reason + '\nよろしいですか?')) return;
+              lock(true); showMsg('');
+              try {
+                await rpc('admin_restore_daily_report', { p_admin_employee_code: session.employeeCode, p_report_id: id, p_reason: reason });
+                keepReload();
+              } catch (e) { showMsg(e.message || '戻せませんでした。'); lock(false); }
+            });
+            return;
+          }
           const sel = box.querySelector('.ad-site-sel');
           box.querySelector('.ad-site-find').addEventListener('click', async () => {
             const q = box.querySelector('.ad-site-q').value.trim();
@@ -15184,7 +15214,16 @@ async function attachOffsiteNotes(rows, kind, code, start, end) {
       ? await rpc('admin_get_attendance_book_offsite', { p_admin_employee_code: session.employeeCode, p_employee_code: code, p_period_start: start, p_period_end: end })
       : await rpc('get_my_attendance_book_offsite', { p_employee_code: session.employeeCode, p_period_start: start, p_period_end: end });
     const m = new Map((notes || []).map((n) => [String(n.work_date).slice(0, 10), n.note]));
-    (rows || []).forEach((r) => { const n = m.get(String(r.work_date).slice(0, 10)); if (n) r.offsite_note = n; });
+    (rows || []).forEach((r) => {
+      const n = m.get(String(r.work_date).slice(0, 10));
+      if (!n) return;
+      r.offsite_note = n;
+      // 現場外の県外の日は現場に都道府県が無いため、予定に登録した都道府県(備考の「(大阪府)」)を『出張』列にも出す
+      if (r.is_trip_by_site && !r.trip_prefectures) {
+        const pref = [...n.matchAll(/\((北海道|[^()/\s]{2,3}[都道府県])\)/g)].map((x) => x[1]);
+        if (pref.length) r.trip_prefectures = [...new Set(pref)].join('・');
+      }
+    });
   } catch (e) { /* 備考が取れなくても出勤簿は出す */ }
   return rows;
 }
@@ -17638,6 +17677,23 @@ async function openSubcontractorSupportForCompany(companyId, companyName, dateSt
   await new Promise((r) => setTimeout(r, 900));
   const co = document.querySelector('#dr-sc-list .dr-sc-entry .dr-sc-company');
   if (co) { co.value = String(companyId); co.dispatchEvent(new Event('change', { bubbles: true })); }
+}
+
+// 出勤簿の「直す」から、管理者が本人の代わりに正しい日報を入力する(2026-10-31 LEVIさんの10/2:
+// 本人が誤って出した・消した日を、管理者が正しく入れ直せるようにする)。既存の代理入力(対象=社員)をそのまま使う。
+async function openProxyDailyReportForEmployee(employeeCode, employeeName, dateStr) {
+  dailyReportPrefillDate = dateStr;
+  showScreen('daily-report');
+  await new Promise((r) => setTimeout(r, 450));
+  const typeSelect = document.getElementById('daily-report-target-type');
+  typeSelect.value = 'employee';
+  typeSelect.dispatchEvent(new Event('change'));
+  const dateInput = document.getElementById('daily-report-date');
+  if (dateInput) dateInput.value = dateStr;
+  dailyReportTarget = { type: 'employee', employeeCode, employeeName, subcontractorWorkerId: null, workerName: null };
+  const label = document.getElementById('daily-report-target-employee-label');
+  if (label) { label.style.display = 'block'; label.textContent = `選択中: ${employeeName}(${employeeCode})`; }
+  loadDailyReportForDate(dateStr);
 }
 
 let drmRows = [];

@@ -869,6 +869,29 @@
         <label>出張(通常の通勤圏外での勤務)</label>
       </div>
       <div class="hint-inline dr-trip-hint" style="display:none;"></div>
+      <div class="dr-offsite-wrap" style="display:none;">
+        <div class="section-title" style="margin-top:8px;">現場外の用件(旅費に反映されます)</div>
+        <label>用件</label>
+        <select class="dr-offsite-purpose">
+          <option value="">選択しない</option>
+          <option value="打合せ">打合せ</option>
+          <option value="接待">接待</option>
+          <option value="前のり">前のり</option>
+          <option value="出張">出張</option>
+          <option value="その他">その他</option>
+        </select>
+        <label>相手先(任意)</label>
+        <input type="text" class="dr-offsite-counterpart" placeholder="例: おおたに">
+        <div class="checkbox-row">
+          <input type="checkbox" class="dr-offsite-out">
+          <label>県外(この日を旅費の対象にする)</label>
+        </div>
+        <div class="dr-offsite-pref-wrap" style="display:none;">
+          <label>県外の都道府県</label>
+          <select class="dr-offsite-pref"></select>
+        </div>
+        <div class="hint-inline">入れた内容は、個人カレンダーの予定として残ります。直す・消すときは、カレンダーで直してください。</div>
+      </div>
       <!-- 出張は日次フラグ(あり/なし)のみ。宿泊日数は日報では入力しない(月次側で必要なら集計)。 -->
       <div class="dr-other-duty-group" style="display:none;">
         <div class="section-title" style="margin-top:0;">現場作業・営業・運搬(職人以外の方)</div>

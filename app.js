@@ -14414,9 +14414,16 @@ function addDailyReportEntry(prefill, canAppend, siteQuery) {
   // 出張チェックは県外の現場でだけ付けられる(2026-10-03 Shota指示)。県内の現場は出張にならないため
   // チェックを外して選べなくする。新しい現場・未選択・判定が取れない時は従来どおり選べる状態にする。
   const tripHintEl = clone.querySelector('.dr-trip-hint');
+  // 現場外の用件(用件・相手先・県外)。現場に「現場外」を選んだときだけ出す。入れた内容は、日報の提出のあと個人カレンダーの予定として保存する(旅費に反映)。
+  const offsiteWrapEl = clone.querySelector('.dr-offsite-wrap');
+  if (offsiteWrapEl) {
+    const prefSel = offsiteWrapEl.querySelector('.dr-offsite-pref');
+    prefSel.innerHTML = JAPAN_PREFECTURES.filter((pf) => pf !== '徳島県').map((pf) => `<option value="${pf}">${pf}</option>`).join('');
+    offsiteWrapEl.querySelector('.dr-offsite-out').addEventListener('change', (ev) => { offsiteWrapEl.querySelector('.dr-offsite-pref-wrap').style.display = ev.target.checked ? 'block' : 'none'; });
+  }
   const applyTripAvailability = async () => {
     const setHint = (text) => { tripHintEl.textContent = text; tripHintEl.style.display = text ? 'block' : 'none'; };
-    if (!siteSelect.value || siteSelect.value === '__new__') { isBusinessTripEl0.disabled = false; setHint(''); return null; }
+    if (!siteSelect.value || siteSelect.value === '__new__') { isBusinessTripEl0.disabled = false; setHint(''); if (offsiteWrapEl) offsiteWrapEl.style.display = 'none'; return null; }
     try {
       const session = getSession();
       const rows = await rpc('get_site_trip_info', { p_employee_code: session.employeeCode, p_site_id: Number(siteSelect.value) });
@@ -14424,6 +14431,7 @@ function addDailyReportEntry(prefill, canAppend, siteQuery) {
       if (!info) { isBusinessTripEl0.disabled = false; setHint(''); return null; }
       if (info.is_out_of_prefecture) { isBusinessTripEl0.disabled = false; setHint(`県外の現場${info.prefecture ? '(' + info.prefecture + ')' : ''}です。出張の場合はチェックしてください。`); return true; }
       // 「現場外」は県内か県外か分からない(県外へ行った日もある)ため、出張チェックは選べるままにする(2026-10-03 Shota指摘)。
+      if (offsiteWrapEl) offsiteWrapEl.style.display = info.is_unknown_location ? 'block' : 'none';
       if (info.is_unknown_location) { isBusinessTripEl0.disabled = false; setHint('現場外です。県外へ出張した場合は出張にチェックしてください(行き先は管理者が確認します)。'); return null; }
       isBusinessTripEl0.checked = false; isBusinessTripEl0.disabled = true; setHint('県内の現場は出張になりません。');
       return false;
@@ -15056,6 +15064,22 @@ async function doSubmitDailyReport(isDraft) {
 
     if (isDraft) { showDone(`日報を下書き保存しました(${dateStr})。提出は完了していません。`, 'menu-apply'); return; }
 
+    // 現場外の用件(用件・相手先・県外)を、旅費用の個人カレンダーの予定として保存する。日報の提出は済んでいるため、失敗しても提出は止めない(メッセージで知らせるだけ)。
+    let offsiteWarning = '';
+    try {
+      const own = dailyReportTarget.type === 'employee' && (!dailyReportTarget.employeeCode || dailyReportTarget.employeeCode === session.employeeCode);
+      const offEl = own ? Array.from(document.querySelectorAll('.daily-report-entry .dr-offsite-wrap')).find((w) => w.style.display === 'block') : null;
+      if (offEl) {
+        const purpose = offEl.querySelector('.dr-offsite-purpose').value;
+        const counterpart = offEl.querySelector('.dr-offsite-counterpart').value.trim();
+        const isOut = offEl.querySelector('.dr-offsite-out').checked;
+        if (purpose || counterpart || isOut) {
+          await rpc('set_my_offsite_trip', { p_employee_code: session.employeeCode, p_date: dateStr, p_purpose: purpose || null, p_counterpart: counterpart || null,
+            p_is_out: isOut, p_prefecture: isOut ? offEl.querySelector('.dr-offsite-pref').value : null });
+        }
+      }
+    } catch (eOff) { offsiteWarning = ' ※現場外の用件(旅費)の保存に失敗しました。カレンダーから予定として入れてください。'; }
+
     if (editRequiresApproval) {
       showDone(`この日はすでに確認・反映済みのため、修正内容を管理者確認待ちとして登録しました(${dateStr})。管理者が承認すると反映されます。` + qualWarning, 'menu-apply');
       return;
@@ -15072,7 +15096,7 @@ async function doSubmitDailyReport(isDraft) {
 
     const msg = (r && r.is_special
       ? `日報を受け付けました(${dateStr}、${r.entry_count}現場)。3現場以上のため特殊日報として管理者が確認します。`
-      : `日報を受け付けました(${dateStr}、合計${r ? Number(r.total_headcount).toFixed(1) : ''}人工)。`) + qualWarning + consistencyWarning;
+      : `日報を受け付けました(${dateStr}、合計${r ? Number(r.total_headcount).toFixed(1) : ''}人工)。`) + qualWarning + consistencyWarning + offsiteWarning;
     showDone(msg, 'menu-apply');
   } catch (e) {
     showError('daily-report-error', friendlyDailyReportError(e));

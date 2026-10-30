@@ -10234,6 +10234,7 @@ async function openAttendanceDetail(groupId, groupLabel) {
         let bookHtml = '';
         try {
           const bookRows = await rpc('admin_get_employee_attendance_book', { p_admin_employee_code: session.employeeCode, p_employee_code: groupId, p_period_start: start, p_period_end: end });
+          await attachOffsiteNotes(bookRows, 'admin', groupId, start, end);
           bookHtml = `<div style="margin-bottom:16px;"><div class="form-title" style="font-size:15px;">出勤簿プレビュー(スプレッドシートと同じ形式)</div>${attendanceBookHtml(bookRows, null, { title: `${ym.year}年${ym.month}月度`, name: groupLabel, periodLabel: `${start}〜${end}` })}</div>`;
         } catch (e) { bookHtml = ''; }
         listEl.innerHTML = bookHtml + ledgerHtml + `<div class="attendance-summary-row">
@@ -15174,6 +15175,20 @@ function attendanceBookNum(n) {
   return Number.isInteger(x) ? String(x) : String(Math.round(x * 100) / 100);
 }
 
+// 出勤簿の備考に、現場外の用件(県外の予定・日報の現場外の用件)を出す。出勤簿の本体の数え方には関わらない(備考の文だけ)。
+// 取れなくても出勤簿は出す。kind='self'(自分)/'admin'(管理者が他の社員を見る)。
+async function attachOffsiteNotes(rows, kind, code, start, end) {
+  try {
+    const session = getSession();
+    const notes = kind === 'admin'
+      ? await rpc('admin_get_attendance_book_offsite', { p_admin_employee_code: session.employeeCode, p_employee_code: code, p_period_start: start, p_period_end: end })
+      : await rpc('get_my_attendance_book_offsite', { p_employee_code: session.employeeCode, p_period_start: start, p_period_end: end });
+    const m = new Map((notes || []).map((n) => [String(n.work_date).slice(0, 10), n.note]));
+    (rows || []).forEach((r) => { const n = m.get(String(r.work_date).slice(0, 10)); if (n) r.offsite_note = n; });
+  } catch (e) { /* 備考が取れなくても出勤簿は出す */ }
+  return rows;
+}
+
 function attendanceBookHtml(rows, summary, opts) {
   const o = opts || {};
   const esc = (v) => exdEsc(String(v == null ? '' : v));
@@ -15209,6 +15224,7 @@ function attendanceBookHtml(rows, summary, opts) {
     if (r.has_conflict) p.push('人工と勤務区分が食い違っています(管理者の確認が必要・集計に未算入)');
     if (r.has_pending) p.push('管理者の確認待ち(確定するまで集計に未算入)');
     if (isWorked(r) && r.is_unreflected) p.push('シート未反映');
+    if (r.offsite_note) p.push(r.offsite_note);
     return p;
   };
   const pendingLabel = (r) => (r.has_conflict && r.has_pending ? '確認待ち・食い違い' : (r.has_conflict ? '人工と区分が食い違い' : '確認待ち'));
@@ -15276,6 +15292,7 @@ async function loadPeriodConfirmChangesAdmin() {
         btn.disabled = true; box.style.display = 'block'; card.style.gridColumn = '1 / -1'; box.innerHTML = '<div class="hint">読み込み中...</div>';
         try {
           const book = await rpc('admin_get_employee_attendance_book', { p_admin_employee_code: session.employeeCode, p_employee_code: r.employee_code, p_period_start: r.period_start, p_period_end: r.period_end });
+          await attachOffsiteNotes(book, 'admin', r.employee_code, r.period_start, r.period_end);
           const endMonth = Number(String(r.period_end).slice(5, 7)); const endYear = Number(String(r.period_end).slice(0, 4));
           box.innerHTML = attendanceBookHtml(book, null, { title: `${endYear}年${endMonth}月度`, name: r.employee_name, periodLabel: `${r.period_start}〜${r.period_end}` });
           box.dataset.loaded = '1'; btn.textContent = '出勤簿を閉じる';
@@ -15551,6 +15568,7 @@ async function loadAllAttendanceBooks(statusEl) {
     statusEl.textContent = `読み込み中… ${Math.min(i + 4, emps.length)}/${emps.length}人`;
     const part = await Promise.all(emps.slice(i, i + 4).map(async (e) => {
       const rows = await rpc('admin_get_employee_attendance_book', { p_admin_employee_code: session.employeeCode, p_employee_code: e.employee_code, p_period_start: per.start, p_period_end: per.end });
+      await attachOffsiteNotes(rows, 'admin', e.employee_code, per.start, per.end);
       return { emp: e, rows: rows || [] };
     }));
     out.push(...part);
@@ -15588,13 +15606,13 @@ async function downloadAllAttendanceBooksCsv() {
       return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const mark = (b) => (b ? '〇' : '');
-    const header = ['社員番号', '氏名', '期間', '日付', '曜日', '現場', '人工', '残業', '通勤早出', '通勤残業', '100㎞', '出張先', '出張日数', '深夜', '日曜', '有給'];
+    const header = ['社員番号', '氏名', '期間', '日付', '曜日', '現場', '人工', '残業', '通勤早出', '通勤残業', '100㎞', '出張先', '出張日数', '深夜', '日曜', '有給', '備考(現場外の用件)'];
     const lines = [header.map(esc).join(',')];
     for (const b of books) {
       for (const r of b.rows) {
         lines.push([b.emp.employee_code, b.emp.employee_name, `${per.start}〜${per.end}`, r.work_date, r.weekday_jp, r.site_names || '', r.headcount,
           r.overtime_hours, r.early_commute_hours, r.commute_overtime_hours, mark(r.is_over_100km), r.is_trip_by_site ? (r.trip_prefectures || '') : '',
-          mark(r.is_trip_by_site), mark(r.is_night), mark(r.is_sunday_work), mark(r.is_paid_leave)].map(esc).join(','));
+          mark(r.is_trip_by_site), mark(r.is_night), mark(r.is_sunday_work), mark(r.is_paid_leave), r.offsite_note || ''].map(esc).join(','));
       }
     }
     const blob = new Blob([`﻿${lines.join('\r\n')}\r\n`], { type: 'text/csv;charset=utf-8;' });
@@ -15625,6 +15643,7 @@ async function loadDailyReportLedger() {
       rpc('get_my_attendance_book', { p_employee_code: session.employeeCode, p_period_start: start, p_period_end: end }),
       rpc('get_my_daily_report_month_summary', { p_employee_code: session.employeeCode, p_year: dailyReportPeriodYear, p_month: dailyReportPeriodMonth, p_period_type: dailyReportSummaryPeriodType }).catch(() => null),
     ]);
+    await attachOffsiteNotes(rows, 'self', null, start, end);
     const confirmHtml = await renderDailyReportLedgerConfirmBlock(session, start, end);
     if (!rows || rows.length === 0) { el.innerHTML = confirmHtml + '<div class="empty-state">この期間の日報はありません</div>'; return; }
     el.innerHTML = confirmHtml + attendanceBookHtml(rows, sumRows && sumRows[0], {

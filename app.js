@@ -14452,7 +14452,7 @@ function addDailyReportEntry(prefill, canAppend, siteQuery) {
   const offsiteWrapEl = clone.querySelector('.dr-offsite-wrap');
   if (offsiteWrapEl) {
     const prefSel = offsiteWrapEl.querySelector('.dr-offsite-pref');
-    prefSel.innerHTML = JAPAN_PREFECTURES.filter((pf) => pf !== '徳島県').map((pf) => `<option value="${pf}">${pf}</option>`).join('');
+    prefSel.innerHTML = '<option value="">県を選んでください</option>' + JAPAN_PREFECTURES.filter((pf) => pf !== '徳島県').map((pf) => `<option value="${pf}">${pf}</option>`).join('');
     offsiteWrapEl.querySelector('.dr-offsite-out').addEventListener('change', (ev) => { offsiteWrapEl.querySelector('.dr-offsite-pref-wrap').style.display = ev.target.checked ? 'block' : 'none'; });
   }
   const applyTripAvailability = async () => {
@@ -14481,7 +14481,14 @@ function addDailyReportEntry(prefill, canAppend, siteQuery) {
       if (isBusinessTripEl0.dataset.userSet !== '1') isBusinessTripEl0.checked = !!def;
     } catch (e) { /* 既定値が取れなくても入力自体は続けられる */ }
   });
-  isBusinessTripEl0.addEventListener('change', () => { isBusinessTripEl0.dataset.userSet = '1'; });
+  isBusinessTripEl0.addEventListener('change', () => {
+    isBusinessTripEl0.dataset.userSet = '1';
+    // 現場外で出張にチェックしたら、行き先の県を入れる欄を開く(県が入らないと旅費が付かないため)。
+    if (isBusinessTripEl0.checked && offsiteWrapEl && offsiteWrapEl.style.display === 'block') {
+      const outEl = offsiteWrapEl.querySelector('.dr-offsite-out');
+      if (!outEl.checked) { outEl.checked = true; outEl.dispatchEvent(new Event('change')); }
+    }
+  });
   newSiteToggleBtn.addEventListener('click', () => {
     siteSelect.value = '__new__';
     newSiteWrap.style.display = 'block';
@@ -15005,6 +15012,14 @@ async function doSubmitDailyReport(isDraft) {
     const commuteOvertimeHoursVal = el.querySelector('.dr-commute-overtime-hours').value;
     if (earlyCommuteChecked && !earlyCommuteHoursVal) { showError('daily-report-error', '通勤早出の時間を入力してください。'); return; }
     if (commuteOvertimeChecked && !commuteOvertimeHoursVal) { showError('daily-report-error', '通勤残業の時間を入力してください。'); return; }
+    // 現場外の日は、県外に行った県を必ず入れる(出張にチェックだけして県が空だと、旅費が付かなかったため)。自分の日報だけが対象。
+    const offW = el.querySelector('.dr-offsite-wrap');
+    const ownReport = dailyReportTarget.type === 'self' || (dailyReportTarget.type === 'employee' && dailyReportTarget.employeeCode === session.employeeCode);
+    if (!isDraft && ownReport && offW && offW.style.display === 'block') {
+      const offOut = offW.querySelector('.dr-offsite-out').checked;
+      if (el.querySelector('.dr-is-business-trip').checked && !offOut) { showError('daily-report-error', '現場外で出張にチェックした場合は、「県外」にチェックして行き先の県を選んでください。'); return; }
+      if (offOut && !offW.querySelector('.dr-offsite-pref').value) { showError('daily-report-error', '県外に行った場合は、行き先の県を選んでください。'); return; }
+    }
     const hcEl = el.querySelector('.dr-headcount');
     entries.push({
       site_id: siteId, new_site_name: newSiteName, work_type: el.querySelector('.dr-work-type').value,

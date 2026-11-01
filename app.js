@@ -15012,10 +15012,10 @@ async function doSubmitDailyReport(isDraft) {
     const commuteOvertimeHoursVal = el.querySelector('.dr-commute-overtime-hours').value;
     if (earlyCommuteChecked && !earlyCommuteHoursVal) { showError('daily-report-error', '通勤早出の時間を入力してください。'); return; }
     if (commuteOvertimeChecked && !commuteOvertimeHoursVal) { showError('daily-report-error', '通勤残業の時間を入力してください。'); return; }
-    // 現場外の日は、県外に行った県を必ず入れる(出張にチェックだけして県が空だと、旅費が付かなかったため)。自分の日報だけが対象。
+    // 現場外の日は、県外に行った県を必ず入れる(出張にチェックだけして県が空だと、旅費が付かなかったため)。社員の日報(本人・管理者の代理入力)が対象。外注は対象外。
     const offW = el.querySelector('.dr-offsite-wrap');
-    const ownReport = dailyReportTarget.type === 'self' || (dailyReportTarget.type === 'employee' && dailyReportTarget.employeeCode === session.employeeCode);
-    if (!isDraft && ownReport && offW && offW.style.display === 'block') {
+    const employeeReport = dailyReportTarget.type !== 'subcontractor';
+    if (!isDraft && employeeReport && offW && offW.style.display === 'block') {
       const offOut = offW.querySelector('.dr-offsite-out').checked;
       if (el.querySelector('.dr-is-business-trip').checked && !offOut) { showError('daily-report-error', '現場外で出張にチェックした場合は、「県外」にチェックして行き先の県を選んでください。'); return; }
       if (offOut && !offW.querySelector('.dr-offsite-pref').value) { showError('daily-report-error', '県外に行った場合は、行き先の県を選んでください。'); return; }
@@ -15116,15 +15116,22 @@ async function doSubmitDailyReport(isDraft) {
     // 現場外の用件(用件・相手先・県外)を、旅費用の個人カレンダーの予定として保存する。日報の提出は済んでいるため、失敗しても提出は止めない(メッセージで知らせるだけ)。
     let offsiteWarning = '';
     try {
-      const own = dailyReportTarget.type === 'self' || (dailyReportTarget.type === 'employee' && dailyReportTarget.employeeCode === session.employeeCode); // 自分の日報だけ(代理入力・外注は対象外)
-      const offEl = own ? Array.from(document.querySelectorAll('.daily-report-entry .dr-offsite-wrap')).find((w) => w.style.display === 'block') : null;
+      const own = dailyReportTarget.type === 'self' || (dailyReportTarget.type === 'employee' && dailyReportTarget.employeeCode === session.employeeCode);
+      const proxyEmployee = dailyReportTarget.type === 'employee' && !own; // 管理者が社員の分を代理入力(外注は対象外)
+      const offEl = (own || proxyEmployee) ? Array.from(document.querySelectorAll('.daily-report-entry .dr-offsite-wrap')).find((w) => w.style.display === 'block') : null;
       if (offEl) {
         const purpose = offEl.querySelector('.dr-offsite-purpose').value;
         const counterpart = offEl.querySelector('.dr-offsite-counterpart').value.trim();
         const isOut = offEl.querySelector('.dr-offsite-out').checked;
         if (purpose || counterpart || isOut) {
-          await rpc('set_my_offsite_trip', { p_employee_code: session.employeeCode, p_date: dateStr, p_purpose: purpose || null, p_counterpart: counterpart || null,
-            p_is_out: isOut, p_prefecture: isOut ? offEl.querySelector('.dr-offsite-pref').value : null });
+          const offPref = isOut ? offEl.querySelector('.dr-offsite-pref').value : null;
+          if (proxyEmployee) {
+            await rpc('admin_set_offsite_trip', { p_admin_employee_code: session.employeeCode, p_target_employee_code: dailyReportTarget.employeeCode, p_date: dateStr,
+              p_purpose: purpose || null, p_counterpart: counterpart || null, p_is_out: isOut, p_prefecture: offPref });
+          } else {
+            await rpc('set_my_offsite_trip', { p_employee_code: session.employeeCode, p_date: dateStr, p_purpose: purpose || null, p_counterpart: counterpart || null,
+              p_is_out: isOut, p_prefecture: offPref });
+          }
         }
       }
     } catch (eOff) { offsiteWarning = ' ※現場外の用件(旅費)の保存に失敗しました。カレンダーから予定として入れてください。'; }

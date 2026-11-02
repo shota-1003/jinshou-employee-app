@@ -1870,7 +1870,7 @@ body.assignment-calendar-open .app-header { display: none; }
   padding: 8px 12px; background: #f4f6f9; color: #1b2230; font-weight: 700; font-size: 13px;
   border-bottom: 1px solid var(--line, #d8dce3);
 }
-.settlement-sheet-head button { padding: 4px 10px; font-size: 12px; }
+.settlement-sheet-head button { padding: 4px 10px; font-size: 12px; width: auto; flex: 0 0 auto; white-space: nowrap; }
 .settlement-sheet-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 12px; }
 /* 貸付金台帳のページ送り(2026-09-11、下に追記され続けるとスクロールが増える指摘への対応)。
    ノートのページ送りと同じ感覚で、常に最新ページを既定表示にする。 */
@@ -1927,4 +1927,20 @@ body.assignment-calendar-open .app-header { display: none; }
 @media print {
   body.printing-ab #ab-print-root .ab-bulk-page { break-after: page; page-break-after: always; }
   body.printing-ab #ab-print-root .ab-bulk-page:last-child { break-after: auto; page-break-after: auto; }
+}
+
+/* 用紙の「PDFで印刷」(2026-11-02)。用紙だけを白地・A4縦で出す。貸付金台帳は1ページずつ改ページ。 */
+.ss-print-btn { width: auto; flex: 0 0 auto; white-space: nowrap; margin-left: auto; margin-right: 8px; }
+#ss-print-root { display: none; }
+@media print {
+  body.printing-ss > *:not(#ss-print-root) { display: none !important; }
+  body.printing-ss { display: block !important; min-height: 0 !important; height: auto !important; padding: 0 !important; margin: 0 !important; overflow: visible !important; background: #fff !important; }
+  html:has(body.printing-ss) { height: auto !important; min-height: 0 !important; overflow: visible !important; }
+  body.printing-ss #ss-print-root { display: block !important; width: 100% !important; }
+  body.printing-ss #ss-print-root, body.printing-ss #ss-print-root * { visibility: visible !important; }
+  body.printing-ss #ss-print-root .settlement-sheet { transform: none !important; margin: 0 auto !important; }
+  body.printing-ss #ss-print-root .settlement-sheet.ll-sheet { width: 100% !important; }
+  body.printing-ss #ss-print-root .ss-print-page { break-after: page; page-break-after: always; }
+  body.printing-ss #ss-print-root .ss-print-page:last-child { break-after: auto; page-break-after: auto; }
+  body.printing-ss #ss-print-root tr { page-break-inside: avoid; }
 }

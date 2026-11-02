@@ -7055,6 +7055,7 @@ function exdSettlementSheetHtml(full) {
   return `<div class="settlement-sheet-wrap">
     <div class="settlement-sheet-head">
       <span>経費精算書（税理士へ提出する用紙）</span>
+      <button type="button" class="secondary ss-print-btn">PDFで印刷</button>
       <button type="button" class="secondary exd-sheet-toggle">閉じる</button>
     </div>
     <div class="settlement-sheet-scroll exd-sheet-body">
@@ -12557,6 +12558,7 @@ async function loadMyLoanBalance() {
       <div class="settlement-sheet-wrap" style="margin-top:14px;">
         <div class="settlement-sheet-head">
           <span>貸付金台帳</span>
+          <button type="button" class="secondary ss-print-btn">PDFで印刷</button>
           <button type="button" class="secondary loan-sheet-toggle">閉じる</button>
         </div>
         <div class="settlement-sheet-scroll loan-sheet-box"></div>
@@ -12697,6 +12699,7 @@ async function loadLoanAdminDetail() {
       <div class="settlement-sheet-wrap">
         <div class="settlement-sheet-head">
           <span>借入申請書（税理士提出用）</span>
+          <button type="button" class="secondary ss-print-btn">PDFで印刷</button>
           <button type="button" class="secondary loan-sheet-toggle">閉じる</button>
         </div>
         <div class="settlement-sheet-scroll loan-sheet-box">${loanRenderRequestSheetHtml(r)}</div>
@@ -13152,6 +13155,7 @@ function loanLedgerRenderSheetHtml(employeeName, entries, page) {
 function renderLoanLedgerPagedSheet(wrapEl, employeeName, entries) {
   const boxEl = wrapEl.querySelector('.loan-sheet-box');
   if (!boxEl) return;
+  wrapEl._llPrint = { employeeName, entries };
   const totalPages = loanLedgerTotalPages(entries);
   let page = Number(wrapEl.dataset.llPage || totalPages) || totalPages;
   if (page < 1) page = 1;
@@ -13281,6 +13285,7 @@ async function loadLoanLedgerDetail() {
           <div class="settlement-sheet-wrap">
             <div class="settlement-sheet-head">
               <span>貸付金台帳</span>
+              <button type="button" class="secondary ss-print-btn">PDFで印刷</button>
               <button type="button" class="secondary loan-sheet-toggle">閉じる</button>
             </div>
             <div class="settlement-sheet-scroll loan-sheet-box"></div>
@@ -15635,6 +15640,50 @@ function printAttendanceBook(btn) {
 document.addEventListener('click', (e) => {
   const b = e.target && e.target.closest ? e.target.closest('.ab-print-btn') : null;
   if (b) printAttendanceBook(b);
+});
+
+// 用紙(経費精算書・借入申請書・貸付金台帳・月次一覧)の「PDFで印刷」(2026-11-02 Shota指示「この用紙をPDFで印刷できるようにしてほしい。貸付も」)。
+// 出勤簿の印刷と同じ方式: 用紙だけを白地・A4縦で印刷画面へ出す。印刷画面の送信先を「PDFに保存」にすればPDFになる。
+// 貸付金台帳はページ送りで1ページ分しか画面に出ていないため、印刷では全ページを1ページずつ出す。
+function printSettlementSheet(btn) {
+  const wrap = btn.closest('.settlement-sheet-wrap');
+  if (!wrap) return;
+  const root = document.createElement('div');
+  root.id = 'ss-print-root';
+  const ll = wrap._llPrint;
+  if (ll && Array.isArray(ll.entries)) {
+    const total = loanLedgerTotalPages(ll.entries);
+    let html = '';
+    for (let p = 1; p <= total; p += 1) html += '<div class="ss-print-page">' + loanLedgerRenderSheetHtml(ll.employeeName, ll.entries, p) + '</div>';
+    root.innerHTML = html;
+  } else {
+    const sheets = wrap.querySelectorAll('.settlement-sheet');
+    if (!sheets.length) { alert('印刷する用紙がまだ表示されていません。'); return; }
+    sheets.forEach((sh) => {
+      const page = document.createElement('div');
+      page.className = 'ss-print-page';
+      page.appendChild(sh.cloneNode(true));
+      root.appendChild(page);
+    });
+  }
+  // 画面用の拡縮・ズーム指定は印刷に持ち込まない
+  root.querySelectorAll('.settlement-sheet').forEach((sh) => { sh.style.transform = ''; sh.style.marginBottom = ''; sh.style.cursor = ''; });
+  // PDFの保存名の初期値になる(例: 経費精算書_関口湧也)
+  const titleEl = root.querySelector('.ss-title');
+  const nameEls = root.querySelectorAll('.ss-meta b');
+  const kind = titleEl ? titleEl.textContent.replace(/\s+/g, '') : '用紙';
+  const who = nameEls.length ? nameEls[nameEls.length - 1].textContent.replace(/\s+/g, '') : '';
+  const prevTitle = document.title;
+  document.title = who ? kind + '_' + who : kind;
+  document.body.appendChild(root);
+  document.body.classList.add('printing-ss');
+  const done = () => { document.body.classList.remove('printing-ss'); root.remove(); document.title = prevTitle; window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  window.print();
+}
+document.addEventListener('click', (e) => {
+  const b = e.target && e.target.closest ? e.target.closest('.ss-print-btn') : null;
+  if (b) printSettlementSheet(b);
 });
 
 // 出勤簿の一括印刷・一括CSV(2026-10-30 Shota指示「旅費表も出勤簿も一括で印刷・抜き出せるように」)。

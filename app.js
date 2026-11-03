@@ -3208,6 +3208,7 @@ async function doSubmitExpense() {
     showError('expense-error', '受取方法(現金・銀行振込)を選択してください。'); return;
   }
 
+  if (!confirmUnusualExpenseItems(items)) return;
   const btn = document.getElementById('expense-submit');
   btn.disabled = true;
   try {
@@ -3632,6 +3633,7 @@ async function doSubmitExpenseBulk() {
     showError('expense-bulk-error', '受取方法(現金・銀行振込)を選択してください。'); return;
   }
 
+  if (!confirmUnusualExpenseItems(items)) return;
   const btn = document.getElementById('expense-bulk-submit');
   btn.disabled = true;
   try {
@@ -6436,6 +6438,15 @@ function dateTimeText(v) { return v ? new Date(v).toLocaleString('ja-JP') : '-';
 // 並べるようにして。クリックするとこの紙の領収書が出て来るようにして」)。
 // 申請(employee_request_id)単位へ集約し、1申請=1カードにする(クリック先の詳細画面は
 // 既存のexdSettlementSheetHtml/renderSettlementSheetがそのまま「この紙+領収書」を表示する)。
+// 領収書の日付が、申請した日から1年以上ずれている明細は、年の読み間違いの疑いがある(2026-11-02、2014年・2022年などの日付で申請が通っていた)。
+function expenseLedgerDateLooksOff(r) {
+  if (!r.document_date || !r.requested_at) return false;
+  const d = new Date(String(r.document_date).slice(0, 10) + 'T00:00:00');
+  const q = new Date(r.requested_at);
+  if (Number.isNaN(d.getTime()) || Number.isNaN(q.getTime())) return false;
+  const days = (q - d) / 86400000;
+  return days > 366 || days < -3;
+}
 function groupExpenseLedgerRows(rows) {
   const map = new Map();
   for (const r of rows || []) {
@@ -6446,12 +6457,14 @@ function groupExpenseLedgerRows(rows) {
         expense_category: r.expense_category, requested_at: r.requested_at,
         item_count: 0, amount: 0, has_pending: false, has_rejected: false, has_approved: false,
         scheduled_payment_date: null, paid_at: null, payment_status: r.payment_status,
-        original_uncollected_count: 0,
+        original_uncollected_count: 0, max_amount: 0, odd_date: false,
       });
     }
     const g = map.get(key);
     g.item_count += 1;
     g.amount += Number(r.amount || 0);
+    if (Number(r.amount || 0) > g.max_amount) g.max_amount = Number(r.amount || 0);
+    if (expenseLedgerDateLooksOff(r)) g.odd_date = true;
     if (r.item_approval_status === 'rejected') g.has_rejected = true;
     else if (r.item_approval_status === 'approved') g.has_approved = true;
     else g.has_pending = true;
@@ -6476,6 +6489,8 @@ function expenseRequestLedgerCardHtml(g, opts) {
       <div class="row2">支払予定日: ${dateText(g.scheduled_payment_date)}　支払完了日: ${dateText(g.paid_at)}　${EXPENSE_PAYMENT_STATUS_LABEL[g.payment_status] || g.payment_status || '-'}</div>
       <span class="status-badge ${statusClass}">${statusLabel}</span>
       ${g.original_uncollected_count > 0 ? `<span class="status-badge warn">原本未提出 ${g.original_uncollected_count}件</span>` : ''}
+      ${g.max_amount >= 1000000 ? `<span class="status-badge rejected">金額が大きすぎます(${yenText(g.max_amount)})・要確認</span>` : ''}
+      ${g.odd_date ? '<span class="status-badge warn">領収書の日付の年が合っていない可能性・要確認</span>' : ''}
       <button type="button" class="secondary expense-ledger-detail-btn" style="margin-top:6px;">経費精算書を開く</button>
     </div>
   `;
@@ -6483,6 +6498,7 @@ function expenseRequestLedgerCardHtml(g, opts) {
 
 // --- 社員本人 ---
 let myExpenseLedgerMonth = '';
+let myExpenseLedgerRows = [];
 
 async function loadMyExpenseLedger() {
   const session = getSession();
@@ -6499,6 +6515,7 @@ async function loadMyExpenseLedger() {
       listEl.innerHTML = '<div class="hint">この条件の経費履歴はありません。</div>';
       return;
     }
+    myExpenseLedgerRows = rows;
     const grouped = groupExpenseLedgerRows(rows);
     if (countEl) countEl.textContent = `${grouped.length}件(明細${rows.length}件)`;
     listEl.innerHTML = grouped.map((g) => expenseRequestLedgerCardHtml(g, { showName: false })).join('');
@@ -6512,6 +6529,111 @@ async function loadMyExpenseLedger() {
     if (countEl) countEl.textContent = '';
     listEl.innerHTML = `<div class="hint">読み込みに失敗しました: ${e.message}</div>`;
   }
+}
+
+// ---------- 月ごとにまとめた経費精算書(2026-11-02 Shota指示) ----------
+// 同じ人が1件ずつ細かく申請していると、紙も1枚ずつになり、PDFも1枚ずつ印刷するしかなかった。
+// 表示中の台帳の行を「月(帰属月)× 社員」でまとめ、1人1か月を1枚の紙(12行を超えたら複数ページ)にする。
+// 1件ずつの紙は今までどおり各カードから開ける。却下された明細は、1件ずつの紙と同じく載せない。
+function expenseMonthlySheetsHtml(rows) {
+  const ymOf = (r) => r.belonging_year_month || (r.document_date ? String(r.document_date).slice(0, 7) : '');
+  const groups = new Map();
+  (rows || []).filter((r) => r.item_approval_status !== 'rejected').forEach((r) => {
+    const ym = ymOf(r);
+    const key = ym + '|' + r.employee_code;
+    if (!groups.has(key)) groups.set(key, { ym, name: r.employee_name, code: r.employee_code, items: [], reqPay: new Map(), pending: 0 });
+    const g = groups.get(key);
+    g.items.push(r);
+    g.reqPay.set(r.employee_request_id, r.payment_status);
+    if (r.item_approval_status !== 'approved') g.pending += 1;
+  });
+  const list = [...groups.values()].sort((a, b) => (a.ym < b.ym ? -1 : a.ym > b.ym ? 1 : String(a.code).localeCompare(String(b.code))));
+  if (!list.length) return '';
+  const yen = (n) => (n == null || n === '' ? '' : Number(n).toLocaleString('ja-JP') + '円');
+  const md = (v) => {
+    if (!v) return '';
+    const d = /^\d{4}-\d{2}-\d{2}/.test(String(v)) ? new Date(String(v).slice(0, 10) + 'T00:00:00') : new Date(v);
+    return Number.isNaN(d.getTime()) ? '' : (d.getMonth() + 1) + '/' + d.getDate();
+  };
+  const ymLabel = (ym) => (/^\d{4}-\d{2}$/.test(ym) ? ym.slice(0, 4) + '年' + Number(ym.slice(5, 7)) + '月分' : '月が確定していない分');
+  const PER = 12;
+  const out = [];
+  list.forEach((g) => {
+    const items = g.items.slice().sort((x, y) => String(x.document_date || '9999').localeCompare(String(y.document_date || '9999')));
+    const monthTotal = items.reduce((a, it) => a + Number(it.amount || 0), 0);
+    const pages = Math.max(1, Math.ceil(items.length / PER));
+    const reqCount = g.reqPay.size;
+    const unpaid = [...g.reqPay.values()].filter((st) => st !== 'paid' && st !== 'not_applicable').length;
+    const payText = unpaid === 0 ? '精算済み' : '未精算 ' + unpaid + '件(申請' + reqCount + '件中)';
+    const apprText = g.pending === 0 ? '承認済み' : '未承認 ' + g.pending + '件を含む';
+    for (let p = 0; p < pages; p += 1) {
+      const slice = items.slice(p * PER, (p + 1) * PER);
+      const pageTotal = slice.reduce((a, it) => a + Number(it.amount || 0), 0);
+      const last = p === pages - 1;
+      const blanks = Math.max(0, PER - slice.length);
+      out.push('<div class="settlement-sheet">'
+        + '<div class="ss-title">経 費 精 算 書</div>'
+        + '<div class="ss-meta">対象月：<b>' + exdEsc(ymLabel(g.ym)) + '</b><br>氏　名：<b>' + exdEsc(g.name || '') + '</b>'
+        + (pages > 1 ? '<br>' + (p + 1) + ' / ' + pages + ' ページ' : '') + '</div>'
+        + '<table><tr><th style="width:56px;">日 付</th><th style="width:150px;">現 場</th><th style="width:150px;">支 払 先</th><th style="width:110px;">内 容</th><th style="width:80px;">備 考</th><th>金 額</th></tr>'
+        + slice.map((it) => '<tr><td>' + exdEsc(md(it.document_date)) + '</td><td class="small">' + exdEsc(it.site_name || '') + '</td><td class="small">'
+          + exdEsc(it.store_name || '') + '</td><td class="small">' + exdEsc(it.account_category || it.purpose_category || '') + '</td><td class="small">'
+          + exdEsc(it.purpose || '') + '</td><td class="num">' + yen(it.amount) + '</td></tr>').join('')
+        + Array.from({ length: blanks }).map(() => '<tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>').join('')
+        + '</table>'
+        + '<div class="ss-bottom"><div class="ss-admin"><div style="font-size:10.5px;margin-bottom:2px;">［管理欄］</div><table>'
+        + '<tr><th>申請件数</th><td>' + reqCount + '件(明細' + items.length + '件)</td></tr>'
+        + '<tr><th>承認状況</th><td style="font-size:10.5px;">' + exdEsc(apprText) + '</td></tr>'
+        + '<tr><th>精算状況</th><td style="font-size:10.5px;">' + exdEsc(payText) + '</td></tr>'
+        + '</table></div><div class="ss-total"><table>'
+        + (last
+          ? (pages > 1 ? '<tr><th style="width:96px;">このページ</th><td class="num">' + yen(pageTotal) + '</td></tr>' : '')
+            + '<tr><th style="width:96px;">' + (pages > 1 ? '月の合計' : '合　　計') + '</th><td class="num" style="font-size:14px;">' + yen(monthTotal) + '</td></tr>'
+          : '<tr><th style="width:96px;">小　　計</th><td class="num" style="font-size:14px;">' + yen(pageTotal) + '</td></tr>')
+        + '</table>' + (last ? '' : '<div class="ss-note">次のページに続きます</div>') + '<div class="ss-note">※　振込み手数料、申請者負担</div></div></div>'
+        + '<div class="ss-company">株式会社　迅翔興業</div></div>');
+    }
+  });
+  return out.join('');
+}
+function renderExpenseMonthlyPanel(box, rows, scopeLabel) {
+  if (!box) return;
+  const sheets = expenseMonthlySheetsHtml(rows);
+  if (!sheets) { box.innerHTML = '<div class="hint">まとめる経費がありません(却下だけの場合も出ません)。</div>'; return; }
+  box.innerHTML = '<div class="settlement-sheet-wrap" data-print-title="経費精算書_月別まとめ' + (scopeLabel ? '_' + exdEsc(scopeLabel) : '') + '">'
+    + '<div class="settlement-sheet-head"><span>月ごとにまとめた経費精算書(却下を除く)</span>'
+    + '<button type="button" class="secondary ss-print-btn">PDFで印刷</button>'
+    + '<button type="button" class="secondary ss-monthly-close">閉じる</button></div>'
+    + '<div class="settlement-sheet-scroll">' + sheets + '</div></div>';
+  if (box.scrollIntoView) box.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+document.addEventListener('click', (e) => {
+  const t = e.target && e.target.closest ? e.target.closest('#mel-monthly-sheet, #ela-monthly-sheet, .ss-monthly-close') : null;
+  if (!t) return;
+  if (t.classList.contains('ss-monthly-close')) { const box = t.closest('#mel-monthly-box, #ela-monthly-box'); if (box) box.innerHTML = ''; return; }
+  if (t.id === 'mel-monthly-sheet') renderExpenseMonthlyPanel(document.getElementById('mel-monthly-box'), myExpenseLedgerRows, myExpenseLedgerMonth);
+  else renderExpenseMonthlyPanel(document.getElementById('ela-monthly-box'), expenseLedgerAdminRows, expenseLedgerAdminFilters.yearMonth);
+});
+
+// 申請を送る前に、金額や日付がふつうでない明細を本人に確認する(2026-11-02)。
+// 領収書の読み取りで「2,800円」が「28,002,800円」になったまま、本人が確認済みにして申請が通っていた。
+// 年の読み違い(2014年・2022年など)も同じ。ここで止めて、直せるようにする。
+function confirmUnusualExpenseItems(items) {
+  const today = new Date();
+  const warns = [];
+  (items || []).forEach((it, i) => {
+    const amt = Number(it.amount || 0);
+    if (amt >= 100000) warns.push((i + 1) + '件目: 金額が ' + amt.toLocaleString('ja-JP') + '円 になっています(桁の入力間違いはありませんか)');
+    const d = it.document_date ? new Date(String(it.document_date).slice(0, 10) + 'T00:00:00') : null;
+    if (d && !Number.isNaN(d.getTime())) {
+      const days = (today - d) / 86400000;
+      const label = d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日';
+      if (days > 120) warns.push((i + 1) + '件目: 利用日が ' + label + ' で、4か月以上前です(年の読み間違いはありませんか)');
+      else if (days < -1) warns.push((i + 1) + '件目: 利用日が ' + label + ' で、まだ来ていない日です');
+    }
+  });
+  if (!warns.length) return true;
+  return window.confirm('次の点を確認してください。\n\n' + warns.join('\n') + '\n\nこのまま申請しますか?(「キャンセル」で戻って直せます)');
 }
 
 // --- 管理者 ---
@@ -6532,9 +6654,11 @@ async function loadExpenseLedgerAdmin() {
       p_target_employee_code: expenseLedgerAdminFilters.employeeCode || null,
       p_status_group: expenseLedgerAdminFilters.statusGroup || null,
     }) || [];
-    const total = expenseLedgerAdminRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+    // 却下された明細は、税理士へ出す紙にも載せないので、合計にも入れない(2026-11-02)。
+    const total = expenseLedgerAdminRows.filter((r) => r.item_approval_status !== 'rejected').reduce((s, r) => s + Number(r.amount || 0), 0);
     const groupedAdmin = groupExpenseLedgerRows(expenseLedgerAdminRows);
-    if (countEl) countEl.textContent = `${groupedAdmin.length}件(明細${expenseLedgerAdminRows.length}件)・合計${yenText(total)}`;
+    const flaggedCount = groupedAdmin.filter((g) => g.max_amount >= 1000000 || g.odd_date).length;
+    if (countEl) countEl.textContent = `${groupedAdmin.length}件(明細${expenseLedgerAdminRows.length}件)・合計${yenText(total)}(却下を除く)${flaggedCount ? `・要確認${flaggedCount}件(金額や日付がおかしい申請)` : ''}`;
     if (expenseLedgerAdminRows.length === 0) {
       listEl.innerHTML = '<div class="hint">この条件の経費履歴はありません。</div>';
       bodyEl.innerHTML = '<tr><td colspan="17"><div class="hint">この条件の経費履歴はありません。</div></td></tr>';
@@ -15674,7 +15798,7 @@ function printSettlementSheet(btn) {
   const kind = titleEl ? titleEl.textContent.replace(/\s+/g, '') : '用紙';
   const who = nameEls.length ? nameEls[nameEls.length - 1].textContent.replace(/\s+/g, '') : '';
   const prevTitle = document.title;
-  document.title = who ? kind + '_' + who : kind;
+  document.title = wrap.dataset.printTitle || (who ? kind + '_' + who : kind);
   document.body.appendChild(root);
   document.body.classList.add('printing-ss');
   const done = () => { document.body.classList.remove('printing-ss'); root.remove(); document.title = prevTitle; window.removeEventListener('afterprint', done); };

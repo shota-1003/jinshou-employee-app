@@ -6577,14 +6577,44 @@ async function loadMyExpenseLedger() {
 // 同じ人が1件ずつ細かく申請していると、紙も1枚ずつになり、PDFも1枚ずつ印刷するしかなかった。
 // 表示中の台帳の行を「月(帰属月)× 社員」でまとめ、1人1か月を1枚の紙(12行を超えたら複数ページ)にする。
 // 1件ずつの紙は今までどおり各カードから開ける。却下された明細は、1件ずつの紙と同じく載せない。
-// 月は「お金を支払った月」で決める(未払いは申請した月)。領収書の日付の読み違いに左右されないため(2026-11-06 Shota指示)。
+// 支払った日ごとの合計(通帳の振込と照合するため、2026-11-06 Shota指示)。却下は除く。
+// 戻り値: { days: [{ key:'2026-10-26', md:'10/26', total, people:[{name, amount}] }], unpaid }
+function expensePaymentDaySummary(rows) {
+  const days = new Map(); let unpaid = 0;
+  (rows || []).filter((r) => r.item_approval_status !== 'rejected').forEach((r) => {
+    const amt = Number(r.amount || 0);
+    const d = r.paid_at ? new Date(r.paid_at) : null;
+    if (!d || Number.isNaN(d.getTime())) { if (r.payment_status !== 'not_applicable') unpaid += amt; return; }
+    const j = new Date(d.getTime() + 9 * 3600000);
+    const key = j.toISOString().slice(0, 10);
+    if (!days.has(key)) days.set(key, { key, md: (j.getUTCMonth() + 1) + '/' + j.getUTCDate(), total: 0, byPerson: new Map() });
+    const g = days.get(key); g.total += amt;
+    g.byPerson.set(r.employee_name, (g.byPerson.get(r.employee_name) || 0) + amt);
+  });
+  return { days: [...days.values()].sort((a, b) => (a.key < b.key ? -1 : 1)).map((g) => ({ key: g.key, md: g.md, total: g.total, people: [...g.byPerson].map(([name, amount]) => ({ name, amount })) })), unpaid };
+}
+function expensePaymentDaySummaryHtml(rows, title) {
+  const s = expensePaymentDaySummary(rows);
+  if (!s.days.length && !s.unpaid) return '';
+  const yen = (n) => Number(n).toLocaleString('ja-JP') + '円';
+  const grand = s.days.reduce((a, d) => a + d.total, 0);
+  return '<div class="ela-paysum"><div class="ela-paysum-title">' + exdEsc(title || '支払った日ごとの合計') + '<span>(その日に払った金額の合計。通帳の振込と見比べます)</span></div>'
+    + '<table><tr><th>支払った日</th><th>その日の合計</th><th>内訳(人ごと)</th></tr>'
+    + s.days.map((d) => '<tr><td>' + exdEsc(d.md) + '</td><td class="num"><b>' + yen(d.total) + '</b></td><td>' + d.people.map((p) => exdEsc(p.name) + ' ' + yen(p.amount)).join('、') + '</td></tr>').join('')
+    + '<tr class="ela-paysum-sum"><td>支払い済みの合計</td><td class="num"><b>' + yen(grand) + '</b></td><td>' + (s.unpaid ? '<span class="ela-unpaid">まだ払っていない分 ' + yen(s.unpaid) + '</span>' : '') + '</td></tr></table></div>';
+}
+// 月は「お金を支払った月」で決める。領収書の日付の読み違いに左右されないため(2026-11-06 Shota指示)。
+// まだ払っていないものは月に入れず、別の区分 'unpaid' にする(「未払いは足してはいけない」同日指示)。
+// 会社払い(精算不要)は払う相手がいないので、申請した月に入れる。
 function expenseMonthlyKey(r) {
   const jst = (v) => {
     if (!v) return '';
     const d = new Date(v);
     return Number.isNaN(d.getTime()) ? '' : new Date(d.getTime() + 9 * 3600000).toISOString().slice(0, 7);
   };
-  return jst(r.paid_at) || jst(r.requested_at) || r.belonging_year_month || (r.document_date ? String(r.document_date).slice(0, 7) : '');
+  if (jst(r.paid_at)) return jst(r.paid_at);
+  if (r.payment_status === 'not_applicable') return jst(r.requested_at) || (r.document_date ? String(r.document_date).slice(0, 7) : '');
+  return 'unpaid';
 }
 function expenseMonthlySheetsHtml(rows) {
   const ymOf = expenseMonthlyKey;
@@ -6606,7 +6636,7 @@ function expenseMonthlySheetsHtml(rows) {
     const d = /^\d{4}-\d{2}-\d{2}/.test(String(v)) ? new Date(String(v).slice(0, 10) + 'T00:00:00') : new Date(v);
     return Number.isNaN(d.getTime()) ? '' : (d.getMonth() + 1) + '/' + d.getDate();
   };
-  const ymLabel = (ym) => (/^\d{4}-\d{2}$/.test(ym) ? ym.slice(0, 4) + '年' + Number(ym.slice(5, 7)) + '月分' : '月が確定していない分');
+  const ymLabel = (ym) => (/^\d{4}-\d{2}$/.test(ym) ? ym.slice(0, 4) + '年' + Number(ym.slice(5, 7)) + '月に支払った分' : ym === 'unpaid' ? '未払い(まだ払っていない分)' : '月が確定していない分');
   // どの領収書をいつ支払ったかが紙の上で分かるよう、備考欄に「10/26支払」(未払いは「未払い」)を出す。
   const paidMd = (v) => {
     if (!v) return '';
@@ -6625,6 +6655,9 @@ function expenseMonthlySheetsHtml(rows) {
     const unpaid = [...g.reqPay.values()].filter((st) => st !== 'paid' && st !== 'not_applicable').length;
     const payText = unpaid === 0 ? '精算済み' : '未精算 ' + unpaid + '件(申請' + reqCount + '件中)';
     const apprText = g.pending === 0 ? '承認済み' : '未承認 ' + g.pending + '件を含む';
+    // 通帳の振込と見比べるため、紙の管理欄にも「支払った日ごとの合計」を出す(月の合計とは別)。
+    const paySum = expensePaymentDaySummary(items);
+    const paidByDay = paySum.days.map((d) => d.md + ' ' + yen(d.total)).join(' / ') + (paySum.unpaid ? (paySum.days.length ? ' / ' : '') + '未払い ' + yen(paySum.unpaid) : '');
     for (let p = 0; p < pages; p += 1) {
       const slice = items.slice(p * PER, (p + 1) * PER);
       const pageTotal = slice.reduce((a, it) => a + Number(it.amount || 0), 0);
@@ -6644,6 +6677,7 @@ function expenseMonthlySheetsHtml(rows) {
         + '<tr><th>申請件数</th><td>' + reqCount + '件(明細' + items.length + '件)</td></tr>'
         + '<tr><th>承認状況</th><td style="font-size:10.5px;">' + exdEsc(apprText) + '</td></tr>'
         + '<tr><th>精算状況</th><td style="font-size:10.5px;">' + exdEsc(payText) + '</td></tr>'
+        + (paidByDay ? '<tr><th>支払日別</th><td style="font-size:10.5px;">' + exdEsc(paidByDay) + '</td></tr>' : '')
         + '</table></div><div class="ss-total"><table>'
         + (last
           ? (pages > 1 ? '<tr><th style="width:96px;">このページ</th><td class="num">' + yen(pageTotal) + '</td></tr>' : '')
@@ -6666,7 +6700,9 @@ function renderExpenseMonthlyPanel(box, rows, opts) {
   const all = (rows || []).filter((r) => r.item_approval_status !== 'rejected');
   if (!all.length) { alert('まとめる経費がありません(却下だけの場合も出ません)。'); return; }
   const showEmp = !(opts && opts.hideEmployee);
-  const months = [...new Set(all.map(expenseMonthlyKey).filter(Boolean))].sort().reverse();
+  const keys = all.map(expenseMonthlyKey).filter(Boolean);
+  const months = [...new Set(keys.filter((k) => k !== 'unpaid'))].sort().reverse();
+  const hasUnpaid = keys.includes('unpaid');
   const emps = new Map();
   all.forEach((r) => { if (!emps.has(r.employee_code)) emps.set(r.employee_code, r.employee_name || r.employee_code); });
   const ymText = (ym) => (/^\d{4}-\d{2}$/.test(ym) ? ym.slice(0, 4) + '年' + Number(ym.slice(5, 7)) + '月' : ym);
@@ -6675,11 +6711,12 @@ function renderExpenseMonthlyPanel(box, rows, opts) {
   o.id = 'ssm-overlay';
   o.innerHTML = '<div class="settlement-sheet-wrap ssm-wrap" data-print-title="経費精算書_月別まとめ">'
     + '<div class="ssm-bar">'
-    + '<label>支払った月 <select id="ssm-ym">' + months.map((m) => '<option value="' + m + '">' + exdEsc(ymText(m)) + '</option>').join('') + '<option value="">すべての月</option></select></label>'
+    + '<label>支払った月 <select id="ssm-ym">' + months.map((m) => '<option value="' + m + '">' + exdEsc(ymText(m)) + '</option>').join('') + '<option value="">すべての月(支払い済みだけ)</option>' + (hasUnpaid ? '<option value="unpaid">未払い(まだ払っていない分)</option>' : '') + '</select></label>'
     + (showEmp ? '<label>社員 <select id="ssm-emp"><option value="">全員</option>' + [...emps].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([c, n]) => '<option value="' + exdEsc(c) + '">' + exdEsc(n) + '</option>').join('') + '</select></label>' : '')
     + '<span id="ssm-count" class="ssm-count"></span>'
     + '<button type="button" class="secondary ss-print-btn">PDFで印刷</button>'
     + '<button type="button" class="ssm-close">閉じる</button></div>'
+    + '<div id="ssm-paysum" class="ssm-paysum"></div>'
     + '<div class="settlement-sheet-scroll ssm-scroll" id="ssm-scroll"></div></div>';
   document.body.appendChild(o);
   document.body.classList.add('ssm-open');
@@ -6687,11 +6724,13 @@ function renderExpenseMonthlyPanel(box, rows, opts) {
     const ym = o.querySelector('#ssm-ym').value;
     const empSel = o.querySelector('#ssm-emp');
     const code = empSel ? empSel.value : '';
-    const pick = all.filter((r) => (!ym || expenseMonthlyKey(r) === ym) && (!code || r.employee_code === code));
+    // 月を選んだら、その月に払った分だけ。「すべての月」でも未払いは入れない(未払いは専用の選択で別に見る)。
+    const pick = all.filter((r) => (ym ? expenseMonthlyKey(r) === ym : expenseMonthlyKey(r) !== 'unpaid') && (!code || r.employee_code === code));
     const html = expenseMonthlySheetsHtml(pick);
     const sc = o.querySelector('#ssm-scroll');
     sc.innerHTML = html || '<div class="hint" style="padding:24px;">この条件に当てはまる経費はありません。</div>';
     sc.scrollTop = 0;
+    o.querySelector('#ssm-paysum').innerHTML = expensePaymentDaySummaryHtml(pick, '選んだ分の、支払った日ごとの合計');
     o.querySelector('#ssm-count').textContent = html ? (sc.querySelectorAll('.settlement-sheet').length + '枚') : '0枚';
     const nm = code ? (emps.get(code) || '').replace(/\s+/g, '') : '全員';
     o.querySelector('.ssm-wrap').dataset.printTitle = '経費精算書_月別まとめ_' + (ym || '全期間') + '_' + nm;
@@ -6752,10 +6791,13 @@ async function loadExpenseLedgerAdmin() {
       p_status_group: expenseLedgerAdminFilters.statusGroup || null,
     }) || []).filter((r) => !expenseLedgerAdminFilters.yearMonth || expenseMonthlyKey(r) === expenseLedgerAdminFilters.yearMonth);
     // 却下された明細は、税理士へ出す紙にも載せないので、合計にも入れない(2026-11-02)。
-    const total = expenseLedgerAdminRows.filter((r) => r.item_approval_status !== 'rejected').reduce((s, r) => s + Number(r.amount || 0), 0);
+    // 合計は「支払い済み」だけ。まだ払っていない分は足さず、別に出す(2026-11-06 Shota指示)。
+    const liveRows = expenseLedgerAdminRows.filter((r) => r.item_approval_status !== 'rejected');
+    const total = liveRows.filter((r) => r.paid_at).reduce((s, r) => s + Number(r.amount || 0), 0);
+    const unpaidTotal = liveRows.filter((r) => !r.paid_at && r.payment_status !== 'not_applicable').reduce((s, r) => s + Number(r.amount || 0), 0);
     const groupedAdmin = groupExpenseLedgerRows(expenseLedgerAdminRows);
     const flaggedCount = groupedAdmin.filter((g) => g.max_amount >= 1000000 || g.odd_date).length;
-    if (countEl) countEl.textContent = `${groupedAdmin.length}件(明細${expenseLedgerAdminRows.length}件)・合計${yenText(total)}(却下を除く)${flaggedCount ? `・要確認${flaggedCount}件(金額や日付がおかしい申請)` : ''}`;
+    if (countEl) countEl.textContent = `${groupedAdmin.length}件(明細${expenseLedgerAdminRows.length}件)・支払い済み${yenText(total)}${unpaidTotal ? `・未払い${yenText(unpaidTotal)}(未払いは合計に入れていません)` : ''}(却下を除く)${flaggedCount ? `・要確認${flaggedCount}件(金額や日付がおかしい申請)` : ''}`;
     if (expenseLedgerAdminRows.length === 0) {
       listEl.innerHTML = '<div class="hint">この条件の経費履歴はありません。</div>';
       bodyEl.innerHTML = '<tr><td colspan="17"><div class="hint">この条件の経費履歴はありません。</div></td></tr>';
@@ -6765,6 +6807,7 @@ async function loadExpenseLedgerAdmin() {
     // クリックするとその申請の紙+領収書がまとめて開く(2026-09-12ユーザー指摘)。
     // 人ごとにまとめ、見出しに「いつ・いくら支払ったか」を出す(バラバラに並んで見えない、の指摘 2026-11-06)。
     const payMd = (v) => { const d = new Date(v); if (Number.isNaN(d.getTime())) return ''; const j = new Date(d.getTime() + 9 * 3600000); return (j.getUTCMonth() + 1) + '/' + j.getUTCDate(); };
+    const showCards = !!expenseLedgerAdminFilters.employeeCode;
     const people = new Map();
     groupedAdmin.forEach((g) => {
       if (!people.has(g.employee_code)) people.set(g.employee_code, { name: g.employee_name, code: g.employee_code, cards: [] });
@@ -6781,28 +6824,39 @@ async function loadExpenseLedgerAdmin() {
       const paidList = [...byDate.entries()].sort((a, b) => { const [am, ad] = a[0].split('/').map(Number); const [bm, bd] = b[0].split('/').map(Number); return am - bm || ad - bd; })
         .map(([k, v]) => `${k} ${yenText(v)}`).join(' / ');
       const cards = p.cards.slice().sort((a, b) => new Date(b.paid_at || b.requested_at) - new Date(a.paid_at || a.requested_at));
-      return `<div class="ela-person">
-        <div class="ela-person-head"><b>${exdEsc(p.name)}</b><span>申請${p.cards.length}件・合計${yenText(total)}</span>
-          <button type="button" class="secondary ela-person-only" data-emp="${exdEsc(p.code)}">この人だけ見る</button></div>
+      // 1件ずつのカードは、その人を選んだときだけ出す。全員の一覧では名前の見出しだけを縦に並べる
+      // (件数が多いと、スクロールして他の人の名前がどこか分からなくなる、の指摘 2026-11-06)。
+      return `<div class="ela-person${showCards ? ' open' : ''}">
+        <div class="ela-person-head" data-emp="${exdEsc(p.code)}"><b>${exdEsc(p.name)}</b><span>申請${p.cards.length}件・支払い済み${yenText([...byDate.values()].reduce((a, v) => a + v, 0))}${unpaid ? `・未払い${yenText(unpaid)}` : ''}</span>
+          ${showCards
+    ? '<button type="button" class="secondary ela-person-back">全員の一覧に戻る</button>'
+    : `<button type="button" class="secondary ela-person-only" data-emp="${exdEsc(p.code)}">この人だけ見る</button>`}</div>
         <div class="ela-person-pay">支払い: ${paidList ? exdEsc(paidList) : 'まだありません'}${unpaid ? ` ／ <span class="ela-unpaid">未払い ${yenText(unpaid)}</span>` : ''}</div>
-        ${cards.map((g) => expenseRequestLedgerCardHtml(g)).join('')}
+        ${showCards ? `<div class="ela-person-cards">${cards.map((g) => expenseRequestLedgerCardHtml(g)).join('')}</div>` : ''}
       </div>`;
     }).join('');
-    listEl.innerHTML = personHtml;
+    listEl.innerHTML = expensePaymentDaySummaryHtml(expenseLedgerAdminRows, '支払った日ごとの合計(全員)') + personHtml;
     hydrateIcons(listEl);
     listEl.querySelectorAll('.expense-ledger-request-card').forEach((card) => {
       card.addEventListener('click', () => openRequestDetail('expense_reimbursement', card.dataset.requestId));
     });
-    listEl.querySelectorAll('.ela-person-only').forEach((b) => {
-      b.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        expenseLedgerAdminFilters.employeeCode = b.dataset.emp;
-        const sel = document.getElementById('ela-employee');
-        if (sel) sel.value = b.dataset.emp;
-        loadExpenseLedgerAdmin();
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      });
+    // 名前の見出しを押しても、「この人だけ見る」を押しても、その人だけの1件ずつの一覧に切り替わる。
+    const pickPerson = (code) => {
+      expenseLedgerAdminFilters.employeeCode = code || '';
+      const sel = document.getElementById('ela-employee');
+      if (sel) sel.value = code || '';
+      loadExpenseLedgerAdmin();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    listEl.querySelectorAll('.ela-person:not(.open) .ela-person-head').forEach((h) => {
+      h.addEventListener('click', () => pickPerson(h.dataset.emp));
     });
+    listEl.querySelectorAll('.ela-person-back').forEach((b) => {
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); pickPerson(''); });
+    });
+    // PCの全明細の表も、人を選んだときだけ出す(全員の1件ずつが縦に並ぶのを避ける)。
+    const tableWrap = document.getElementById('ela-table-wrap');
+    if (tableWrap) tableWrap.style.display = showCards ? '' : 'none';
     bodyEl.innerHTML = expenseLedgerAdminRows.map((r) => `
       <tr>
         <td>${r.belonging_year_month || '-'}</td>

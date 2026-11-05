@@ -161,6 +161,31 @@ async function rpc(name, params, opts) {
 // new Date().toISOString()はUTC日付になるため、深夜0時〜9時JSTの間は「今日」が
 // 前日にずれてしまう(日報の未提出判定・自動確認・通知は日本時間の暦日で行う必要がある)。
 // 日報関連の「今日の日付」は必ずこの関数で取得する。
+// 領収書の読み取りの補正(2026-11-06 Shota指示。2026年9月から使っているのに2014年・2022年などの年、
+// 2,800円が28,002,800円になる読み違いが、本人の確認をすり抜けて申請まで通っていた)。
+// どちらも「直したことを画面に出し、必ず要確認にする」。黙って値を確定しない。
+function fixReceiptYear(dateStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dateStr || ''));
+  if (!m) return { date: dateStr, fixed: false };
+  const today = todayJST();
+  const days = (Date.parse(today + 'T00:00:00Z') - Date.parse(m[0] + 'T00:00:00Z')) / 86400000;
+  if (!(days > 366)) return { date: dateStr, fixed: false };
+  let y = Number(today.slice(0, 4));
+  let cand = `${y}-${m[2]}-${m[3]}`;
+  if (cand > today) { y -= 1; cand = `${y}-${m[2]}-${m[3]}`; }
+  const d = new Date(Date.parse(cand + 'T00:00:00Z'));
+  if (Number.isNaN(d.getTime()) || d.getUTCMonth() + 1 !== Number(m[2])) return { date: dateStr, fixed: false };
+  return { date: cand, fixed: true, from: m[1] };
+}
+function collapseRepeatedAmount(n) {
+  const num = Number(n);
+  if (!Number.isInteger(num) || num < 100000) return { amount: n, fixed: false };
+  const s = String(num);
+  if (s.length % 2 !== 0) return { amount: n, fixed: false };
+  const half = s.slice(0, s.length / 2);
+  if (half !== s.slice(s.length / 2) || Number(half) <= 0) return { amount: n, fixed: false };
+  return { amount: Number(half), fixed: true };
+}
 function todayJST() {
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
   const y = now.getFullYear();
@@ -2666,9 +2691,13 @@ function fillCardFromReceipt(card, receipt) {
   // 金額: 高=確定入力 / 中=入れて要確認(黄) / 低=候補値を入れて要確認(黄)。
   // 【不変条件】内部(detail)に値または候補があるなら UI にも必ず表示する。低confidenceでも空欄にしない
   //  (「内部=300, UI=空欄」を禁止)。値も候補も無いときだけ空欄+警告。要確認はupdateExpenseTotalで明示。
-  const amtConf = ocrFieldStatus(receipt.amount_confidence || receipt.confidence);
+  let amtConf = ocrFieldStatus(receipt.amount_confidence || receipt.confidence);
   const amtCands = (receipt.amount_candidates || receipt.total_amount_candidates || []).filter((c) => c && c.amount != null);
-  const amtValue = receipt.total_amount != null ? receipt.total_amount : (amtCands[0] ? amtCands[0].amount : null);
+  let amtValue = receipt.total_amount != null ? receipt.total_amount : (amtCands[0] ? amtCands[0].amount : null);
+  // 同じ金額を2回続けて読んだ形(2,800 → 28,002,800)は半分にして、必ず要確認にする(2026-11-06)。
+  const amtFix = collapseRepeatedAmount(amtValue);
+  const amountAutoFixedFrom = amtFix.fixed ? amtValue : null;
+  if (amtFix.fixed) { amtValue = amtFix.amount; amtConf = 'review'; }
   amountInput.value = amtValue != null ? amtValue : '';
   amountInput.dataset.ocrConfidence = amtConf; // 整合性チェック用(high=ok/medium=review/low)
   amountInput.dataset.ocrInternal = amtValue != null ? String(amtValue) : ''; // detail内部値(UIとの一致検証用)
@@ -2676,9 +2705,13 @@ function fillCardFromReceipt(card, receipt) {
   renderOcrFieldCandidates(card, 'amount', amountInput, amtCands.map((c) => ({ v: c.amount, label: c.label })), amtConf, amtConf === 'low' ? '金額の確信度が低いです。金額をご確認ください' : '金額を確認してください', (v) => { amountInput.value = Number(v); amountInput.dataset.ocrConfidence = 'ok'; updateExpenseTotal(); });
 
   // 利用日: 内部に候補があるなら UI へ表示する(低confidenceでも空欄にしない)。他の領収書の日付はコピーしない。
-  const dateConf = ocrFieldStatus(receipt.date_confidence || (receipt.document_date ? receipt.confidence : 'low'));
+  let dateConf = ocrFieldStatus(receipt.date_confidence || (receipt.document_date ? receipt.confidence : 'low'));
   const dateCands = (receipt.date_candidates || []).filter((c) => c && c.date);
-  const dateValue = receipt.document_date || (dateCands[0] ? dateCands[0].date : null);
+  let dateValue = receipt.document_date || (dateCands[0] ? dateCands[0].date : null);
+  // 年の読み間違い(2026年が2014年・2023年になる等)は、今年に直して要確認にする(2026-11-06)。
+  const yearFix = fixReceiptYear(dateValue);
+  const yearAutoFixedFrom = yearFix.fixed ? yearFix.from : null;
+  if (yearFix.fixed) { dateValue = yearFix.date; dateConf = 'review'; }
   dateInput.value = dateValue || '';
   dateInput.dataset.ocrConfidence = dateConf;
   dateInput.dataset.ocrInternal = dateValue || '';
@@ -2690,6 +2723,11 @@ function fillCardFromReceipt(card, receipt) {
   if (dateConf !== 'ok') needs.push('利用日');
   if (needs.length === 0) { ocrStatus.textContent = '読み取り完了(内容をご確認ください)。'; ocrStatus.style.color = ''; }
   else { ocrStatus.textContent = `⚠️ ${needs.join('・')}を確認してください。`; ocrStatus.style.color = '#8a5300'; }
+  if (yearAutoFixedFrom || amountAutoFixedFrom) {
+    ocrStatus.textContent += (yearAutoFixedFrom ? `領収書の年が${yearAutoFixedFrom}年と読み取られたため、今年に直しました(違う年なら直してください)。` : '')
+      + (amountAutoFixedFrom ? `金額が${Number(amountAutoFixedFrom).toLocaleString('ja-JP')}円と読み取られましたが、同じ数字が2回続いているため${Number(amtValue).toLocaleString('ja-JP')}円にしました(確認してください)。` : '');
+    ocrStatus.style.color = '#8a5300';
+  }
 
   if (receipt.counterparty_raw && amtConf === 'ok') showExpenseSuggestion(card, receipt.counterparty_raw);
 }
@@ -3445,11 +3483,15 @@ function addBulkItemsFromPhoto(entry, uploadResult, receipts, fileHash) {
   } else {
     receipts.forEach((r, ri) => {
       bulkItemSeq += 1;
-      const label = receipts.length > 1 ? `${entry.photoLabel}の${ri + 1}件目(全${receipts.length}件中)` : entry.photoLabel;
+      const label0 = receipts.length > 1 ? `${entry.photoLabel}の${ri + 1}件目(全${receipts.length}件中)` : entry.photoLabel;
+      // 年・金額の読み違いの補正(1枚ずつの画面と同じ。直したときは名前の横に出して要確認にする 2026-11-06)
+      const yFix = fixReceiptYear(r.document_date || null);
+      const aFix = collapseRepeatedAmount(r.total_amount != null ? Number(r.total_amount) : null);
+      const label = label0 + (yFix.fixed ? `【年を${yFix.from}→${yFix.date.slice(0, 4)}に直しました・要確認】` : '') + (aFix.fixed ? '【金額の桁を直しました・要確認】' : '');
       const item = {
-        id: 'bulk-item-' + bulkItemSeq, date: r.document_date || null, store: r.counterparty_raw || null,
-        amount: r.total_amount != null ? Number(r.total_amount) : null, tax: r.tax_amount != null ? Number(r.tax_amount) : null,
-        confidence: r.confidence || 'low',
+        id: 'bulk-item-' + bulkItemSeq, date: yFix.fixed ? yFix.date : (r.document_date || null), store: r.counterparty_raw || null,
+        amount: aFix.amount != null ? Number(aFix.amount) : null, tax: r.tax_amount != null ? Number(r.tax_amount) : null,
+        confidence: (yFix.fixed || aFix.fixed) ? 'low' : (r.confidence || 'low'),
         driveFileId: uploadResult.driveFileId, driveFileUrl: uploadResult.driveFileUrl, fileHash,
         siteId: null, siteName: null, purposeCategory: null, note: r.content_description || null, photoLabel: label,
         photoQueueId: entry.id, _file: entry.file, _bbox: (r.bbox && r.bbox.length === 4) ? r.bbox : null,
@@ -6535,8 +6577,17 @@ async function loadMyExpenseLedger() {
 // 同じ人が1件ずつ細かく申請していると、紙も1枚ずつになり、PDFも1枚ずつ印刷するしかなかった。
 // 表示中の台帳の行を「月(帰属月)× 社員」でまとめ、1人1か月を1枚の紙(12行を超えたら複数ページ)にする。
 // 1件ずつの紙は今までどおり各カードから開ける。却下された明細は、1件ずつの紙と同じく載せない。
+// 月は「お金を支払った月」で決める(未払いは申請した月)。領収書の日付の読み違いに左右されないため(2026-11-06 Shota指示)。
+function expenseMonthlyKey(r) {
+  const jst = (v) => {
+    if (!v) return '';
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? '' : new Date(d.getTime() + 9 * 3600000).toISOString().slice(0, 7);
+  };
+  return jst(r.paid_at) || jst(r.requested_at) || r.belonging_year_month || (r.document_date ? String(r.document_date).slice(0, 7) : '');
+}
 function expenseMonthlySheetsHtml(rows) {
-  const ymOf = (r) => r.belonging_year_month || (r.document_date ? String(r.document_date).slice(0, 7) : '');
+  const ymOf = expenseMonthlyKey;
   const groups = new Map();
   (rows || []).filter((r) => r.item_approval_status !== 'rejected').forEach((r) => {
     const ym = ymOf(r);
@@ -6556,6 +6607,14 @@ function expenseMonthlySheetsHtml(rows) {
     return Number.isNaN(d.getTime()) ? '' : (d.getMonth() + 1) + '/' + d.getDate();
   };
   const ymLabel = (ym) => (/^\d{4}-\d{2}$/.test(ym) ? ym.slice(0, 4) + '年' + Number(ym.slice(5, 7)) + '月分' : '月が確定していない分');
+  // どの領収書をいつ支払ったかが紙の上で分かるよう、備考欄に「10/26支払」(未払いは「未払い」)を出す。
+  const paidMd = (v) => {
+    if (!v) return '';
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return '';
+    const j = new Date(d.getTime() + 9 * 3600000);
+    return (j.getUTCMonth() + 1) + '/' + j.getUTCDate();
+  };
   const PER = 12;
   const out = [];
   list.forEach((g) => {
@@ -6578,7 +6637,7 @@ function expenseMonthlySheetsHtml(rows) {
         + '<table><tr><th style="width:56px;">日 付</th><th style="width:150px;">現 場</th><th style="width:150px;">支 払 先</th><th style="width:110px;">内 容</th><th style="width:80px;">備 考</th><th>金 額</th></tr>'
         + slice.map((it) => '<tr><td>' + exdEsc(md(it.document_date)) + '</td><td class="small">' + exdEsc(it.site_name || '') + '</td><td class="small">'
           + exdEsc(it.store_name || '') + '</td><td class="small">' + exdEsc(it.account_category || it.purpose_category || '') + '</td><td class="small">'
-          + exdEsc(it.purpose || '') + '</td><td class="num">' + yen(it.amount) + '</td></tr>').join('')
+          + exdEsc([it.purpose || '', paidMd(it.paid_at) ? paidMd(it.paid_at) + '支払' : (it.payment_status === 'not_applicable' ? '' : '未払い')].filter(Boolean).join(' ')) + '</td><td class="num">' + yen(it.amount) + '</td></tr>').join('')
         + Array.from({ length: blanks }).map(() => '<tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>').join('')
         + '</table>'
         + '<div class="ss-bottom"><div class="ss-admin"><div style="font-size:10.5px;margin-bottom:2px;">［管理欄］</div><table>'
@@ -6596,23 +6655,59 @@ function expenseMonthlySheetsHtml(rows) {
   });
   return out.join('');
 }
-function renderExpenseMonthlyPanel(box, rows, scopeLabel) {
-  if (!box) return;
-  const sheets = expenseMonthlySheetsHtml(rows);
-  if (!sheets) { box.innerHTML = '<div class="hint">まとめる経費がありません(却下だけの場合も出ません)。</div>'; return; }
-  box.innerHTML = '<div class="settlement-sheet-wrap" data-print-title="経費精算書_月別まとめ' + (scopeLabel ? '_' + exdEsc(scopeLabel) : '') + '">'
-    + '<div class="settlement-sheet-head"><span>月ごとにまとめた経費精算書(却下を除く)</span>'
+// 画面いっぱいに開く。上の帯に「月」「社員」の選択・PDF印刷・閉じるを固定し、紙は選んだ分だけ出す。
+// (以前は全員・全月の紙が縦に並び、閉じるボタンもスクロールで見えなくなった)
+function closeExpenseMonthlyOverlay() {
+  const o = document.getElementById('ssm-overlay');
+  if (o) o.remove();
+  document.body.classList.remove('ssm-open');
+}
+function renderExpenseMonthlyPanel(box, rows, opts) {
+  const all = (rows || []).filter((r) => r.item_approval_status !== 'rejected');
+  if (!all.length) { alert('まとめる経費がありません(却下だけの場合も出ません)。'); return; }
+  const showEmp = !(opts && opts.hideEmployee);
+  const months = [...new Set(all.map(expenseMonthlyKey).filter(Boolean))].sort().reverse();
+  const emps = new Map();
+  all.forEach((r) => { if (!emps.has(r.employee_code)) emps.set(r.employee_code, r.employee_name || r.employee_code); });
+  const ymText = (ym) => (/^\d{4}-\d{2}$/.test(ym) ? ym.slice(0, 4) + '年' + Number(ym.slice(5, 7)) + '月' : ym);
+  closeExpenseMonthlyOverlay();
+  const o = document.createElement('div');
+  o.id = 'ssm-overlay';
+  o.innerHTML = '<div class="settlement-sheet-wrap ssm-wrap" data-print-title="経費精算書_月別まとめ">'
+    + '<div class="ssm-bar">'
+    + '<label>支払った月 <select id="ssm-ym">' + months.map((m) => '<option value="' + m + '">' + exdEsc(ymText(m)) + '</option>').join('') + '<option value="">すべての月</option></select></label>'
+    + (showEmp ? '<label>社員 <select id="ssm-emp"><option value="">全員</option>' + [...emps].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([c, n]) => '<option value="' + exdEsc(c) + '">' + exdEsc(n) + '</option>').join('') + '</select></label>' : '')
+    + '<span id="ssm-count" class="ssm-count"></span>'
     + '<button type="button" class="secondary ss-print-btn">PDFで印刷</button>'
-    + '<button type="button" class="secondary ss-monthly-close">閉じる</button></div>'
-    + '<div class="settlement-sheet-scroll">' + sheets + '</div></div>';
-  if (box.scrollIntoView) box.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    + '<button type="button" class="ssm-close">閉じる</button></div>'
+    + '<div class="settlement-sheet-scroll ssm-scroll" id="ssm-scroll"></div></div>';
+  document.body.appendChild(o);
+  document.body.classList.add('ssm-open');
+  const render = () => {
+    const ym = o.querySelector('#ssm-ym').value;
+    const empSel = o.querySelector('#ssm-emp');
+    const code = empSel ? empSel.value : '';
+    const pick = all.filter((r) => (!ym || expenseMonthlyKey(r) === ym) && (!code || r.employee_code === code));
+    const html = expenseMonthlySheetsHtml(pick);
+    const sc = o.querySelector('#ssm-scroll');
+    sc.innerHTML = html || '<div class="hint" style="padding:24px;">この条件に当てはまる経費はありません。</div>';
+    sc.scrollTop = 0;
+    o.querySelector('#ssm-count').textContent = html ? (sc.querySelectorAll('.settlement-sheet').length + '枚') : '0枚';
+    const nm = code ? (emps.get(code) || '').replace(/\s+/g, '') : '全員';
+    o.querySelector('.ssm-wrap').dataset.printTitle = '経費精算書_月別まとめ_' + (ym || '全期間') + '_' + nm;
+  };
+  o.querySelector('#ssm-ym').addEventListener('change', render);
+  if (o.querySelector('#ssm-emp')) o.querySelector('#ssm-emp').addEventListener('change', render);
+  o.querySelector('.ssm-close').addEventListener('click', closeExpenseMonthlyOverlay);
+  const onKey = (ev) => { if (ev.key === 'Escape') { closeExpenseMonthlyOverlay(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
+  render();
 }
 document.addEventListener('click', (e) => {
-  const t = e.target && e.target.closest ? e.target.closest('#mel-monthly-sheet, #ela-monthly-sheet, .ss-monthly-close') : null;
+  const t = e.target && e.target.closest ? e.target.closest('#mel-monthly-sheet, #ela-monthly-sheet') : null;
   if (!t) return;
-  if (t.classList.contains('ss-monthly-close')) { const box = t.closest('#mel-monthly-box, #ela-monthly-box'); if (box) box.innerHTML = ''; return; }
-  if (t.id === 'mel-monthly-sheet') renderExpenseMonthlyPanel(document.getElementById('mel-monthly-box'), myExpenseLedgerRows, myExpenseLedgerMonth);
-  else renderExpenseMonthlyPanel(document.getElementById('ela-monthly-box'), expenseLedgerAdminRows, expenseLedgerAdminFilters.yearMonth);
+  if (t.id === 'mel-monthly-sheet') renderExpenseMonthlyPanel(null, myExpenseLedgerRows, { hideEmployee: true });
+  else renderExpenseMonthlyPanel(null, expenseLedgerAdminRows, {});
 });
 
 // 申請を送る前に、金額や日付がふつうでない明細を本人に確認する(2026-11-02)。
@@ -6648,12 +6743,14 @@ async function loadExpenseLedgerAdmin() {
   listEl.innerHTML = '<div class="hint">読み込み中...</div>';
   hideError('ela-error');
   try {
-    expenseLedgerAdminRows = await rpc('admin_get_expense_ledger', {
+    // 月は「支払った月(未払いは申請した月)」で絞る。領収書の日付(読み違いがありうる)には頼らないため、
+    // サーバーには月を渡さず全期間を取り、ここで絞る(2026-11-06 Shota指示)。
+    expenseLedgerAdminRows = (await rpc('admin_get_expense_ledger', {
       p_admin_employee_code: session.employeeCode,
-      p_year_month: expenseLedgerAdminFilters.yearMonth || null,
+      p_year_month: null,
       p_target_employee_code: expenseLedgerAdminFilters.employeeCode || null,
       p_status_group: expenseLedgerAdminFilters.statusGroup || null,
-    }) || [];
+    }) || []).filter((r) => !expenseLedgerAdminFilters.yearMonth || expenseMonthlyKey(r) === expenseLedgerAdminFilters.yearMonth);
     // 却下された明細は、税理士へ出す紙にも載せないので、合計にも入れない(2026-11-02)。
     const total = expenseLedgerAdminRows.filter((r) => r.item_approval_status !== 'rejected').reduce((s, r) => s + Number(r.amount || 0), 0);
     const groupedAdmin = groupExpenseLedgerRows(expenseLedgerAdminRows);
@@ -6666,10 +6763,45 @@ async function loadExpenseLedgerAdmin() {
     }
     // 台帳は「領収書1件=1行」ではなく「申請(経費精算書)1件=1カード」で並べ、カードを
     // クリックするとその申請の紙+領収書がまとめて開く(2026-09-12ユーザー指摘)。
-    listEl.innerHTML = groupedAdmin.map((g) => expenseRequestLedgerCardHtml(g)).join('');
+    // 人ごとにまとめ、見出しに「いつ・いくら支払ったか」を出す(バラバラに並んで見えない、の指摘 2026-11-06)。
+    const payMd = (v) => { const d = new Date(v); if (Number.isNaN(d.getTime())) return ''; const j = new Date(d.getTime() + 9 * 3600000); return (j.getUTCMonth() + 1) + '/' + j.getUTCDate(); };
+    const people = new Map();
+    groupedAdmin.forEach((g) => {
+      if (!people.has(g.employee_code)) people.set(g.employee_code, { name: g.employee_name, code: g.employee_code, cards: [] });
+      people.get(g.employee_code).cards.push(g);
+    });
+    const personHtml = [...people.values()].sort((a, b) => String(a.code).localeCompare(String(b.code))).map((p) => {
+      const rowsOf = expenseLedgerAdminRows.filter((r) => r.employee_code === p.code && r.item_approval_status !== 'rejected');
+      const total = rowsOf.reduce((s, r) => s + Number(r.amount || 0), 0);
+      const byDate = new Map(); let unpaid = 0;
+      rowsOf.forEach((r) => {
+        const k = r.paid_at ? payMd(r.paid_at) : '';
+        if (k) byDate.set(k, (byDate.get(k) || 0) + Number(r.amount || 0)); else if (r.payment_status !== 'not_applicable') unpaid += Number(r.amount || 0);
+      });
+      const paidList = [...byDate.entries()].sort((a, b) => { const [am, ad] = a[0].split('/').map(Number); const [bm, bd] = b[0].split('/').map(Number); return am - bm || ad - bd; })
+        .map(([k, v]) => `${k} ${yenText(v)}`).join(' / ');
+      const cards = p.cards.slice().sort((a, b) => new Date(b.paid_at || b.requested_at) - new Date(a.paid_at || a.requested_at));
+      return `<div class="ela-person">
+        <div class="ela-person-head"><b>${exdEsc(p.name)}</b><span>申請${p.cards.length}件・合計${yenText(total)}</span>
+          <button type="button" class="secondary ela-person-only" data-emp="${exdEsc(p.code)}">この人だけ見る</button></div>
+        <div class="ela-person-pay">支払い: ${paidList ? exdEsc(paidList) : 'まだありません'}${unpaid ? ` ／ <span class="ela-unpaid">未払い ${yenText(unpaid)}</span>` : ''}</div>
+        ${cards.map((g) => expenseRequestLedgerCardHtml(g)).join('')}
+      </div>`;
+    }).join('');
+    listEl.innerHTML = personHtml;
     hydrateIcons(listEl);
     listEl.querySelectorAll('.expense-ledger-request-card').forEach((card) => {
       card.addEventListener('click', () => openRequestDetail('expense_reimbursement', card.dataset.requestId));
+    });
+    listEl.querySelectorAll('.ela-person-only').forEach((b) => {
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        expenseLedgerAdminFilters.employeeCode = b.dataset.emp;
+        const sel = document.getElementById('ela-employee');
+        if (sel) sel.value = b.dataset.emp;
+        loadExpenseLedgerAdmin();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
     });
     bodyEl.innerHTML = expenseLedgerAdminRows.map((r) => `
       <tr>
@@ -6727,12 +6859,29 @@ async function loadEntertainmentMonthlyReport() {
     });
     const items = (r && r.items) || [];
     const byCat = (r && r.by_category) || [];
+    // 申請が出ているのに領収書がまだ無いものも別に出す(上の表は領収書が出て承認された明細だけのため、申請より少なく見える)。
+    // 取得できなくても上の表は出す(新しい関数がまだ無い環境でも壊さない)。
+    let pre = null;
+    try {
+      pre = await rpc('admin_get_entertainment_preapproval_monthly', { p_admin_employee_code: session.employeeCode, p_year: year, p_month: month });
+    } catch (e) { pre = null; }
+    const preItems = ((pre && pre.items) || []).filter((p) => !p.receipt_count);
+    const preHtml = !pre ? '' : `
+      <div class="form-title" style="font-size:15px; margin-top:22px;">接待の事前申請(領収書がまだ出ていないもの)${preItems.length}件・予定金額の合計${yenText(pre.no_receipt_planned_total)}</div>
+      <div class="hint" style="margin:4px 0 8px;">この月の接待の申請は全部で${pre.item_count}件(予定${yenText(pre.planned_total)})です。上の表には領収書が出て承認された分だけが入ります。下は、申請はあるのに領収書がまだ出ていない分です(領収書が出ると上の表に入ります)。</div>
+      ${preItems.length ? `<div class="areq-table-wrap" style="overflow-x:auto;"><table class="areq-table">
+        <thead><tr><th>予定日</th><th>申請者</th><th>店名</th><th>予定金額</th><th>取引先</th><th>取引先の参加者</th><th>自社の参加者</th><th>申請の種類</th><th>状態</th></tr></thead>
+        <tbody>${preItems.map((p) => `<tr>
+          <td>${dateText(p.planned_date)}</td><td>${exdEsc(p.applicant || '-')}</td><td>${exdEsc(p.planned_store || '(未入力)')}</td><td>${yenText(p.planned_amount)}</td>
+          <td>${exdEsc(p.partner_name || '-')}</td><td>${exdEsc(p.partner_participants || '-')}${p.partner_participant_count ? `(${p.partner_participant_count}名)` : ''}</td>
+          <td>${exdEsc((p.our_participant_names || []).join('、') || '-')}</td><td>${exdEsc(p.submission_timing || '-')}</td>
+          <td><span class="mini-tag warn">領収書まだ</span> ${p.status === 'approved' ? '申請は承認済み' : '申請の承認待ち'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="hint">領収書が出ていない申請はありません。</div>'}`;
     if (summaryEl) {
       summaryEl.textContent = items.length
-        ? `${year}年${month}月・${items.length}件・合計${yenText(r.total)}(${byCat.map((c) => `${c.account_category} ${c.count}件 ${yenText(c.total)}`).join('・')})`
-        : `${year}年${month}月は対象の明細がありません。`;
+        ? `${year}年${month}月・${items.length}件・合計${yenText(r.total)}(${byCat.map((c) => `${c.account_category} ${c.count}件 ${yenText(c.total)}`).join('・')})${pre ? `・事前申請は全${pre.item_count}件(領収書まだ ${preItems.length}件)` : ''}`
+        : `${year}年${month}月は領収書つきの明細がありません。${pre ? `接待の事前申請は全${pre.item_count}件(領収書まだ ${preItems.length}件)です。` : ''}`;
     }
-    if (!items.length) { contentEl.innerHTML = '<div class="hint">この月は接待交際費・会議費・福利厚生費に確定した明細がありません。</div>'; return; }
+    if (!items.length) { contentEl.innerHTML = '<div class="hint">この月は接待交際費・会議費・福利厚生費に確定した明細がありません。</div>' + preHtml; return; }
     contentEl.innerHTML = `
       <div class="form-title" style="font-size:15px;">${exdEsc(String(year))}年${exdEsc(String(month))}月 接待交際費・会議費・福利厚生費</div>
       <div class="areq-table-wrap" style="overflow-x:auto;">
@@ -6761,7 +6910,7 @@ async function loadEntertainmentMonthlyReport() {
             <tr><td colspan="3" style="text-align:right; font-weight:700;">合計</td><td style="font-weight:700;">${yenText(r.total)}</td><td colspan="6"></td></tr>
           </tbody>
         </table>
-      </div>`;
+      </div>${preHtml}`;
   } catch (e) {
     contentEl.innerHTML = '';
     if (summaryEl) summaryEl.textContent = '';
@@ -20749,6 +20898,7 @@ function init() {
     // なるため、filter を持たない経路で入ったときは必ず「すべて」へ戻す。
     const navf = navCurrent() && navCurrent().screen === 'expense-ledger-admin' ? (navCurrent().filter || '') : '';
     expenseLedgerAdminFilters.statusGroup = navf === 'original_uncollected' ? 'original_uncollected' : '';
+    { const hdr = document.querySelector('.app-header'); const bar = document.getElementById('ela-filter-bar'); if (hdr && bar) bar.style.top = (hdr.offsetHeight || 56) + 'px'; }
     document.querySelectorAll('#ela-status-filter .filter-chip').forEach((c) => c.classList.toggle('active', (c.dataset.status || '') === expenseLedgerAdminFilters.statusGroup));
     // 台帳本体を先に読む(社員絞り込み用の名簿取得を待たせない。名簿が取れなくても
     // 「全員」のまま台帳は使えるようにする)。

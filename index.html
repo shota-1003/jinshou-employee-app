@@ -2635,9 +2635,10 @@
     <button type="button" class="back-link" data-nav="admin-dashboard">ダッシュボードに戻る</button>
     <div class="form-title">経費の履歴台帳</div>
     <div class="hint" style="margin-bottom:10px;">申請者・勘定科目・領収書・申請日時・承認日時と承認方式・支払予定日・支払完了日・帰属月・税理士への送信状態を、領収書1枚ごとに1行で表示します。承認済み・却下・支払済みを含む全履歴が対象です。</div>
-    <label for="ela-month">帰属月</label>
+    <div id="ela-filter-bar">
+    <label for="ela-month">支払った月(未払いは申請した月)</label>
     <input type="month" id="ela-month">
-    <label for="ela-employee">社員(社員番号)</label>
+    <label for="ela-employee">社員(特定の人だけ見られます)</label>
     <select id="ela-employee"><option value="">全員</option></select>
     <div class="filter-row" id="ela-status-filter">
       <button type="button" class="filter-chip active" data-status="">すべて</button>
@@ -2647,6 +2648,7 @@
       <button type="button" class="filter-chip" data-status="unpaid">立替未精算</button>
       <button type="button" class="filter-chip" data-status="paid">支払済み</button>
       <button type="button" class="filter-chip" data-status="original_uncollected">原本未回収(支払い済み)</button>
+    </div>
     </div>
     <div class="hint" id="ela-count" style="margin:10px 0;"></div>
     <button type="button" class="secondary" id="ela-export-csv">税理士向けCSVを書き出す</button>

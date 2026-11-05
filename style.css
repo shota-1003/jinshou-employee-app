@@ -1944,5 +1944,27 @@ body.assignment-calendar-open .app-header { display: none; }
   body.printing-ss #ss-print-root .ss-print-page:last-child { break-after: auto; page-break-after: auto; }
   body.printing-ss #ss-print-root tr { page-break-inside: avoid; }
 }
+/* 経費の履歴台帳(管理者): 月・社員・状態の選択は、スクロールしても上に残す。人ごとに見出しを付ける。 */
+#ela-filter-bar { position: sticky; top: var(--ela-sticky-top, 56px); z-index: 20; background: var(--card-bg-solid, #101b36); padding: 8px 0 6px; border-bottom: 1px solid rgba(255, 255, 255, .12); }
+#ela-filter-bar .filter-row { margin-top: 6px; }
+.ela-person { margin-top: 18px; }
+.ela-person-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 12px; border-radius: 8px; background: rgba(255, 255, 255, .08); font-size: 15px; }
+.ela-person-head b { font-size: 17px; }
+.ela-person-head .ela-person-only { width: auto; margin-left: auto; padding: 4px 12px; font-size: 13px; white-space: nowrap; }
+.ela-person-pay { padding: 6px 12px 4px; font-size: 13px; opacity: .92; }
+.ela-unpaid { color: #ffb347; font-weight: 700; }
+/* 月ごとにまとめた紙: 画面いっぱいのオーバーレイ。帯(月・社員・印刷・閉じる)は常に上に固定。 */
+#ssm-overlay { position: fixed; inset: 0; z-index: 9000; background: rgba(8, 14, 30, 0.82); display: flex; padding: 12px; }
+#ssm-overlay .ssm-wrap { margin: 0; flex: 1 1 auto; display: flex; flex-direction: column; max-width: 1100px; margin-left: auto; margin-right: auto; width: 100%; }
+.ssm-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; background: #f4f6f9; color: #1b2230; font-weight: 700; font-size: 14px; border-bottom: 1px solid #d8dce3; }
+.ssm-bar label { display: flex; align-items: center; gap: 6px; color: #1b2230; }
+.ssm-bar select { width: auto; min-width: 120px; padding: 6px 8px; font-size: 14px; color: #1b2230 !important; background: #fff !important; border: 1px solid #9aa5ba; border-radius: 6px; }
+.ssm-count { font-size: 13px; color: #55607a; }
+.ssm-bar button { width: auto; flex: 0 0 auto; white-space: nowrap; padding: 8px 16px; font-size: 14px; }
+.ssm-bar .ss-print-btn { margin-left: auto; margin-right: 0; }
+.ssm-bar .ssm-close { background: #c0392b; color: #fff; border: 0; border-radius: 6px; font-weight: 700; }
+#ssm-overlay .ssm-scroll { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+body.ssm-open { overflow: hidden; }
+@media print { #ssm-overlay { display: none !important; } }
 /* 月ごとにまとめた紙: 画面では、紙と紙の間に区切りを入れる(印刷は1枚ずつ別ページ) */
 .settlement-sheet-scroll > .settlement-sheet + .settlement-sheet { margin-top: 28px; padding-top: 20px; border-top: 2px dashed #999; }

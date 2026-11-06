@@ -55,7 +55,7 @@ window.ClientErrorReporter.init({
 // ブラウザ用コードのためscripts/lib/optional-degrade-rpcs.js(QA側の正本)をrequireできず値を
 // 複製している。このSetを変更する際は必ずscripts/lib/optional-degrade-rpcs.jsも同時に更新すること
 // (2026-09-04: 更新漏れでQAが想定内の404を障害として誤検知した教訓、errors.id=1300)。
-const OPTIONAL_MISSING_RPCS = new Set(['get_my_lucky_status', 'mark_lucky_animation_seen', 'get_lucky_prize_month', 'assignment_get_my_schedule', 'admin_list_lucky_draws', 'admin_run_lucky_draw', 'admin_set_lucky_payout']);
+const OPTIONAL_MISSING_RPCS = new Set(['get_my_self_approval_exempt', 'get_my_lucky_status', 'mark_lucky_animation_seen', 'get_lucky_prize_month', 'assignment_get_my_schedule', 'admin_list_lucky_draws', 'admin_run_lucky_draw', 'admin_set_lucky_payout']);
 // 2026-09-05(初回登録・ログイン担当): 第3引数optsを追加した。既存の呼び出しは
 // すべて2引数のままで挙動が変わらない。opts.noSessionReset=true のときだけ、
 // 「セッション失効エラーを受け取ったらその場でログイン画面へ強制的に戻す」処理を
@@ -1673,9 +1673,27 @@ function consumeHomeFocus() {
   setTimeout(go, 300);
 }
 
+// 自分の申請を自分で承認できる人か(DBの属性 self_approval_exempt、社長だけ。2026-11-06 Shota指示)。
+// 氏名・社員番号では判定せず、DBに聞く。取れなければ「できない」として扱う(従来どおりの安全側)。
+let selfApprovalExemptCache = { code: null, value: false };
+async function refreshSelfApprovalExempt() {
+  const session = getSession();
+  if (!session || !session.employeeCode) return false;
+  if (selfApprovalExemptCache.code === session.employeeCode) return selfApprovalExemptCache.value;
+  try {
+    const v = await rpc('get_my_self_approval_exempt', { p_employee_code: session.employeeCode });
+    selfApprovalExemptCache = { code: session.employeeCode, value: v === true };
+  } catch (e) { selfApprovalExemptCache = { code: session.employeeCode, value: false }; }
+  return selfApprovalExemptCache.value;
+}
+function canSelfApprove() {
+  const session = getSession();
+  return !!(session && selfApprovalExemptCache.code === session.employeeCode && selfApprovalExemptCache.value);
+}
 function enterMenu(replace) {
   if (consumeLoginRedirect()) return;
   const session = getSession();
+  refreshSelfApprovalExempt();
   // セッションが失効/未確立のまま呼ばれた場合、社員名の参照で
   // "null is not an object" 例外(finding#14/#10)になりホームが描画されない。
   // 2026-09-05: 単に'login'を出すと、端末トークンは有効なのに社員番号の入力から
@@ -17009,7 +17027,10 @@ function dailyReportEditDiffHtml(oldData, newData) {
   const blocks = [];
   for (let i = 0; i < n; i++) {
     const o = oldArr[i] || {};
-    const nw = newArr[i] || {};
+    const nw = Object.assign({}, newArr[i] || {});
+    // 人工が空のまま申請されたときは、反映時に「終日=1.0、午前・午後=0.5」が入る(submit_daily_reportと同じ)。
+    // 空欄のまま「1 → -」と出すと、人工を消す申請に見えてしまう。
+    if (newArr[i] && (nw.headcount === '' || nw.headcount == null)) nw.headcount = nw.work_type === '終日' ? 1 : (nw.work_type === '午前' || nw.work_type === '午後') ? 0.5 : nw.headcount;
     const diffs = DR_EDIT_DIFF_FIELDS.map(([key, label, fmt]) => {
       const ov = fmt(o[key]);
       const nv = fmt(nw[key]);
@@ -17095,27 +17116,40 @@ async function loadDailyReportEditRequestsAdmin() {
   const list = document.getElementById('daily-report-edit-requests-list');
   list.innerHTML = '<div class="hint">読み込み中...</div>';
   try {
+    await refreshSelfApprovalExempt();
     const rows = await rpc('admin_list_daily_report_edit_requests', { p_admin_employee_code: session.employeeCode, p_status: 'pending' });
     if (!rows || rows.length === 0) { list.innerHTML = '<div class="empty-state">修正申請はありません</div>'; return; }
-    list.innerHTML = rows.map((r) => `
+    // 自分自身の申請は自分では承認・却下できない(社員ポータルは役職に関わらず全員同じ。DBが拒否する)。
+    // 以前は押しても何も出ず、理由が分からなかった(2026-11-06 Shota「なんで関口承認できんの」)。
+    // 押す前に理由を出し、押せないようにする。
+    list.innerHTML = rows.map((r) => {
+      const mine = r.employee_code != null && String(r.employee_code) === String(session.employeeCode) && !canSelfApprove();
+      return `
       <div class="history-item">
         <div class="row1"><span>${r.employee_name}</span><span>${r.report_date}</span></div>
         <div class="row2">理由: ${r.reason}</div>
         ${dailyReportEditDiffHtml(r.old_data, r.new_data)}
         <div class="hint-inline" style="margin-top:4px;">申請日時: ${new Date(r.requested_at).toLocaleString('ja-JP')}</div>
+        ${mine ? '<div class="hint-inline" style="margin-top:6px;color:#ffb347;font-weight:700;">あなた自身の申請なので、自分では承認も却下もできません。別の管理者(徳永さん・坂本さんなど)に承認を依頼してください。</div>' : ''}
+        <div class="error dre-error" style="margin-top:6px;"></div>
         <div class="button-row" style="margin-top:8px;">
-          <button type="button" data-approve-id="${r.id}">承認して反映</button>
-          <button type="button" class="secondary" data-reject-id="${r.id}">却下</button>
+          <button type="button" data-approve-id="${r.id}"${mine ? ' disabled' : ''}>承認して反映</button>
+          <button type="button" class="secondary" data-reject-id="${r.id}"${mine ? ' disabled' : ''}>却下</button>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
+    const showDreError = (btn, e) => {
+      const box = btn.closest('.history-item').querySelector('.dre-error');
+      if (box) { box.textContent = (e && e.message) || '処理できませんでした。'; box.style.display = 'block'; }
+    };
     list.querySelectorAll('[data-approve-id]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         btn.disabled = true;
         try {
           await rpc('admin_decide_daily_report_edit_request', { p_admin_employee_code: session.employeeCode, p_request_id: Number(btn.dataset.approveId), p_action: 'approved', p_reason: null });
           loadDailyReportEditRequestsAdmin();
-        } catch (e) { btn.disabled = false; }
+        } catch (e) { btn.disabled = false; showDreError(btn, e); }
       });
     });
     list.querySelectorAll('[data-reject-id]').forEach((btn) => {
@@ -17125,7 +17159,7 @@ async function loadDailyReportEditRequestsAdmin() {
         try {
           await rpc('admin_decide_daily_report_edit_request', { p_admin_employee_code: session.employeeCode, p_request_id: Number(btn.dataset.rejectId), p_action: 'rejected', p_reason: reason });
           loadDailyReportEditRequestsAdmin();
-        } catch (e) { btn.disabled = false; }
+        } catch (e) { btn.disabled = false; showDreError(btn, e); }
       });
     });
   } catch (e) {
@@ -17468,7 +17502,8 @@ async function loadRequestDetailContent() {
       if (histTitle) histTitle.style.display = 'none';
       document.getElementById('rdetail-history').style.display = 'none';
       document.getElementById('rdetail-receipt-title').style.display = 'none';
-      const canDecide = !(r.employee_code && session && r.employee_code === session.employeeCode);
+      await refreshSelfApprovalExempt();
+      const canDecide = !(r.employee_code && session && r.employee_code === session.employeeCode) || canSelfApprove();
       await renderExpenseRequestDetailInto('rdetail-receipts', sourceId, { mode: 'admin', canDecide });
       renderRequestDetailActions(sourceType, r);
       return;
@@ -17554,7 +17589,7 @@ function renderRequestDetailActions(sourceType, r) {
   const box = document.getElementById('rdetail-actions');
   // 自己承認防止(バックエンド側でも必ず拒否されるが、UI上でも操作できないことを明示する)。
   const session = getSession();
-  if (r.employee_code && session && r.employee_code === session.employeeCode) {
+  if (r.employee_code && session && r.employee_code === session.employeeCode && !canSelfApprove()) {
     box.innerHTML = '<div class="hint">自分自身の申請は承認できません。別の管理者による承認が必要です。</div>';
     return;
   }

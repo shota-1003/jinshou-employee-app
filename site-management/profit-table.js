@@ -14,6 +14,25 @@ function formHTML(saved={}){const items=costs(saved),months=saved.rows||Array.fr
   const wageTotal=costUnits===null||wageRate===null?null:costUnits*wageRate;
   return{net,unitAmount,fixedTotal,afterFixed,afterFixedUnit,wageTotal,afterWage:afterFixed===null||wageTotal===null?null:afterFixed-wageTotal};
  }
+ async function reportedMonth(client,key,month,current){
+  let after=null,snapshot=null,records=null,seen=new Set(),employeeUnits=0,externalUnits=0,reviewRecords=0;
+  do{
+   const data=await client.read(key,month,after,snapshot);
+   if(!current())throw Error('表示範囲が変わりました');
+   if(!Array.isArray(data?.rows)||!data.snapshot||(snapshot&&snapshot!==data.snapshot)||!Number.isSafeInteger(Number(data.summary?.records)))throw Error('日報の集計範囲を確認できません');
+   snapshot=data.snapshot;records=Number(data.summary.records);
+   for(const r of data.rows){
+    if(seen.has(String(r.id)))throw Error('日報が重複しています。再読込してください');seen.add(String(r.id));
+    if(!['employee','subcontractor'].includes(r.workerType)||r.units===null||r.units===undefined||String(r.units).trim()===''||!Number.isFinite(Number(r.units))||Number(r.units)<0)throw Error('人工未記入の日報があります。入場履歴で確認してください');
+    if(r.workerType==='employee')employeeUnits+=Number(r.units);else externalUnits+=Number(r.units);
+    if(r.notAdoptable)reviewRecords++;
+   }
+   if(data.next!=null&&(!/^\d+$/.test(String(data.next))||(after!=null&&BigInt(data.next)<=BigInt(after))))throw Error('日報の読込位置を確認できません');
+   after=data.next;
+  }while(after!=null);
+  if(seen.size!==records)throw Error('日報の全件数が一致しません。再読込してください');
+  return {employeeUnits,externalUnits,reviewRecords};
+ }
  function mountSheet(f){
   const names={amount:'請求基準額',cost:'費用合計',net:'費用控除後',units:'実績人工（社員＋外注）',unitAmount:'1人工当たり額',fixedTotal:'固定費総額（1人工単価×人工）',afterFixed:'固定費控除後',afterFixedUnit:'控除後1人工',wageTotal:'給与総額',afterWage:'給与控除残額'};
   const keys=Object.keys(names),top=f.querySelector('thead tr'),legacyHead=[...top.children].find(th=>th.textContent==='旧手入力人工・比較用');
@@ -29,7 +48,7 @@ function formHTML(saved={}){const items=costs(saved),months=saved.rows||Array.fr
   const print=(key,amount,cost,units,m)=>key==='amount'?money(amount):key==='cost'?money(cost):key==='units'?unitsText(units):key==='unitAmount'||key==='afterFixedUnit'?ratio(m[key],units):money(m[key]);
   const sign=(key,amount,cost,units,m)=>{const n=key==='amount'?amount:key==='cost'?cost:key==='units'?units:m[key];return n===null?'unset':n<0?'negative':'positive'};
   const add=(a,n)=>a===null||n===null?null:a+n;
-  const breakdown=(own,external,review)=>own===null||external===null?'未取得':'<details data-labor-breakdown><summary style="cursor:pointer;color:#24568a" aria-label="合計'+unitsText(own+external)+'人工の内訳">'+unitsText(own+external)+'人工</summary><div>社員 '+unitsText(own)+'人工<br>外注 '+unitsText(external)+'人工'+(review?'<br>集計保留 '+review+'件（要確認）':'')+'</div></details>';
+  const breakdown=(own,external,review)=>own===null||external===null?'未取得':'<details data-labor-breakdown><summary style="cursor:pointer;color:#24568a" aria-label="合計'+unitsText(own+external)+'人工の内訳">'+unitsText(own+external)+'人工</summary><div>社員 '+unitsText(own)+'人工<br>外注 '+unitsText(external)+'人工'+(review?'<br>うち要確認 '+review+'件（要確認）':'')+'</div></details>';
   const render=()=>{const purpose=f.elements.ratePurpose.value,basis=f.elements.invoiceBasis.value,fixed=f.elements.fixed.value===''?null:Number(f.elements.fixed.value),wage=f.elements.wage.value===''?null:Number(f.elements.wage.value),totals={invoice:{amount:0,cost:0,units:0,own:0,external:0,costUnits:0,review:0},cash:{amount:0,cost:0,units:0,own:0,external:0,costUnits:0,review:0}};let html='';
    for(const row of f.querySelectorAll('[data-profit-row]')){decorate(row);const field=k=>row.querySelector('[data-field="'+k+'"]')?.value??'',month=field('month'),ready=row.dataset.actualReady==='1',own=ready?Number(row.dataset.actualOwn):null,external=ready?Number(row.dataset.actualExternal):null,units=own===null||external===null?null:own+external,costUnits=!purpose?null:purpose==='own'?own:purpose==='external'?external:units,review=ready?Number(row.dataset.actualReview):0;
     const costInputs=[...f.querySelectorAll('[data-cost-id]')].map(c=>field(c.dataset.costId)),cost=costInputs.reduce((n,v)=>n+Number(v||0),0),invoice=basis==='manual'?(field('bill')===''?null:Number(field('bill'))):basis==='salesExcl'||basis==='salesIncl'?(row.dataset.salesReady==='1'&&Number(row.dataset.sourceBillCount)>0?Number(row.dataset[basis==='salesExcl'?'sourceBillExcl':'sourceBillIncl']):null):null,paid=field('paid')===''?null:Number(field('paid'));
@@ -41,7 +60,7 @@ function formHTML(saved={}){const items=costs(saved),months=saved.rows||Array.fr
    }cashBody.innerHTML=html;
    for(const kind of ['invoice','cash']){const {amount,cost,units,own,external,costUnits,review}=totals[kind],m=sheetMath(amount,cost,units,fixed,wage,costUnits);for(const key of keys){const cell=f.querySelector('[data-sheet-'+kind+'-total-cell="'+key+'"]');if(key==='units')cell.innerHTML=breakdown(own,external,review);else cell.textContent=print(key,amount,cost,units,m);cell.dataset.sheetSign=sign(key,amount,cost,units,m)}}
    f.querySelector('[data-sheet-invoice-total] th').colSpan=[...top.children].filter(th=>!th.hidden).findIndex(th=>th.textContent===names.amount);
-   status.textContent='実績人工は社員＋外注の合計です。数字を押すと内訳が開きます。要確認の日報は集計保留です。固定費・給与は指定した人工区分で計算します。日報未取得の月がある場合、合計は未取得です。'+(fixed===null?'固定費単価が未設定です。':'')+(wage===null?'給与単価が未設定です。':'')+(purpose?'':'控除対象の人工区分が未設定です。')+(basis?'':'請求額区分が未設定です。');
+   status.textContent='実績人工は社員＋外注の合計です。数字を押すと内訳が開きます。数値のある要確認日報もポータルと同じく含め、内訳に注意を表示します。固定費・給与は指定した人工区分で計算します。日報未取得の月がある場合、合計は未取得です。'+(fixed===null?'固定費単価が未設定です。':'')+(wage===null?'給与単価が未設定です。':'')+(purpose?'':'控除対象の人工区分が未設定です。')+(basis?'':'請求額区分が未設定です。');
   };f.refreshSheet=render;render();
  }
  function wireForm(f,key,revision,owner,ticket,savedBase={}){
@@ -96,8 +115,8 @@ function wireSources(box,key,owner,ticket){
   const periods=[...new Set([...monthRows.map(x=>x.querySelector('[data-field=month]').value),month])].filter(x=>/^20\d\d-(0[1-9]|1[0-2])$/.test(x));const batches=[];
   const attendanceClient=new SharedAttendance.Client({bridge:(m,p)=>portalSession.call(m,p),identity:()=>portalSession.identity()});
   for(const period of periods){
-   const data=await attendanceClient.read(key,period);if(!current()){rerun=alive();return}
-   const summary=data?.summary,valid=n=>(typeof n==='number'||typeof n==='string'&&n.trim()!=='')&&Number.isFinite(Number(n))&&Number(n)>=0;
+   const summary=await reportedMonth(attendanceClient,key,period,current);if(!current()){rerun=alive();return}
+   const valid=n=>(typeof n==='number'||typeof n==='string'&&n.trim()!=='')&&Number.isFinite(Number(n))&&Number(n)>=0;
    if(!summary||![summary.employeeUnits,summary.externalUnits,summary.reviewRecords].every(valid))throw Error('日報実績の内訳を確認できません');
    for(const row of monthRows.filter(r=>r.querySelector('[data-field=month]').value===period)){row.dataset.actualOwn=summary.employeeUnits;row.dataset.actualExternal=summary.externalUnits;row.dataset.actualReview=summary.reviewRecords;row.dataset.actualReady='1'}
   }f.refreshAuto();

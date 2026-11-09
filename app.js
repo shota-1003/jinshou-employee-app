@@ -12700,6 +12700,7 @@ async function loadSiteAdminList() {
     const details = await rpc('admin_list_sites', {
       p_admin_employee_code: session.employeeCode, p_include_inactive: true, p_query: null,
     }).catch(() => null);
+    const pendingContracts = await rpc('admin_site_contract_list', { p_admin_employee_code: session.employeeCode, p_site_ids: rows.slice(0, 500).map((r) => Number(r.id)) }).catch(() => null);
     listEl.innerHTML = rows.map((s, i) => {
       const candidates = candidateLists[i] || [];
       const detail = Array.isArray(details) ? details.find((row) => Number(row.id) === Number(s.id)) : null;
@@ -12716,8 +12717,9 @@ async function loadSiteAdminList() {
         <div class="row1"><input type="text" class="site-rename-input" value="${s.site_name}"></div>
         <div class="row2">申請者: ${siteProposerText(s)}</div>
         <div class="row2">申請日時: ${new Date(s.created_at).toLocaleString('ja-JP')}</div>
-        <label>元請け会社（承認前に確認）</label>
+        <label>現場全体の元請け（承認前に確認）</label>
         <input type="text" class="site-pending-prime" maxlength="200" value="${exdEsc(detail?.prime_contractor || '')}" placeholder="例: 〇〇建設株式会社">
+        <div class="site-pending-contract"></div>
         <label><input type="checkbox" class="site-pending-internal">元請けなし（社内業務）</label>
         <input type="text" class="site-pending-internal-reason" maxlength="500" placeholder="社内業務で元請けがない理由">
         <div class="error site-pending-prime-error">${details === null ? '元請けの登録済み情報を取得できませんでした。承認前に確認してください。' : ''}</div>
@@ -12728,6 +12730,13 @@ async function loadSiteAdminList() {
         </div>
       </div>`;
     }).join('');
+    listEl.querySelectorAll('.qual-item').forEach((item) => {
+      const c = Array.isArray(pendingContracts) ? pendingContracts.find((x) => Number(x.siteId) === Number(item.dataset.id)) : null;
+      const box = item.querySelector('.site-pending-contract');
+      scMount(box, c || null);
+      const chk = item.querySelector('.site-pending-internal');
+      chk.addEventListener('change', () => { box.style.display = chk.checked ? 'none' : ''; });
+    });
     listEl.querySelectorAll('.approve-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => doDecideSite(e.target.closest('.qual-item'), 'active'));
     });
@@ -12762,7 +12771,13 @@ async function doDecideSite(itemEl, action) {
   const errorEl = itemEl.querySelector('.site-pending-prime-error');
   if (errorEl) errorEl.textContent = '';
   if (action === 'active' && (internal ? !!prime || !reason : !prime)) {
-    if (errorEl) errorEl.textContent = internal ? '社内業務は元請けを空欄にし、理由を入力してください。' : '承認前に元請け会社を入力してください。';
+    if (errorEl) errorEl.textContent = internal ? '社内業務は元請けを空欄にし、理由を入力してください。' : '承認前に現場全体の元請けを入力してください。';
+    return;
+  }
+  const contractRoot = itemEl.querySelector('.site-pending-contract .sc-editor');
+  const contract = action === 'active' && !internal && contractRoot ? scEditorValue(contractRoot, true) : null;
+  if (action === 'active' && !internal && (!contract || contract.error)) {
+    if (errorEl) errorEl.textContent = contract ? contract.error : '直接の受注先を取引先から選んでください。';
     return;
   }
   try {
@@ -12771,9 +12786,15 @@ async function doDecideSite(itemEl, action) {
     }
     if (action === 'active') {
       await rpc('site_prime_exception_set', { p_admin_employee_code: session.employeeCode, p_site_id: Number(id), p_reason: internal ? reason : null });
-      if (!internal) await rpc('admin_update_site_details', {
-        p_admin_employee_code: session.employeeCode, p_site_id: Number(id), p_prime_contractor: prime,
-      });
+      if (!internal) {
+        await rpc('admin_update_site_details', {
+          p_admin_employee_code: session.employeeCode, p_site_id: Number(id), p_prime_contractor: prime,
+        });
+        await rpc('admin_site_contract_set', {
+          p_admin_employee_code: session.employeeCode, p_site_id: Number(id),
+          p_direct_client_partner_id: contract.partnerId, p_prime_contractor: null, p_tiers: contract.tiers,
+        });
+      }
     }
     await rpc('admin_decide_pending_site', { p_admin_employee_code: session.employeeCode, p_site_id: Number(id), p_action: action });
     await loadSiteAdminList();
@@ -12800,10 +12821,13 @@ function populateSitePrefectureSelect(selectId) {
 // ---------- 現場を登録申請(2026-08-28第4弾、一般社員向け) ----------
 
 function resetProposeSiteForm() {
+  scMount(document.getElementById('propose-site-contract'), null);
+  scBindInternalToggle('propose-site-internal', 'propose-site-contract');
   document.getElementById('propose-site-name').value = '';
   document.getElementById('propose-site-address').value = '';
   document.getElementById('propose-site-prime-contractor').value = '';
   document.getElementById('propose-site-internal').checked = false;
+  document.getElementById('propose-site-contract').style.display = '';
   document.getElementById('propose-site-internal-reason').value = '';
   document.getElementById('propose-site-notes').value = '';
   document.getElementById('propose-site-out-of-prefecture').checked = false;
@@ -14299,6 +14323,130 @@ function wireLucky() {
   }));
 }
 
+
+// ---------- 直接の受注先・施工体制(現場の登録・編集・承認で共通の入力部品) ----------
+// 2026-11-09 Shota指示。現場に3つを別々に持たせる: 直接の受注先(必須・取引先から選ぶ)/現場全体の元請け(従来の元請け欄)/施工体制(一次→二次…、迅翔興業の位置)。
+// 保存は DB の admin_site_contract_set / admin_register_site_contract / propose_new_site_contract。取引先は business_partners の ID で持つ(同じ会社を重複登録しない)。
+const SC_TIER_LABELS = ['', '一次', '二次', '三次', '四次', '五次', '六次', '七次', '八次', '九次'];
+function scEditorHtml() {
+  return `
+  <div class="sc-editor">
+    <label>直接の受注先<span class="required-mark">(必須)</span></label>
+    <div class="hint-inline">迅翔興業へ仕事を依頼する会社です。取引先から選びます(上の「現場全体の元請け」とは別に保存されます)。</div>
+    <input type="text" class="sc-direct-input" maxlength="200" autocomplete="off" placeholder="会社名で検索して選ぶ(例: おおたに)">
+    <div class="sc-suggest sc-direct-suggest"></div>
+    <div class="hint-inline sc-direct-state"></div>
+    <label>施工体制(任意)</label>
+    <div class="hint-inline">元請けから順に、一次・二次…の会社を入れます。迅翔興業が何次請けかにチェックします。元請けは「現場全体の元請け」の会社が自動で入ります。</div>
+    <div class="sc-tiers"></div>
+    <button type="button" class="secondary sc-add-tier">一次・二次…の会社を追加</button>
+  </div>`;
+}
+// 入れ物に入力部品を取り付けて空の状態にする。root を返す。
+function scMount(container, initial) {
+  if (!container) return null;
+  if (!container.querySelector('.sc-editor')) container.innerHTML = scEditorHtml();
+  const root = container.querySelector('.sc-editor');
+  scEditorInit(root, initial || null);
+  return root;
+}
+// 「元請けなし(社内業務)」のときは、直接の受注先・施工体制は不要なので隠す。
+function scBindInternalToggle(checkId, containerId) {
+  const chk = document.getElementById(checkId);
+  const box = document.getElementById(containerId);
+  if (!chk || !box || chk._scBound) return;
+  chk._scBound = true;
+  const apply = () => { box.style.display = chk.checked ? 'none' : ''; };
+  chk.addEventListener('change', apply);
+  apply();
+}
+function scBindPicker(input, suggestEl, onPick, onClear) {
+  let timer = null;
+  input.addEventListener('input', () => {
+    onClear();
+    clearTimeout(timer);
+    const q = input.value.replace(/株式会社|\(株\)|（株）|有限会社|\(有\)|（有）|合同会社/g, '').trim();
+    if (!q) { suggestEl.innerHTML = ''; return; }
+    timer = setTimeout(async () => {
+      try {
+        const rows = await rpc('search_business_partners', { p_query: q });
+        suggestEl.innerHTML = (rows || []).map((r) => `<button type="button" class="secondary sc-opt" data-id="${r.id}" data-name="${exdEsc(r.partner_name)}" style="display:block;width:100%;text-align:left;margin-top:4px;">${exdEsc(r.partner_name)}</button>`).join('')
+          || '<div class="hint-inline">該当する取引先がありません。取引先は経営管理アプリで登録します。</div>';
+      } catch (e) { suggestEl.innerHTML = '<div class="hint-inline">検索に失敗しました。もう一度入力してください。</div>'; }
+    }, 250);
+  });
+  suggestEl.addEventListener('click', (ev) => {
+    const b = ev.target.closest('.sc-opt');
+    if (!b) return;
+    input.value = b.dataset.name;
+    suggestEl.innerHTML = '';
+    onPick(Number(b.dataset.id), b.dataset.name);
+  });
+}
+function scRelabelTiers(root) {
+  root.querySelectorAll('.sc-tier-row').forEach((row, i) => { row.querySelector('.sc-tier-label').textContent = `${SC_TIER_LABELS[i + 1]}請け`; });
+}
+function scAddTierRow(root, tier) {
+  const wrap = root.querySelector('.sc-tiers');
+  if (wrap.children.length >= 9) return;
+  const row = document.createElement('div');
+  row.className = 'sc-tier-row';
+  row.style.cssText = 'margin-top:8px;padding:8px;border:1px solid var(--border,#334);border-radius:8px;';
+  row.innerHTML = `
+    <div class="row2" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <strong class="sc-tier-label"></strong>
+      <label style="font-weight:normal;display:flex;gap:6px;align-items:center;margin:0;"><input type="checkbox" class="sc-self" style="width:auto;margin:0;"> ここが迅翔興業</label>
+      <button type="button" class="link sc-tier-del" style="margin-left:auto;width:auto;min-height:0;padding:4px 8px;font-size:12px;">この段を削除</button>
+    </div>
+    <input type="text" class="sc-tier-name" maxlength="200" autocomplete="off" placeholder="会社名(取引先から選ぶか、そのまま入力)">
+    <div class="sc-suggest"></div>`;
+  wrap.appendChild(row);
+  const nameEl = row.querySelector('.sc-tier-name');
+  row._partnerId = null;
+  if (tier) { nameEl.value = tier.name || ''; row._partnerId = tier.partnerId ? Number(tier.partnerId) : null; row.querySelector('.sc-self').checked = !!tier.isSelf; }
+  scBindPicker(nameEl, row.querySelector('.sc-suggest'), (id) => { row._partnerId = id; }, () => { row._partnerId = null; });
+  row.querySelector('.sc-self').addEventListener('change', (ev) => {
+    if (ev.target.checked) root.querySelectorAll('.sc-self').forEach((c) => { if (c !== ev.target) c.checked = false; });
+  });
+  row.querySelector('.sc-tier-del').addEventListener('click', () => { row.remove(); scRelabelTiers(root); });
+  scRelabelTiers(root);
+}
+function scEditorInit(root, initial) {
+  const direct = root.querySelector('.sc-direct-input');
+  const state = root.querySelector('.sc-direct-state');
+  root._sc = { partnerId: null };
+  const show = () => {
+    state.textContent = root._sc.partnerId ? `選択中: ${direct.value}(取引先ID ${root._sc.partnerId})` : '取引先の一覧から選んでください(入力した文字だけでは保存できません)。';
+    state.style.color = root._sc.partnerId ? '' : 'var(--danger)';
+  };
+  if (!root._scBound) {
+    root._scBound = true;
+    scBindPicker(direct, root.querySelector('.sc-direct-suggest'), (id) => { root._sc.partnerId = id; show(); }, () => { root._sc.partnerId = null; show(); });
+    root.querySelector('.sc-add-tier').addEventListener('click', () => scAddTierRow(root, null));
+  }
+  root.querySelector('.sc-tiers').innerHTML = '';
+  direct.value = '';
+  if (initial) {
+    if (initial.directClientPartnerId) { direct.value = initial.directClientName || ''; root._sc.partnerId = Number(initial.directClientPartnerId); }
+    (initial.tiers || []).forEach((t) => scAddTierRow(root, t));
+  }
+  show();
+}
+// { partnerId, tiers, error } を返す。requireDirect のとき、直接の受注先が選ばれていなければ error。
+function scEditorValue(root, requireDirect) {
+  const partnerId = root._sc ? root._sc.partnerId : null;
+  const tiers = [];
+  root.querySelectorAll('.sc-tier-row').forEach((row) => {
+    const name = row.querySelector('.sc-tier-name').value.trim();
+    const isSelf = row.querySelector('.sc-self').checked;
+    if (!name && !isSelf) return;
+    tiers.push({ name, partnerId: row._partnerId || null, isSelf });
+  });
+  let error = '';
+  if (requireDirect && !partnerId) error = '直接の受注先を、取引先の一覧から選んでください。';
+  return { partnerId, tiers, error };
+}
+
 async function doProposeSite(forceCreate) {
   const session = getSession();
   const name = document.getElementById('propose-site-name').value.trim();
@@ -14314,18 +14462,24 @@ async function doProposeSite(forceCreate) {
   candidatesEl.style.display = 'none';
   if (!name) { showError('propose-site-error', '現場名を入力してください。'); return; }
   if (internal ? !!primeContractor || !internalReason : !primeContractor) {
-    showError('propose-site-error', internal ? '社内業務は元請けを空欄にし、理由を入力してください。' : '元請け会社を入力してください。'); return;
+    showError('propose-site-error', internal ? '社内業務は元請けを空欄にし、理由を入力してください。' : '現場全体の元請けを入力してください。'); return;
   }
+  const contractRoot = document.querySelector('#propose-site-contract .sc-editor');
+  const contract = internal || !contractRoot ? null : scEditorValue(contractRoot, true);
+  if (contract && contract.error) { showError('propose-site-error', contract.error); return; }
 
   const btn = document.getElementById('propose-site-submit');
   btn.disabled = true;
   try {
-    const result = await rpc('propose_new_site_details', {
+    const baseArgs = {
       p_employee_code: session.employeeCode, p_site_name: name, p_prefecture: prefecture,
       p_is_out_of_prefecture: isOutOfPrefecture,
       p_notes: internal ? ['元請けなし（社内業務）申請理由: ' + internalReason, notes].filter(Boolean).join('\n') : notes,
       p_force_create: !!forceCreate, p_address: address, p_prime_contractor: primeContractor || null,
-    });
+    };
+    const result = contract
+      ? await rpc('propose_new_site_contract', { ...baseArgs, p_direct_client_partner_id: contract.partnerId, p_tiers: contract.tiers })
+      : await rpc('propose_new_site_details', baseArgs);
     const r = result[0];
     if (r.created) {
       showDone('現場を登録申請しました。管理者の確認後、正式な現場になります。', 'menu-apply');
@@ -14363,10 +14517,13 @@ async function doCreateSite(forceCreate) {
   candidatesEl.style.display = 'none';
   if (!name) { showError('site-create-error', '現場名を入力してください。'); return; }
   if (internal ? !!primeContractor || !internalReason : !primeContractor) {
-    showError('site-create-error', internal ? '社内業務は元請けを空欄にし、理由を入力してください。' : '元請け会社を入力してください。'); return;
+    showError('site-create-error', internal ? '社内業務は元請けを空欄にし、理由を入力してください。' : '現場全体の元請けを入力してください。'); return;
   }
+  const contractRoot = document.querySelector('#site-create-contract .sc-editor');
+  const contract = internal || !contractRoot ? null : scEditorValue(contractRoot, true);
+  if (contract && contract.error) { showError('site-create-error', contract.error); return; }
   try {
-    const result = await rpc(internal ? 'admin_register_internal_site' : 'admin_register_site', {
+    const siteArgs = {
       p_admin_employee_code: session.employeeCode, p_site_name: name,
       p_prefecture: document.getElementById('site-create-prefecture').value || null,
       p_address: document.getElementById('site-create-address').value.trim() || null,
@@ -14374,7 +14531,10 @@ async function doCreateSite(forceCreate) {
       p_planned_start_date: document.getElementById('site-create-start-date').value || null,
       p_planned_end_date: document.getElementById('site-create-end-date').value || null,
       p_force_create: !!forceCreate,
-    });
+    };
+    const result = internal
+      ? await rpc('admin_register_internal_site', siteArgs)
+      : await rpc('admin_register_site_contract', { ...siteArgs, p_direct_client_partner_id: contract.partnerId, p_tiers: contract.tiers });
     const r = result && result[0];
     if (r && r.similar_candidates && r.similar_candidates.length > 0) {
       candidatesEl.style.display = 'block';
@@ -14390,7 +14550,9 @@ async function doCreateSite(forceCreate) {
     document.getElementById('site-create-prefecture').value = '';
     document.getElementById('site-create-address').value = '';
     document.getElementById('site-create-prime-contractor').value = '';
+    const scRoot = document.querySelector('#site-create-contract .sc-editor'); if (scRoot) scEditorInit(scRoot, null);
     document.getElementById('site-create-internal').checked = false;
+    document.getElementById('site-create-contract').style.display = '';
     document.getElementById('site-create-internal-reason').value = '';
     document.getElementById('site-create-start-date').value = '';
     document.getElementById('site-create-end-date').value = '';
@@ -14409,6 +14571,9 @@ async function loadAllSitesList() {
   try {
     const rows = await rpc('admin_list_sites', { p_admin_employee_code: session.employeeCode, p_include_inactive: true, p_query: siteListQuery || null });
     if (!rows || rows.length === 0) { listEl.innerHTML = '<div class="hint">該当する現場はありません。</div>'; return; }
+    // 直接の受注先・施工体制(sites.direct_client_partner_id / site_contract_tiers)。取得できなくても一覧は出す。
+    const contractList = await rpc('admin_site_contract_list', { p_admin_employee_code: session.employeeCode, p_site_ids: rows.slice(0, 500).map((r) => Number(r.id)) }).catch(() => null);
+    const contractOf = (id) => (Array.isArray(contractList) ? contractList.find((c) => Number(c.siteId) === Number(id)) : null);
     const statusLabel = { active: '有効', pending: '承認待ち', inactive: '無効', merged: '統合済み' };
     // 2026-09-24 Shota指摘「現場の編集ができないから変えれない」対応。都道府県が県内/県外の
     // 自動判定(derive_is_out_of_prefecture)の元になっており、ここが空欄・誤りだと日報シート側の
@@ -14423,6 +14588,7 @@ async function loadAllSitesList() {
       <div class="qual-item" data-id="${s.id}">
         <div class="row1"><input type="text" class="site-rename-input" value="${exdEsc(s.site_name)}"><span class="mini-tag ${s.status === 'active' ? 'info' : (s.status === 'pending' ? 'danger' : '')}">${statusLabel[s.status] || s.status}</span></div>
         <div class="row2">${s.prefecture ? exdEsc(s.prefecture) : '都道府県未設定'}・${s.is_out_of_prefecture ? '県外' : (s.is_out_of_prefecture === false ? '県内' : '県内/県外 未判定')}</div>
+        ${(() => { const c = contractOf(s.id); if (!c) return ''; return `<div class="row2">元請け: ${exdEsc(c.primeContractor || '-')}・直接の受注先: ${c.directClientName ? exdEsc(c.directClientName) : (c.primeKind === 'internal' ? '(社内業務)' : '<span class="mini-tag danger">未設定</span>')}${c.selfTier ? `・迅翔興業は${SC_TIER_LABELS[c.selfTier]}請け` : ''}</div>`; })()}
         <div class="qual-verify-btns">
           <button type="button" class="site-save-btn">名前を保存</button>
           <button type="button" class="secondary site-edit-toggle-btn">詳細を編集</button>
@@ -14434,8 +14600,9 @@ async function loadAllSitesList() {
           <div class="hint-inline">都道府県を選ぶと、県内(徳島県)/県外は自動で判定されます。</div>
           <label>住所</label>
           <input type="text" class="site-edit-address" value="${exdEsc(addrOf(s.notes))}" placeholder="例: 徳島市南昭和町1-23">
-          <label>元請</label>
+          <label>現場全体の元請け</label>
           <input type="text" class="site-edit-prime-contractor" value="${exdEsc(s.prime_contractor || '')}" placeholder="例: 〇〇建設株式会社">
+          <div class="site-edit-contract"></div>
           <button type="button" class="site-edit-save-btn">詳細を保存</button>
           <div class="error site-edit-error"></div>
         </div>
@@ -14468,6 +14635,10 @@ async function loadAllSitesList() {
           }
           const row = rows.find((x) => Number(x.id) === Number(item.dataset.id));
           if (row) sel.value = row.prefecture || '';
+          // 社内業務の現場には直接の受注先は不要。通常の現場だけ、いまの内容を入れて開く。
+          const c = contractOf(item.dataset.id);
+          const box = form.querySelector('.site-edit-contract');
+          if (!c || c.primeKind !== 'internal') scMount(box, c || null);
         }
         form.style.display = hidden ? '' : 'none';
         btn.textContent = hidden ? '詳細を閉じる' : '詳細を編集';
@@ -14482,12 +14653,21 @@ async function loadAllSitesList() {
         const prefecture = form.querySelector('.site-edit-prefecture').value || null;
         const address = form.querySelector('.site-edit-address').value.trim() || null;
         const primeContractor = form.querySelector('.site-edit-prime-contractor').value.trim() || null;
+        const contractRoot = form.querySelector('.site-edit-contract .sc-editor');
+        const contract = contractRoot ? scEditorValue(contractRoot, true) : null;
+        if (contract && contract.error) { if (errEl) errEl.textContent = contract.error; return; }
         btn.disabled = true;
         try {
           await rpc('admin_update_site_details', {
             p_admin_employee_code: session.employeeCode, p_site_id: Number(item.dataset.id),
             p_prefecture: prefecture, p_address: address, p_prime_contractor: primeContractor,
           });
+          if (contract) {
+            await rpc('admin_site_contract_set', {
+              p_admin_employee_code: session.employeeCode, p_site_id: Number(item.dataset.id),
+              p_direct_client_partner_id: contract.partnerId, p_prime_contractor: null, p_tiers: contract.tiers,
+            });
+          }
           await loadAllSitesList();
         } catch (e2) {
           btn.disabled = false;
@@ -21233,6 +21413,8 @@ function init() {
   };
   SCREEN_ENTER_HOOKS['site-admin'] = async () => {
     if (!(await isNippoAdmin())) { enterMenu(); return; }
+    scMount(document.getElementById('site-create-contract'), null);
+    scBindInternalToggle('site-create-internal', 'site-create-contract');
     populateSitePrefectureSelect();
     loadSiteAdminList();
     loadAllSitesList();

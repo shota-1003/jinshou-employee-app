@@ -10,10 +10,10 @@ const canEdit=()=>owner===who()&&siteSharedStore.access(SITE,SECTION)?.manage;
 let relatedError='',relatedLoading=false;
 function relatedPanel(customerId){
  const wrap=document.createElement('section');wrap.className='customer-related-sites';
- const title=document.createElement('h3');title.textContent='この顧客が元請けの現場';wrap.append(title);
+ const title=document.createElement('h3');title.textContent='この顧客の現場';wrap.append(title);
  const snapshot=window.siteSharedProfilesSnapshot?.();
  if(!snapshot?.ready){const info=document.createElement('p');info.textContent=relatedError||snapshot?.error||'関連現場を確認中…';wrap.append(info);return wrap}
- const related=snapshot.rows.filter(r=>r.sections?.includes('概要')&&String(r.profile?.primeCompanyId||'')===String(customerId));
+ const related=snapshot.rows.filter(r=>r.sections?.includes('概要')&&String(r.profile?.directClientCompanyId||'').trim()===String(customerId));
  if(!related.length){const info=document.createElement('p');info.textContent='閲覧できる関連現場はありません。';wrap.append(info);return wrap}
  for(const row of related){const id=Number(row.localId);if(!Number.isSafeInteger(id))continue;
   const button=document.createElement('button');button.className='secondary';button.type='button';button.textContent=row.name||row.profile?.name||'現場';button.onclick=()=>openSite(id);wrap.append(button)}

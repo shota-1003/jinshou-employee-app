@@ -3294,13 +3294,17 @@
     </div>
     <div class="hint" id="alh-count" style="margin:10px 0;"></div>
     <div id="alh-error" class="error-text" style="display:none;"></div>
+    <div id="alh-notice" class="hint" style="display:none;margin-bottom:10px;color:var(--primary);font-weight:700;"></div>
+    <!-- 承認済みの休暇が出勤に変わったとき: 休暇を取り消す(全部の日、または最初/最後の日から続けた一部の日)。
+         管理者の役割を持つ人なら誰でも使える(RPC admin_cancel_paid_leave_days が check_any_admin_role で判定)。 -->
+    <div id="alh-cancel-panel" class="admin-result-item" style="display:none;margin-bottom:12px;"></div>
     <div id="alh-list"></div>
     <div id="alh-table-wrap" class="areq-table-wrap" style="overflow-x:auto;">
       <table class="areq-table">
         <thead>
           <tr>
             <th>開始日</th><th>終了日</th><th>社員番号</th><th>氏名</th><th>種別</th><th>日数</th>
-            <th>事由</th><th>状態</th><th>承認者</th><th>承認日時</th><th>配置</th>
+            <th>事由</th><th>状態</th><th>承認者</th><th>承認日時</th><th>配置</th><th>操作</th>
           </tr>
         </thead>
         <tbody id="alh-table-body"></tbody>

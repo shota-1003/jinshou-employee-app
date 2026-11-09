@@ -9858,9 +9858,13 @@ function renderAdminLeaveHistory() {
   document.getElementById('alh-count').textContent = `${alhRows.length}件`;
   if (alhRows.length === 0) {
     listEl.innerHTML = '<div class="hint">該当する休暇はありません。</div>';
-    tbodyEl.innerHTML = '<tr><td colspan="11"><div class="hint">該当する休暇はありません。</div></td></tr>';
+    tbodyEl.innerHTML = '<tr><td colspan="12"><div class="hint">該当する休暇はありません。</div></td></tr>';
     return;
   }
+  // 承認済みの休暇だけ「出勤に変更(休暇を取り消す)」を出す。押すと取消パネルが開く(alhOpenCancelPanel)。
+  const changeBtn = (r, small) => (r.status_group === 'approved'
+    ? `<button type="button" class="secondary alh-change-btn" data-request-id="${r.request_id}" style="${small ? 'padding:4px 8px;font-size:12px;' : 'margin-top:8px;'}">出勤に変更(休暇を取り消す)</button>`
+    : '');
   const statusBadge = (r) => {
     const cls = r.status_group === 'approved' ? 'done' : (['rejected', 'cancelled'].includes(r.status_group) ? 'rejected' : '');
     return `<span class="status-badge ${cls}">${LEAVE_STATUS_GROUP_LABEL[r.status_group] || r.status}</span>`;
@@ -9873,6 +9877,7 @@ function renderAdminLeaveHistory() {
       ${r.approver_name ? `<div class="row2">承認者: ${r.approver_name}${r.decided_at ? `・${new Date(r.decided_at).toLocaleString('ja-JP')}` : ''}</div>` : ''}
       ${r.status_group === 'approved' && !r.reflected_in_calendar ? '<div class="row2"><span class="mini-tag danger">配置カレンダー未反映</span></div>' : ''}
       ${statusBadge(r)}
+      ${changeBtn(r, false)}
     </div>
   `).join('');
   tbodyEl.innerHTML = alhRows.map((r) => `
@@ -9886,8 +9891,89 @@ function renderAdminLeaveHistory() {
       <td>${r.approver_name || '-'}</td>
       <td>${r.decided_at ? new Date(r.decided_at).toLocaleString('ja-JP') : '-'}</td>
       <td>${r.status_group === 'approved' ? (r.reflected_in_calendar ? '反映済み' : '<span class="mini-tag danger">未反映</span>') : '-'}</td>
+      <td>${changeBtn(r, true) || '-'}</td>
     </tr>
   `).join('');
+}
+
+// ---------- 休暇が出勤に変わったとき: 承認済みの休暇を取り消す(管理者の役割を持つ人なら誰でも) ----------
+// 2026-11-09 Shota指示。全部の日を外す=休暇を丸ごと取消。最初の日または最後の日から続けて外す=休暇の期間を短くする。
+// 取消理由は必須(監査ログへ残る)。native の prompt/confirm は使わず、画面内のパネルで入力する
+// (ネイティブダイアログが抑制・無反応な環境で、押しても何も起きない状態を作らないため)。
+const ALH_WEEKDAY = ['日', '月', '火', '水', '木', '金', '土'];
+function alhYmdRange(a, b) {
+  const out = [];
+  const end = new Date(`${b}T00:00:00Z`);
+  for (let d = new Date(`${a}T00:00:00Z`); d <= end; d = new Date(d.getTime() + 86400000)) out.push(d.toISOString().slice(0, 10));
+  return out;
+}
+function alhDayLabel(ymd) {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${ALH_WEEKDAY[d.getUTCDay()]})`;
+}
+function alhOpenCancelPanel(requestId) {
+  const row = alhRows.find((r) => String(r.request_id) === String(requestId));
+  const panel = document.getElementById('alh-cancel-panel');
+  if (!row || !panel) return;
+  const days = alhYmdRange(row.start_date, row.end_date);
+  const multi = days.length > 1;
+  const opts = (sel) => days.map((d) => `<option value="${d}"${d === sel ? ' selected' : ''}>${alhDayLabel(d)}</option>`).join('');
+  panel.innerHTML = `
+    <div class="row1"><span>${exdEsc(row.employee_name)}さんの${exdEsc(row.leave_category_label)}を、出勤に変更します</span></div>
+    <div class="row2">${leavePeriodText(row)}・${row.requested_days}日${row.reason ? `・${exdEsc(row.reason)}` : ''}</div>
+    ${multi ? `
+      <div class="hint" style="margin:8px 0 4px;">休暇から外す日(最初の日、または最後の日から続けて選べます。全部の日を選ぶと、休暇を丸ごと取り消します)</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <select id="alh-cancel-from" aria-label="外す日(開始)">${opts(days[0])}</select>
+        <span>〜</span>
+        <select id="alh-cancel-to" aria-label="外す日(終了)">${opts(days[days.length - 1])}</select>
+      </div>` : `<div class="hint" style="margin:8px 0 4px;">この休暇(${alhDayLabel(days[0])})を取り消します。</div>`}
+    <label for="alh-cancel-reason" style="margin-top:8px;">取消理由<span class="required-mark">(必須)</span></label>
+    <input type="text" id="alh-cancel-reason" value="休暇の予定が出勤に変わったため">
+    <div class="hint" style="margin-top:6px;">${row.leave_category === 'paid_leave' ? '外した日数ぶん、有給の残日数は元に戻ります。' : '有給ではない休暇のため、有給の残日数は変わりません。'}配置カレンダーの休みも外れます。</div>
+    <div id="alh-cancel-error" class="error-text" style="display:none;"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+      <button type="button" class="secondary" id="alh-cancel-confirm" data-request-id="${row.request_id}" style="color:var(--danger);border-color:var(--danger);font-weight:700;">休暇から外す</button>
+      <button type="button" class="secondary" id="alh-cancel-close">やめる</button>
+    </div>`;
+  panel.style.display = '';
+  panel.scrollIntoView({ block: 'nearest' });
+  document.getElementById('alh-cancel-close').addEventListener('click', () => { panel.style.display = 'none'; });
+  document.getElementById('alh-cancel-confirm').addEventListener('click', () => alhSubmitCancel(row, days));
+}
+async function alhSubmitCancel(row, days) {
+  const errEl = document.getElementById('alh-cancel-error');
+  const btn = document.getElementById('alh-cancel-confirm');
+  const fromEl = document.getElementById('alh-cancel-from');
+  const toEl = document.getElementById('alh-cancel-to');
+  const from = fromEl ? fromEl.value : days[0];
+  const to = toEl ? toEl.value : days[days.length - 1];
+  const reason = (document.getElementById('alh-cancel-reason').value || '').trim();
+  const fail = (m) => { errEl.textContent = m; errEl.style.display = ''; };
+  errEl.style.display = 'none';
+  if (!reason) { fail('取消理由を入力してください。'); return; }
+  if (from > to) { fail('外す日の開始が終了より後になっています。'); return; }
+  if (from !== days[0] && to !== days[days.length - 1]) {
+    fail('休暇の途中の日だけを外すことはできません。最初の日、または最後の日から続けて選んでください。'); return;
+  }
+  btn.disabled = true;
+  try {
+    const session = getSession();
+    const res = await rpc('admin_cancel_paid_leave_days', {
+      p_admin_employee_code: session.employeeCode, p_employee_request_id: Number(row.request_id),
+      p_from_date: from, p_to_date: to, p_reason: reason,
+    });
+    document.getElementById('alh-cancel-panel').style.display = 'none';
+    const notice = document.getElementById('alh-notice');
+    notice.textContent = res && res.mode === 'partial'
+      ? `${row.employee_name}さんの休暇から ${alhDayLabel(from)}${from !== to ? `〜${alhDayLabel(to)}` : ''} を外しました(残りの休暇: ${res.new_days}日)。`
+      : `${row.employee_name}さんの休暇を取り消しました。`;
+    notice.style.display = '';
+    await loadAdminLeaveHistory();
+  } catch (e) {
+    fail(e.message || '取消に失敗しました。');
+    btn.disabled = false;
+  }
 }
 
 async function loadAdminLeaveHistory() {
@@ -21037,6 +21123,12 @@ function init() {
   const emrPrintEl = document.getElementById('emr-print-btn');
   if (emrPrintEl) emrPrintEl.addEventListener('click', () => window.print());
 
+  // 休暇履歴(管理者): 「出勤に変更(休暇を取り消す)」ボタン(一覧の再描画のたびに作り直されるため委譲で受ける)。
+  const alhScreenEl = document.getElementById('screen-admin-leave-history');
+  if (alhScreenEl) alhScreenEl.addEventListener('click', (ev) => {
+    const b = ev.target.closest('.alh-change-btn');
+    if (b) alhOpenCancelPanel(b.dataset.requestId);
+  });
   // 休暇履歴(管理者)の絞り込み: 月・社員・種別・状態。
   const alhMonthEl = document.getElementById('alh-month');
   if (alhMonthEl) alhMonthEl.addEventListener('change', () => { alhFilters.month = alhMonthEl.value || ''; loadAdminLeaveHistory(); });
@@ -21167,6 +21259,7 @@ function init() {
   // 承認済みの休暇がどこにも見当たらない、という状態にしないため、絞り込みは既定でかけない。
   SCREEN_ENTER_HOOKS['admin-leave-history'] = async () => {
     if (!(await isAnyAdmin())) { enterMenu(); return; }
+    ['alh-cancel-panel', 'alh-notice'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     loadAdminLeaveHistory();
   };
   SCREEN_ENTER_HOOKS['employee-summary'] = async () => {

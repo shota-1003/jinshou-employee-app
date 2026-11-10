@@ -14328,18 +14328,69 @@ function wireLucky() {
 // 2026-11-09 Shota指示。現場に3つを別々に持たせる: 直接の受注先(必須・取引先から選ぶ)/現場全体の元請け(従来の元請け欄)/施工体制(一次→二次…、迅翔興業の位置)。
 // 保存は DB の admin_site_contract_set / admin_register_site_contract / propose_new_site_contract。取引先は business_partners の ID で持つ(同じ会社を重複登録しない)。
 const SC_TIER_LABELS = ['', '一次', '二次', '三次', '四次', '五次', '六次', '七次', '八次', '九次'];
+// 並び: 元請け(rows[0]。会社名は「現場全体の元請け」欄が持つ) → 一次 → 二次 …。direct=その段が「直接の受注先」(迅翔興業へ直接仕事を出す会社)。
+// 迅翔興業はその次の段に自動で入る(DBでは is_self の段)。DBの形: 直接の受注先=取引先ID、施工体制=一次以降の段(迅翔興業の段を含む)。
+function scBuildContract(rows, requireDirect) {
+  const directIdx = rows.findIndex((r) => r.direct);
+  const tiers = [];
+  if (directIdx < 0) {
+    if (requireDirect) return { partnerId: null, tiers: [], error: '直接の受注先にする会社を選んでください(「直接の受注先」の○を押します)。' };
+    rows.slice(1).forEach((r) => { if (r.name) tiers.push({ name: r.name, partnerId: r.partnerId || null, isSelf: false }); });
+    return { partnerId: null, tiers, error: '' };
+  }
+  const direct = rows[directIdx];
+  if (!direct.partnerId) return { partnerId: null, tiers: [], error: '直接の受注先は、取引先の一覧から選んでください(入力した文字だけでは保存できません)。' };
+  for (let i = 1; i <= directIdx; i++) {
+    const r = rows[i];
+    if (!r.name) return { partnerId: null, tiers: [], error: `${SC_TIER_LABELS[i]}請けの会社名を入力してください(使わない段は「この段を削除」を押します)。` };
+    tiers.push({ name: r.name, partnerId: r.partnerId || null, isSelf: false });
+  }
+  if (rows.slice(directIdx + 1).some((r) => r.name)) return { partnerId: null, tiers: [], error: '直接の受注先より後ろには会社を入れられません(迅翔興業がその次に入ります)。' };
+  tiers.push({ name: '', partnerId: null, isSelf: true });
+  if (tiers.length > 9) return { partnerId: null, tiers: [], error: '施工体制は迅翔興業を入れて9段までです。' };
+  return { partnerId: Number(direct.partnerId), tiers, error: '' };
+}
+// 保存済みの内容(admin_site_contract_list の1件)を、入力欄の並びに戻す。
+function scRowsFromContract(c) {
+  const rows = [{ name: '', partnerId: null, direct: false }];
+  if (!c) { rows.push({ name: '', partnerId: null, direct: false }); return rows; }
+  const dPid = c.directClientPartnerId ? Number(c.directClientPartnerId) : null;
+  const tiers = Array.isArray(c.tiers) ? c.tiers : [];
+  const self = tiers.find((t) => t.isSelf);
+  const selfNo = self ? Number(self.tier) : 0;
+  tiers.filter((t) => !t.isSelf && (!selfNo || Number(t.tier) < selfNo)).sort((a, b) => Number(a.tier) - Number(b.tier))
+    .forEach((t) => rows.push({ name: t.name || '', partnerId: t.partnerId ? Number(t.partnerId) : null, direct: false }));
+  let idx = -1;
+  if (dPid) {
+    idx = selfNo ? selfNo - 1 : rows.findIndex((r, i) => i > 0 && r.partnerId === dPid);
+    if (idx < 0 || idx > rows.length - 1) { rows.push({ name: c.directClientName || '', partnerId: dPid, direct: false }); idx = rows.length - 1; }
+    rows[idx].direct = true;
+    rows[idx].partnerId = dPid;
+    if (!rows[idx].name) rows[idx].name = c.directClientName || '';
+  }
+  if (rows.length === 1 && idx !== 0) rows.push({ name: '', partnerId: null, direct: false });
+  return rows;
+}
+let scEditorSeq = 0;
 function scEditorHtml() {
   return `
   <div class="sc-editor">
-    <label>直接の受注先<span class="required-mark">(必須)</span></label>
-    <div class="hint-inline">迅翔興業へ仕事を依頼する会社です。取引先から選びます(上の「現場全体の元請け」とは別に保存されます)。</div>
-    <input type="text" class="sc-direct-input" maxlength="200" autocomplete="off" placeholder="会社名で検索して選ぶ(例: おおたに)">
-    <div class="sc-suggest sc-direct-suggest"></div>
-    <div class="hint-inline sc-direct-state"></div>
-    <label>施工体制(任意)</label>
-    <div class="hint-inline">元請けから順に、一次・二次…の会社を入れます。迅翔興業が何次請けかにチェックします。元請けは「現場全体の元請け」の会社が自動で入ります。</div>
+    <label>施工体制と直接の受注先<span class="required-mark">(必須)</span></label>
+    <div class="hint-inline">元請けから順に、一次・二次…の会社を入れます。迅翔興業へ直接仕事を出している会社の「直接の受注先」の○を押して、取引先の一覧から選びます。迅翔興業は、その次に自動で入ります。</div>
+    <div class="sc-prime-row" style="margin-top:8px;padding:8px;border:1px solid var(--border,#334);border-radius:8px;">
+      <div class="row2" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <strong>元請け</strong><span class="hint-inline" style="margin:0;">上の「現場全体の元請け」の会社</span>
+        <label style="font-weight:normal;display:flex;gap:6px;align-items:center;margin:0 0 0 auto;"><input type="radio" class="sc-direct" style="width:auto;margin:0;"> 直接の受注先</label>
+      </div>
+      <div class="sc-prime-pick" style="display:none;">
+        <input type="text" class="sc-tier-name" maxlength="200" autocomplete="off" placeholder="直接の受注先を取引先から選ぶ(例: おおたに)">
+        <div class="sc-suggest"></div>
+      </div>
+    </div>
     <div class="sc-tiers"></div>
     <button type="button" class="secondary sc-add-tier">一次・二次…の会社を追加</button>
+    <div class="hint-inline sc-self-line"></div>
+    <div class="hint-inline sc-direct-state"></div>
   </div>`;
 }
 // 入れ物に入力部品を取り付けて空の状態にする。root を返す。
@@ -14383,68 +14434,76 @@ function scBindPicker(input, suggestEl, onPick, onClear) {
     onPick(Number(b.dataset.id), b.dataset.name);
   });
 }
-function scRelabelTiers(root) {
-  root.querySelectorAll('.sc-tier-row').forEach((row, i) => { row.querySelector('.sc-tier-label').textContent = `${SC_TIER_LABELS[i + 1]}請け`; });
+// 段の番号の表示・迅翔興業の位置・選択状況をまとめて更新する。
+function scRefresh(root) {
+  const radios = [...root.querySelectorAll('.sc-direct')];
+  const tierRows = [...root.querySelectorAll('.sc-tier-row')];
+  tierRows.forEach((row, i) => { row.querySelector('.sc-tier-label').textContent = `${SC_TIER_LABELS[i + 1]}請け`; });
+  const directIdx = radios.findIndex((r) => r.checked);
+  const primeRow = root.querySelector('.sc-prime-row');
+  root.querySelector('.sc-prime-pick').style.display = directIdx === 0 ? '' : 'none';
+  const dRow = directIdx === 0 ? primeRow : (directIdx > 0 ? tierRows[directIdx - 1] : null);
+  tierRows.forEach((row, i) => { row.style.opacity = directIdx >= 0 && i + 1 > directIdx ? '0.55' : ''; });
+  root.querySelector('.sc-self-line').textContent = directIdx >= 0 ? `→ 迅翔興業は ${SC_TIER_LABELS[directIdx + 1]}請け になります。` : '';
+  const state = root.querySelector('.sc-direct-state');
+  if (directIdx < 0) { state.textContent = '直接の受注先にする会社の○を押してください。'; state.style.color = 'var(--danger)'; return; }
+  const nameEl = dRow.querySelector('.sc-tier-name');
+  state.textContent = dRow._partnerId ? `直接の受注先: ${nameEl.value}(取引先ID ${dRow._partnerId})` : '直接の受注先は、取引先の一覧から選んでください(入力した文字だけでは保存できません)。';
+  state.style.color = dRow._partnerId ? '' : 'var(--danger)';
 }
 function scAddTierRow(root, tier) {
   const wrap = root.querySelector('.sc-tiers');
-  if (wrap.children.length >= 9) return;
+  if (wrap.children.length >= 8) return;
   const row = document.createElement('div');
   row.className = 'sc-tier-row';
   row.style.cssText = 'margin-top:8px;padding:8px;border:1px solid var(--border,#334);border-radius:8px;';
   row.innerHTML = `
     <div class="row2" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <strong class="sc-tier-label"></strong>
-      <label style="font-weight:normal;display:flex;gap:6px;align-items:center;margin:0;"><input type="checkbox" class="sc-self" style="width:auto;margin:0;"> ここが迅翔興業</label>
+      <label style="font-weight:normal;display:flex;gap:6px;align-items:center;margin:0;"><input type="radio" class="sc-direct" style="width:auto;margin:0;"> 直接の受注先</label>
       <button type="button" class="link sc-tier-del" style="margin-left:auto;width:auto;min-height:0;padding:4px 8px;font-size:12px;">この段を削除</button>
     </div>
     <input type="text" class="sc-tier-name" maxlength="200" autocomplete="off" placeholder="会社名(取引先から選ぶか、そのまま入力)">
     <div class="sc-suggest"></div>`;
   wrap.appendChild(row);
   const nameEl = row.querySelector('.sc-tier-name');
+  const radio = row.querySelector('.sc-direct');
+  radio.name = root._sc.radioName;
   row._partnerId = null;
-  if (tier) { nameEl.value = tier.name || ''; row._partnerId = tier.partnerId ? Number(tier.partnerId) : null; row.querySelector('.sc-self').checked = !!tier.isSelf; }
-  scBindPicker(nameEl, row.querySelector('.sc-suggest'), (id) => { row._partnerId = id; }, () => { row._partnerId = null; });
-  row.querySelector('.sc-self').addEventListener('change', (ev) => {
-    if (ev.target.checked) root.querySelectorAll('.sc-self').forEach((c) => { if (c !== ev.target) c.checked = false; });
-  });
-  row.querySelector('.sc-tier-del').addEventListener('click', () => { row.remove(); scRelabelTiers(root); });
-  scRelabelTiers(root);
+  if (tier) { nameEl.value = tier.name || ''; row._partnerId = tier.partnerId ? Number(tier.partnerId) : null; radio.checked = !!tier.direct; }
+  scBindPicker(nameEl, row.querySelector('.sc-suggest'), (id) => { row._partnerId = id; scRefresh(root); }, () => { row._partnerId = null; scRefresh(root); });
+  radio.addEventListener('change', () => scRefresh(root));
+  row.querySelector('.sc-tier-del').addEventListener('click', () => { row.remove(); scRefresh(root); });
+  scRefresh(root);
 }
 function scEditorInit(root, initial) {
-  const direct = root.querySelector('.sc-direct-input');
-  const state = root.querySelector('.sc-direct-state');
-  root._sc = { partnerId: null };
-  const show = () => {
-    state.textContent = root._sc.partnerId ? `選択中: ${direct.value}(取引先ID ${root._sc.partnerId})` : '取引先の一覧から選んでください(入力した文字だけでは保存できません)。';
-    state.style.color = root._sc.partnerId ? '' : 'var(--danger)';
-  };
+  const primeRow = root.querySelector('.sc-prime-row');
   if (!root._scBound) {
     root._scBound = true;
-    scBindPicker(direct, root.querySelector('.sc-direct-suggest'), (id) => { root._sc.partnerId = id; show(); }, () => { root._sc.partnerId = null; show(); });
+    root._sc = { radioName: `sc-direct-${++scEditorSeq}` };
+    primeRow._partnerId = null;
+    primeRow.querySelector('.sc-direct').name = root._sc.radioName;
+    scBindPicker(primeRow.querySelector('.sc-tier-name'), primeRow.querySelector('.sc-suggest'),
+      (id) => { primeRow._partnerId = id; scRefresh(root); }, () => { primeRow._partnerId = null; scRefresh(root); });
+    primeRow.querySelector('.sc-direct').addEventListener('change', () => scRefresh(root));
     root.querySelector('.sc-add-tier').addEventListener('click', () => scAddTierRow(root, null));
   }
+  const rows = scRowsFromContract(initial);
+  primeRow._partnerId = rows[0].partnerId;
+  primeRow.querySelector('.sc-tier-name').value = rows[0].name || '';
+  primeRow.querySelector('.sc-direct').checked = !!rows[0].direct;
   root.querySelector('.sc-tiers').innerHTML = '';
-  direct.value = '';
-  if (initial) {
-    if (initial.directClientPartnerId) { direct.value = initial.directClientName || ''; root._sc.partnerId = Number(initial.directClientPartnerId); }
-    (initial.tiers || []).forEach((t) => scAddTierRow(root, t));
-  }
-  show();
+  rows.slice(1).forEach((r) => scAddTierRow(root, r));
+  scRefresh(root);
 }
 // { partnerId, tiers, error } を返す。requireDirect のとき、直接の受注先が選ばれていなければ error。
 function scEditorValue(root, requireDirect) {
-  const partnerId = root._sc ? root._sc.partnerId : null;
-  const tiers = [];
+  const primeRow = root.querySelector('.sc-prime-row');
+  const rows = [{ name: primeRow.querySelector('.sc-tier-name').value.trim(), partnerId: primeRow._partnerId || null, direct: primeRow.querySelector('.sc-direct').checked }];
   root.querySelectorAll('.sc-tier-row').forEach((row) => {
-    const name = row.querySelector('.sc-tier-name').value.trim();
-    const isSelf = row.querySelector('.sc-self').checked;
-    if (!name && !isSelf) return;
-    tiers.push({ name, partnerId: row._partnerId || null, isSelf });
+    rows.push({ name: row.querySelector('.sc-tier-name').value.trim(), partnerId: row._partnerId || null, direct: row.querySelector('.sc-direct').checked });
   });
-  let error = '';
-  if (requireDirect && !partnerId) error = '直接の受注先を、取引先の一覧から選んでください。';
-  return { partnerId, tiers, error };
+  return scBuildContract(rows, requireDirect);
 }
 
 async function doProposeSite(forceCreate) {

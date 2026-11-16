@@ -7387,7 +7387,14 @@ function exdSettlementSheetHtml(full) {
   const blanks = Math.max(0, 12 - rows.length);
   // 実際に支払済みならその方法をそのまま表示。まだ支払前でも、申請者が希望した受取方法が
   // あればそれを「(希望)」付きで表示する(2026-09-12ユーザー指摘: 申請時に選べないのはおかしい)。
-  const payLabel = pay.method === 'transfer' ? '振込み' : pay.method === 'cash' ? '現金'
+  // 会社が払い済みの経費(法人カード・会社現金・会社口座)は、社員への支払が無い。
+  // 「現金・振込み」のままだと、これから払うものに見えて紛らわしい(2026-11-12ユーザー指摘)ので、
+  // 紙にも「会社払い(法人カード)」「社員への支払なし」と明記する。
+  const isCompanyPaid = h.expense_category === 'company_expense';
+  const companyWays = Array.from(new Set(rows.map((it) => it.payment_method).filter(Boolean)));
+  const noPayText = '社員への支払なし';
+  const payLabel = isCompanyPaid ? `会社払い${companyWays.length ? `(${companyWays.map(exdEsc).join('・')})` : ''}`
+    : pay.method === 'transfer' ? '振込み' : pay.method === 'cash' ? '現金'
     : pay.preferred_receipt_method === 'bank_transfer' ? '銀行振込(希望)'
     : pay.preferred_receipt_method === 'cash' ? '現金(希望)'
     : '現金　・　振込み';
@@ -7433,7 +7440,7 @@ function exdSettlementSheetHtml(full) {
           <div class="ss-admin">
             <div style="font-size:10.5px;margin-bottom:2px;">［管理欄］</div>
             <table>
-              <tr><th>支 払 日</th><td>${exdEsc(d.paid_at ? ymd(d.paid_at) : '　年　　月　　日')}</td></tr>
+              <tr><th>支 払 日</th><td>${exdEsc(isCompanyPaid ? noPayText : d.paid_at ? ymd(d.paid_at) : '　年　　月　　日')}</td></tr>
               <tr><th>支払方法</th><td>${payLabel}</td></tr>
               <tr><th>承認状況</th><td colspan="4" style="font-size:10.5px;">${approved ? '承認済み' : '未承認（承認するとここに承認者名が入ります）'}</td></tr>
               <tr>
@@ -7445,9 +7452,9 @@ function exdSettlementSheetHtml(full) {
           <div class="ss-total">
             <table>
               <tr><th style="width:96px;">合　　計</th><td class="num" style="font-size:14px;">${yen(total)}</td></tr>
-              <tr><th>受 取 方 法</th><td style="text-align:center;">${payLabel}</td></tr>
+              <tr><th>受 取 方 法</th><td style="text-align:center;">${isCompanyPaid ? noPayText : payLabel}</td></tr>
             </table>
-            <div class="ss-note">※　振込み手数料、申請者負担</div>
+            <div class="ss-note">${isCompanyPaid ? '※　会社が支払い済みの経費です' : '※　振込み手数料、申請者負担'}</div>
           </div>
         </div>
         <div class="ss-company">株式会社　迅翔興業</div>
@@ -9515,6 +9522,7 @@ async function loadEmployeeDetailBasic() {
     try { dependents = await rpc('admin_get_employee_dependents', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code }); } catch (e) { /* 扶養人数だけ読めなくても基本情報は表示する */ }
     renderAvatar('employee-detail-avatar', p.employee_name, p.profile_photo_url);
     document.getElementById('employee-detail-name').textContent = p.employee_name;
+    document.getElementById('employee-detail-name').dataset.hireDate = p.hire_date ? String(p.hire_date).slice(0, 10) : ''; // 有給管理簿の紙に入社日を載せる
     document.getElementById('employee-detail-code').textContent = `社員番号: ${p.employee_code}・${p.status === 'active' ? '在籍中' : (p.status === 'retired' ? '退職' : '在籍外')}`;
     document.getElementById('employee-detail-basic-fields').innerHTML =
       fieldRow('フリガナ', p.furigana) + fieldRow('生年月日', p.birth_date ? new Date(p.birth_date).toLocaleDateString('ja-JP') : null) +
@@ -9573,6 +9581,73 @@ async function doSaveEmployeePaymentMethod() {
 
 const LEAVE_TX_LABEL = { initial_grant: '付与(初回)', accrual: '付与', usage: '使用', adjustment: '調整/取消', carryover_expiry: '失効' };
 
+// 有給管理簿(印刷用の紙)。2026-11-12 Shota指摘「有給管理の所で紙に印刷できるようになってない」。
+// 画面の「付与・使用履歴(元帳)」と同じデータから作るので、画面と紙の数字がずれない。
+// 経費精算書・貸付金台帳と同じ「PDFで印刷」(ss-print-btn → printSettlementSheet)で白地・A4縦に出す。
+// 残日数は、古い順に付与・使用を足し引きした累計(同じ日は付与を先に数える)。
+function leaveSheetHtml(name, hireDate, summary, ledger) {
+  const ymd = (v) => {
+    if (!v) return '';
+    const dt = new Date(v);
+    return Number.isNaN(dt.getTime()) ? '' : `${dt.getFullYear()}年${dt.getMonth() + 1}月${dt.getDate()}日`;
+  };
+  const days = (n) => `${Number.isInteger(Number(n)) ? Number(n) : Number(n).toFixed(1)}日`;
+  const order = (t) => (t.amount > 0 ? 0 : 1);
+  const sorted = ledger.map((tx, i) => ({ tx, i }))
+    .sort((a, b) => new Date(a.tx.effective_date) - new Date(b.tx.effective_date) || order(a.tx) - order(b.tx) || b.i - a.i)
+    .map((x) => x.tx);
+  let bal = 0;
+  const rows = sorted.map((tx) => {
+    bal += Number(tx.amount || 0);
+    return `<tr>
+        <td>${exdEsc(ymd(tx.effective_date))}</td>
+        <td>${exdEsc(LEAVE_TX_LABEL[tx.transaction_type] || tx.transaction_type)}</td>
+        <td class="num">${tx.amount > 0 ? '+' : ''}${exdEsc(days(tx.amount))}</td>
+        <td class="num">${exdEsc(days(bal))}</td>
+        <td class="small">${exdEsc(tx.note || '')}</td>
+      </tr>`;
+  });
+  const blanks = Math.max(0, 14 - rows.length);
+  const s = summary || {};
+  const period = s.period_start ? `${ymd(s.period_start)}〜${ymd(s.period_end)}` : '';
+  const sumCell = (label, v) => `<tr><th style="width:130px;">${label}</th><td class="num">${v != null ? exdEsc(days(v)) : '未設定'}</td></tr>`;
+  return `<div class="settlement-sheet-wrap" data-print-title="${exdEsc(`有給管理簿_${name}`)}">
+    <div class="settlement-sheet-head">
+      <span>有給管理簿(印刷用)</span>
+      <button type="button" class="secondary ss-print-btn">PDFで印刷</button>
+    </div>
+    <div class="settlement-sheet-scroll">
+      <div class="settlement-sheet">
+        <div class="ss-title">有 給 休 暇 管 理 簿</div>
+        <div class="ss-meta">
+          入社日：<b>${exdEsc(ymd(hireDate))}</b><br>
+          氏　名：<b>${exdEsc(name)}</b>
+        </div>
+        <table>
+          <tr>
+            <th style="width:120px;">日 付</th><th style="width:100px;">区 分</th>
+            <th style="width:80px;">日 数</th><th style="width:90px;">残 日 数</th><th>備 考</th>
+          </tr>
+          ${rows.join('')}
+          ${Array.from({ length: blanks }).map(() => '<tr><td></td><td></td><td></td><td></td><td></td></tr>').join('')}
+        </table>
+        <div class="ss-bottom">
+          <div class="ss-admin">
+            <table>
+              <tr><th style="width:130px;">今年度の期間</th><td>${exdEsc(period || '未登録')}</td></tr>
+              ${sumCell('今年度付与', s.granted_this_period)}
+              ${sumCell('今年度使用', s.used_this_period)}
+              ${sumCell('今年度の残り', s.remaining_this_period)}
+            </table>
+          </div>
+        </div>
+        <div class="ss-note">※　残日数は、付与と使用を古い順に足し引きした累計です</div>
+        <div class="ss-company">株式会社　迅翔興業</div>
+      </div>
+    </div>
+  </div>`;
+}
+
 async function loadEmployeeDetailLeave() {
   const session = getSession();
   const code = currentEmployeeDetailCode;
@@ -9605,6 +9680,11 @@ async function loadEmployeeDetailLeave() {
     }
 
     const ledger = await rpc('admin_get_employee_leave_ledger', { p_admin_employee_code: session.employeeCode, p_target_employee_code: code });
+    const sheetEl = document.getElementById('employee-detail-leave-sheet');
+    if (sheetEl) {
+      const nameEl = document.getElementById('employee-detail-name');
+      sheetEl.innerHTML = ledger && ledger.length ? leaveSheetHtml(nameEl.textContent.trim(), nameEl.dataset.hireDate || '', b, ledger) : '';
+    }
     if (!ledger || ledger.length === 0) { listEl.innerHTML = '<div class="hint">付与・使用履歴はまだありません。</div>'; return; }
     listEl.innerHTML = ledger.map((tx) => `
       <div class="history-item">

@@ -15517,7 +15517,13 @@ function applyRecentSiteToEntry(siteId, siteName) {
     target = entryEls[entryEls.length - 1];
   }
   const select = target.querySelector('.dr-site-select');
-  populateSiteSelect(select, siteName, true).then(() => { select.value = String(siteId); });
+  // 値を入れたあとに change を流す。流さないと、現場外の用件(県外・旅費)の欄や出張の既定値など、
+  // 現場を選んだときに動く処理が一切動かず、「旅費の欄が出ない」になる(2026-11-26 桑原さんの報告。
+  // 2回目に開くと出るのは、既存日報の読み込み経路が同じ処理を明示的に呼ぶため)。
+  populateSiteSelect(select, siteName, true).then(() => {
+    select.value = String(siteId);
+    select.dispatchEvent(new Event('change'));
+  });
 }
 
 // 日報の対象日について、配置カレンダー(別プロジェクト)に登録された本人の配置先を

@@ -16122,7 +16122,7 @@ function attendanceBookHtml(rows, summary, opts) {
     return `<tr class="${cls}">
       <td class="ab-date">${dateLabel(r.work_date, i)}</td>
       <td class="ab-wd">${esc(r.weekday_jp)}</td>
-      <td class="ab-site">${esc(r.site_names || '')}${r.pending_sites ? `<span class="ab-pending">${esc(r.pending_sites)}(${esc(pendingLabel(r))})</span>` : ''}</td>
+      <td class="ab-site">${esc(r.site_names || '')}${(!r.site_names && !r.pending_sites && r.is_paid_leave) ? '<span class="ab-leave">有給</span>' : ''}${r.pending_sites ? `<span class="ab-pending">${esc(r.pending_sites)}(${esc(pendingLabel(r))})</span>` : ''}</td>
       <td class="ab-num">${Number(r.overtime_hours) > 0 ? attendanceBookNum(r.overtime_hours) : (worked1 ? '0' : '')}</td>
       <td class="ab-num">${hoursCell(r.early_commute_hours)}</td>
       <td class="ab-num">${hoursCell(r.commute_overtime_hours)}</td>
